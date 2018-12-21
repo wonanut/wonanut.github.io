@@ -7,10 +7,11 @@
 		<meta name="description" content="Demo of the game: The Making of 'The Aviator': Animating a Basic 3D Scene with Three.js" />
 		<meta name="keywords" content="three.js, webgl, tutorial, game, 3d, animation, airplane, web development, javascript" />
 		<meta name="author" content="Karim Maaloul for Codrops" />
-		<link rel="shortcut icon" href="img/Christmas.ico">
+		<link rel="shortcut icon" href="img/favico.ico">
 		<link href='https://fonts.googleapis.com/css?family=Playfair+Display:400,700,700italic' rel='stylesheet' type='text/css'>
 		<link rel="stylesheet" type="text/css" href="css/demo.css" />
 		<link rel="stylesheet" type="text/css" href="css/game.css" />
+		<link rel="stylesheet" type="text/css" href="css/wonanut.css" />
 		<script type="text/javascript" src="js/TweenMax.min.js"></script>
 		<script type="text/javascript" src="js/three.min.js"></script>
 		<script type="text/javascript" src="js/game.js" /></script>
@@ -46,8 +47,39 @@
 				</div>
 			<div class="world" id="world"></div>
 			<div class="message message--replay" id="replayMessage">Click to Replay</div>
+				
 		</div>
-		<!-- Demo links -->
+		
+		<div class="card_list">
+			<div class="card" onclick="window.open('archives/Personal/index.html')">
+				<div class="img">  
+					<img src="img/favico.ico" width="25" height="25" />  
+				</div>
+				<div class="title">个人主页</div>
+				<hr>
+				<div class="description">作为一名专业的科研人员，不能没有自己的酷酷的个人页面，所以我建了一个个人空间</div>
+			</div>
+			<div class="card" onclick="window.open('archives/Life/index.html')">
+				<div class="img">  
+					<img src="img/favico.ico" width="25" height="25" />  
+				</div>
+				<div class="title">杂七杂八</div>
+				<hr>
+				<div class="description">生活一二事，学习心得，人生阅历，五花八门</div>
+			</div>
+			<div class="card" onclick="window.open('archives/Christmas/index.html')">
+				<div class="img">  
+					<img src="img/favico.ico" width="25" height="25" />  
+				</div>
+				<div class="title">圣诞快乐，点进来鸭</div>
+				<hr>
+				<div class="description">给远在他乡的你的圣诞贺卡</div>
+			</div>
+			<div class="card" onclick="alert('妄想改我的网页？不存在的')">
+				<div class="add_card">[+] 添加卡片</div>
+			</div>
+		</div>
+		
 
 	</body>
 </html>

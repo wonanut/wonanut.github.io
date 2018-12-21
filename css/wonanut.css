@@ -1,0 +1,71 @@
+@font-face {
+	font-family: 'christmas';
+	src: url(../fonts/christmas/ChristmasSparkle.ttf);
+}
+
+.card_list {
+	position:absolute;
+	left:30px;
+	top:120px;
+}
+
+.card {
+	background:rgba(255,255,255,1);
+	width:310px;
+	border-radius:8px;
+	box-shadow:1px 1px 5px #888;
+	padding:15px;
+	transition: 0.5s;
+	margin-top: 10px;
+}
+
+.card:hover {
+	transition: 0.5s;
+	cursor:pointer;
+	box-shadow:1px 1px 8px #444;
+}
+
+.card .img {
+	width: 25px; 
+	height: 25px; 
+	float: left; 
+	margin-right: 10px;
+	border-radius: 50%; 
+	overflow: hidden;
+}
+
+.card .title {
+	font-family: STHeiti;
+	font-size: 18px;
+}
+
+.card .description {
+	font-family: Microsoft JhengHei;
+	font-size: 14px;
+}
+
+.Christmas{
+	width:60%;
+	height:10%;
+	background-color:#d1b790;
+	position:absolute;
+	opacity:0.3;
+	top:15%;
+	left:20%;
+	text-align:center;
+	padding-top:15px;
+}
+
+.Christmas a {
+	color:red;
+	font-family:christmas;
+	animation:fontColor 5s linear infinite;
+	font-size:50px;
+}
+
+@keyframes fontColor
+{
+0%   {color: red;}
+50%  {color: blue;}
+100% {color: green;}
+}
