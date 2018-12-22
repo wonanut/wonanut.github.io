@@ -34,9 +34,9 @@
 }
 
 .saying2 {
-	width: 30%;
+	width: 600px;
 	position:absolute;
-	left: 48%;
+	left: 45%;
 	top: 160px;
 	background: none;
 	font-family: PMingLiU;
@@ -44,9 +44,9 @@
 }
 
 .saying {
-	width: 30%;
+	width: 600px;
 	position:absolute;
-	left: 48%;
+	left: 45%;
 	top: 160px;
 	background: none;
 	font-family: PMingLiU;
