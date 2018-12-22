@@ -1,7 +1,99 @@
-@keyframes myfirst
+*{
+	margin:0px;
+	padding:0px;
+	overflow:hidden;
+}
+
+.tips {
+	border-radius: 18px;
+	position:absolute;
+	left:50px;
+	top: 30px;
+	font-size: 12px;
+	background-color: white;
+	color: gray;
+	padding: 5px;
+	padding-left: 10px;
+	padding-right: 10px;
+}
+
+.time {
+	position: absolute;
+	top: 30px;
+	left: 200px;
+	font-size: 13px;
+	padding: 5px;
+}
+
+.bgm {
+	width: 28px;
+	position:absolute;
+	left:160px;
+	top: 30px;
+	cursor: pointer;
+}
+
+.saying2 {
+	width: 600px;
+	position:absolute;
+	left: 48%;
+	top: 200px;
+	background: none;
+	font-family: PMingLiU;
+	font-size:16px;
+}
+
+.saying {
+	width: 600px;
+	position:absolute;
+	left: 48%;
+	top: 200px;
+	background: none;
+	font-family: PMingLiU;
+	font-size:16px;
+}
+
+.saying:after {
+  content: "_";
+}
+
+#santa {
+	z-index:1;
+	position:absolute;
+	bottom:0;
+	left:0;
+	width:35%;
+}
+
+#village {
+	z-index:-4;
+	position:absolute;
+	bottom:0px;
+	right:-90;
+	width:90%;
+}
+
+#bkg {
+	z-index:-5;
+	position:absolute;
+	width:100%;
+}
+
+#deer {
+	z-index:3;
+	position:absolute;
+	top:70px;
+	right:300px;
+	height:170px;
+	animation:deer_move 50s;
+}
+
+.message {
+	display:none;
+}
+
+@keyframes deer_move
 {
-0%   {background: red;}
-25%  {background: yellow;}
-50%  {background: blue;}
-100% {background: green;}
+0%   {right: 250px; top: 150px;}
+100% {right: -300px; top: -200px;}
 }

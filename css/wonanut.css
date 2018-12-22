@@ -44,6 +44,18 @@
 	font-size: 14px;
 }
 
+.label_green {
+	background-color:#66CC66;
+	color:white;
+	font-size:12px;
+	border-radius:4px;
+	border-top:1px solid #CCFF99;
+	width: 40px;
+	text-align:center;
+	margin-top: 5px;
+	float: right;
+}
+
 .Christmas{
 	width:60%;
 	height:10%;

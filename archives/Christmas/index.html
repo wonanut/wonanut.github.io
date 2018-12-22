@@ -6,8 +6,104 @@
 		<title>Merry Christmas</title>
 		<link rel="shortcut icon" href="img/Christmas.ico">
 		<link rel="stylesheet" type="text/css" href="css/style.css" />
+		<link rel="stylesheet" type="text/css" href="css/normalize.css" />
+		<link rel="stylesheet" type="text/css" href="css/htmleaf-demo.css">
 
 	<body>
+		<div class="imgs">
+			<img id="santa" src="img/img1.png"/>
+			<img id="village" src="img/img2.png"/>
+			<img id="bkg" src="img/img3.png"/>
+			<img id="deer" src="img/img4.png"/>
+		</div>
+		<pre id="showMesg" class="saying"></pre>
+		<div class="message", id="word">送给琪琪怪的2018圣诞礼物：
+
+	今年是改革开放40周年，也是我们俩关系爆炸的一年。时光如白驹过隙，还记得去年考完研的那天就是平安夜，考完研我就去成都找你玩了，如今都一年了。在这一年里我看到了你的成长，越来越像一个成熟的女生了，朕心甚慰。
+	
+	我一直在想怎样能送你一个别具一格的礼物，感觉淘宝上的礼物不能代表我的心意，自己从大四给你折的星星现在还剩一半没折完，因此还是想着靠自己的特色，给你做一个属于你自己的网页吧，这个网站对外公开，一直都可以访问。就问礼物独特不独特！送给你哦。
+	
+	圣诞节快乐鸭，照顾好自己。(一直默默关注你的tty)</div>
 		
+		
+		<div class="time", id="time"></div>
+		<div class="tips">推荐使用Edge</div>
+		<img class="bgm" src="img/bgm.png" onclick="closemusic()"/>
+		<audio id="audio" autoplay="autoplay" loop="loop" src="music/bgmusic.mp3"></audio>
+		<script>
+			var index = 0;
+			var word;
+			
+			function type() {
+				var typePanel = document.getElementById('showMesg');
+				typePanel.innerText = word.substring(0, index++);
+				if(index % 3 == 0) {
+					typePanel.className = "saying2";
+				}
+				else if(index % 3 == 1) {
+					typePanel.className = "saying";
+				}
+			}
+			
+			function showTime() {
+				var nowDate = new Date().getTime();
+				var oldDate = new Date("2015/01/01 12:00:00");
+				var timeGap = parseInt((nowDate - oldDate) / 1000);
+				var day = parseInt(timeGap / (24 * 60 * 60));
+				var hou = parseInt((timeGap - day * 24 * 60 * 60) / (60 * 60));
+				var min = parseInt((timeGap - day * 24 * 60 * 60 - hou * 60 * 60) / 60);
+				var sec = timeGap - day * 24 * 60 * 60 - hou * 60 * 60 - min * 60;
+				var time = document.getElementById('time');
+				time.innerHTML = "我已认识你 " + day + " 天 " + hou + " 时 " + min + " 分 " + sec + " 秒.";
+			}
+			
+			function closemusic() {
+				var audio = document.getElementById('audio');
+				if(audio!==null){             
+					if(audio.paused) {                 
+						audio.play();
+					}else{
+						audio.pause();
+					}
+				} 
+			}
+			
+			window.onload = function(){
+				word = document.getElementById('word').innerHTML;
+				setInterval(type, 250);
+				setInterval(showTime, 1000);
+			}
+		</script>
+		
+		<script src="js/ThreeCanvas.js"></script>
+		<script>window.jQuery || document.write('<script src="js/jquery-1.11.0.min.js"><\/script>')</script>
+		<script src="js/Snow.js"></script>
+		<script src="js/snowFall.js"></script>
+		<script type="text/javascript">
+			$.snowFall({
+				//创建粒子数量，密度
+				particleNo: 300,
+				//粒子下拉速度
+				particleSpeed: 40,
+				//粒子在垂直（Y轴）方向运动范围
+				particleY_Range:1300,
+				//粒子在垂直（X轴）方向运动范围
+				particleX_Range:1000,
+				//是否绑定鼠标事件
+				bindMouse: false,
+				//相机离Z轴原点距离
+				zIndex:600,
+			  //摄像机视野角度
+				angle:55,
+				wind_weight:0
+			});
+			
+		</script>
 	</body>
 </html>
+
+
+
+
+
+
