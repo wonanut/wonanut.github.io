@@ -25,6 +25,11 @@
 	box-shadow:1px 1px 8px #444;
 }
 
+.card_head {
+	height: 30px;
+	background-color: gray;
+}
+
 .card .img {
 	width: 25px; 
 	height: 25px; 
