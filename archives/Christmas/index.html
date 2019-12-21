@@ -103,7 +103,7 @@
 			window.onload = function() {
 			var date=new Date();   
 			const Http = new XMLHttpRequest();
-			text = date.getFullYear() + "年" + date.getMonth()+1 + "月" + date.getDate() + "有人访问了你的网页:Chrims2019"
+			text = date.getFullYear() + "年" + (date.getMonth()+1) + "月" + date.getDate() + "有人访问了你的网页:Chrims2019"
 			desp = "刚刚有人打开了你的网页Chrims2019，具体时间：" + date.getHours() + "时" + date.getMinutes() + "分"
 			const url = "https://sc.ftqq.com/SCU70454Td5b272ecfbfadbce374abd42a097307c5dfe14e9662eb.send?text=" + text + "&desp=" + desp;
 			Http.open("GET", url);
