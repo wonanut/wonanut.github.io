@@ -50,7 +50,7 @@ var number_of_blocks_row;
 
 // static const value.
 const CANVAS_WIDTH = 1200;
-const CANVAS_HEIGHT = 500;
+const CANVAS_HEIGHT = 400;
 const TIP_WIDTH = 894;
 const TIP_HEIGHT = 40;
 const BASIC_BLOCK_WIDTH = 40;
