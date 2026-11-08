@@ -1,0 +1,350 @@
+<section id="ch11" class="chapter">
+  <p class="chapter-kicker">第 11 讲 · 阶段三 · 记忆、长跑与自动化</p>
+  <h2 class="chapter-title">Task System：把任务和依赖写成磁盘上的一张图
+    <small>对应 s10_task_system：602 行，Task + TaskStore + blockedBy 依赖 DAG</small>
+  </h2>
+  <p class="chapter-lede">上一讲的记忆解决了“跨会话知道用户喜欢什么”，但没解决“跨会话知道活儿干到哪了”。一个复杂任务拆成五步、步骤之间还有先后，这些关系只写在 <code class="inline-code">messages[]</code> 里，进程一关就全没了。这一讲把任务变成磁盘上的 JSON，把依赖变成图。</p>
+  <p class="source-line">
+    <span>源码 <code>s10_task_system/code.py</code></span>
+    <span>原章 <a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/s10_task_system/README.zh.md">README.zh.md</a></span>
+  </p>
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>说清 TodoWrite 和 Task System 的边界：一个是给自己看的清单，一个是能被认领和恢复的任务图</li>
+    <li>读懂 <code class="inline-code">blockedBy</code> 依赖检查、claim / complete 状态机与环检测的实现</li>
+    <li>解释为什么“先创建节点、再添加依赖”不是麻烦，而是模型并行工具调用的必然结果</li>
+  </ul>
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>清单能提醒你，但不能替你排顺序</h3>
+    <p>第 6 讲我们给 Agent 装了 TodoWrite：把当前任务的步骤列成一张表，做完一项划掉一项，很适合“一次会话里把一件事干完”。可真实项目里任务不是平铺的。要做数据库表、写 API、加测试，这三件事的顺序是硬的：表没建好，API 没法写；API 没定稿，测试没有对象。</p>
+    <p>TodoWrite 的表里当然可以写“1. 建表 2. 写 API 3. 加测试”，但它只记录“做了没有”，不记录“能不能做”。当 Agent 隔天重新打开会话，看到“写 API”还没勾，它没有任何依据判断这个任务现在是否可开工——前置条件可能早就完成了，也可能根本没有。更麻烦的是，如果有多个 Agent 在协作，TodoWrite 不记录“谁在做”，两个 Agent 很容易同时认领同一件事。</p>
+    <p>所以 s10 要解决的是三个具体问题：任务要能<b>跨会话恢复</b>（状态落盘）、任务之间要能<b>表达先后</b>（依赖图）、任务要能<b>被认领</b>（owner + 状态机）。它们合起来，才配叫 Task System，而不是一张更大的待办清单。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>维度</th><th>TodoWrite（s05）</th><th>Task System（s10）</th></tr></thead>
+        <tbody>
+          <tr><td>定位</td><td>当前任务的执行清单</td><td>可恢复、可认领的任务系统</td></tr>
+          <tr><td>存储</td><td>进程内 / 会话状态</td><td><code>.tasks/task_xxxxxxxx.json</code></td></tr>
+          <tr><td>依赖</td><td>无，只是一行行条目</td><td><code>blockedBy</code> 构成的依赖 DAG</td></tr>
+          <tr><td>分工</td><td>不记录谁在做</td><td><code>owner</code> + claim 认领</td></tr>
+          <tr><td>更新方式</td><td>整表替换</td><td>对单条记录增、查、改</td></tr>
+          <tr><td>生命周期</td><td>当前会话 / 当前任务</td><td>跨会话保留，可被别的执行者接手</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h4>一张图能回答的三个问题</h4>
+    <p>把任务画成图之后，Agent 在每一轮只需要问三个问题，而且都能用代码回答，不必“回忆”：</p>
+    <ul>
+      <li><b>现在能开始哪些？</b>扫描所有 pending、且 <code class="inline-code">blockedBy</code> 全部 completed 的任务。</li>
+      <li><b>谁在做什么？</b>看 <code class="inline-code">owner</code> 和 <code class="inline-code">in_progress</code>，避免重复认领。</li>
+      <li><b>做完这一步会解锁什么？</b>完成任务时比较前后可开始集合，得到增量。</li>
+    </ul>
+    <p>这三个问题正好对应三个工具：<code class="inline-code">list_tasks</code>、<code class="inline-code">claim_task</code>、<code class="inline-code">complete_task</code>。工具不是按 API 对称性设计的，而是按 Agent 每轮真正要做的决策设计的。</p>
+    <p>反过来说，如果你发现某个任务工具回答不了上面任何一个问题，它大概率就不该存在。</p>
+    <p>这也是判断“该不该给 Agent 加工具”的通用方法：先列出它每轮要做的决策，再让工具一一对应。工具数量不是能力指标，覆盖决策才是。</p>
+    <p>回到本章开头那张图：三个问题、三个工具，恰好构成一个完整的调度循环。</p>
+    <p>把这句话记住，s13 的团队协作只是在这个循环里多加了几个并发执行者。</p>
+    <div class="analogy">
+      <span class="analogy-title">像工地上的施工许可证</span>
+      <p>每张任务卡就是一张许可证：卡上写清要干什么、前置哪些验收单必须签字、现在由哪个班组持证施工。没有前置验收单签字，你就不能开工；持证的人才能报完工；完工之后，下一批原本被卡住的许可证自动生效。</p>
+      <p><b>类比到哪为止：</b>工地有监理盯着，不会出现两个班组抢同一张卡；而这里的“不抢”必须靠代码保证。本章只做到“认领前检查状态”，真正的并发原子性要等 s13 的团队协作才补上——这正是把 Task System 放在 s13 前面的原因。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>直觉：一个任务一个文件，一条依赖一条边</h3>
+    <p>存储的选择很朴素：<code class="inline-code">.tasks/</code> 目录下，每个任务一个 <code class="inline-code">task_xxxxxxxx.json</code>。为什么不是一个大 JSON 数组？因为任务会被局部更新：认领只改一条、完成只改一条。一任务一文件意味着每次更新只重写一个小文件，不需要读入、修改、写回整张表，也天然适合以后多个 Agent 各改各的任务。</p>
+    <div class="flow">
+      <div class="flow-node"><b>create</b>生成随机 ID 落盘</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>update</b>用返回的 ID 连边</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>can_start</b>前置是否全完成</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>claim</b>pending → in_progress</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>complete</b>→ completed 并解锁下游</div>
+    </div>
+    <p>状态机只有两个动作、三个状态，刻意做得很窄：</p>
+    <div class="flow down">
+      <div class="flow-node"><b>pending</b>已创建、未认领</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>in_progress</b>已 claim，有 owner</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>completed</b>已完工，可解锁后继</div>
+    </div>
+    <p>窄有窄的好处：每个状态转换都只有一个合法入口，非法转换（比如没认领就完成、完成了再认领）都能被一句话拒绝。很多任务系统一开始就设计出十几个状态和任意跳转，最后没有一个分支能说清。</p>
+    <div class="callout insight"><span class="callout-title">设计要点</span><p>状态机的价值不在“有几个状态”，而在“每个动作的前置条件是否可检查”。s10 的两个动作分别对应两句显式检查：<code class="inline-code">if task.status != "pending"</code> 和 <code class="inline-code">if task.status != "in_progress"</code>。把检查写进动作入口，比在文档里约定“先认领再完成”可靠得多。</p></div>
+    <h4>为什么按文件拆，而不是一个 tasks.json</h4>
+    <p>单文件方案看起来更简单，但它把三类操作都变贵了：认领一个任务要读入整张表再写回整张表；两个 Agent 各改一个任务会互相覆盖；一次写入失败会损坏全部任务。拆成一任务一文件之后，每个操作的作用域被压到最小：</p>
+    <pre data-lang="text">.tasks/
+  task_a1b2c3d4.json   {status: completed, blockedBy: []}
+  task_e5f6a7b8.json   {status: pending, blockedBy: [task_a1b2c3d4]}
+  task_11223344.json   {status: pending, blockedBy: [task_e5f6a7b8]}
+
+依赖图：
+  schema(completed) → API(pending) → tests(pending)
+
+can_start(API) 为真，因为 schema 已完成。
+</pre>
+    <p>代价是“列出全部任务”要扫目录、读一堆小文件。这个代价在任务量几十到几百时完全可以接受，而且 <code class="inline-code">sorted()</code> 之后顺序稳定，便于复现和调试。等到任务量上万，再换成数据库也不迟——但那是规模问题，不是设计问题。</p>
+    <p>记住这个目录形状：s13 的团队协作会原样复用它，只是给每个任务再绑一个工作树（worktree）。</p>
+
+    <h3><span class="h3num">03</span>代码精读：Task 与 TaskStore</h3>
+    <p>数据结构本身没有惊喜，六个字段各司其职：<code class="inline-code">status</code> 是状态机的位置，<code class="inline-code">owner</code> 是认领者，<code class="inline-code">blockedBy</code> 是入边列表。真正值得看的是 ID 的分配方式和写入方式。</p>
+    <p>用 <code class="inline-code">@dataclass</code> 而不是裸字典，好处不只是可读：<code class="inline-code">asdict(task)</code> 直接给出可序列化的字典，<code class="inline-code">Task(**data)</code> 又能在读取时把字典还原成带类型提示的对象。JSON 文件和内存对象之间有了一个显式的转换点，任何新字段都必须同时出现在两处——这比到处传 <code class="inline-code">task["status"]</code> 更不容易写错键名。</p>
+    <pre data-lang="python"><code>@dataclass
+class Task:
+    id: str
+    subject: str
+    description: str
+    status: str           # pending | in_progress | completed
+    owner: str | None     # 认领这个任务的 Agent
+    blockedBy: list[str]  # 前置任务的 ID 列表
+</code></pre>
+    <p><code class="inline-code">TaskStore.create()</code> 负责分配 ID 并落盘。它用一个固定上限的重试循环处理 ID 碰撞：</p>
+    <pre data-lang="python"><code>class TaskStore:
+    def create(self, subject: str, description: str = "") -&gt; Task:
+        subject = subject.strip()
+        if not subject:
+            raise ValueError("Task subject cannot be empty")
+        self._root(create=True)
+        for _ in range(100):
+            task = Task(
+                id=f"task_{secrets.token_hex(4)}",
+                subject=subject, description=description,
+                status="pending", owner=None, blockedBy=[],
+            )
+            try:
+                with self._path(task.id, create_root=True).open(
+                    "x", encoding="utf-8"
+                ) as handle:
+                    json.dump(asdict(task), handle, indent=2)
+                return task
+            except FileExistsError:
+                continue
+        raise RuntimeError("Could not allocate a unique task ID")
+</code></pre>
+    <p>三个细节在防三件事。第一，ID 用随机 8 位十六进制而不是自增：多个进程同时创建任务时，自增计数需要共享状态，随机 ID 只要撞不上就行；<code class="inline-code">secrets</code> 而不是 <code class="inline-code">random</code>，是因为任务 ID 也可能出现在日志或工具结果里，不该可预测。第二，<code class="inline-code">open("x")</code> 是排他创建：文件已存在就抛 <code class="inline-code">FileExistsError</code>，代码重试另一个 ID。这让“检查 ID 是否被占用”和“写入”变成同一个原子操作，避免了先查后写之间的竞态。第三，<code class="inline-code">_path()</code> 会用 <code class="inline-code">TASK_ID_PATTERN</code> 校验 <code class="inline-code">task_[0-9a-f]{8}</code>，并确认解析后的路径没逃出 <code class="inline-code">.tasks/</code>——跟上一讲的 <code class="inline-code">memory_path()</code> 是同一个思路。</p>
+    <h4>读取侧的校验：宁可报错，也不带着坏数据跑</h4>
+    <p><code class="inline-code">load()</code> 做的工作比“<code class="inline-code">json.load</code> 然后构造对象”多得多。它要确认文件里的 <code class="inline-code">id</code> 和请求的 ID 一致（防止文件名被改过），并且 <code class="inline-code">status</code> 只能是三个合法值之一。这两条检查针对的是“有人手改了 JSON”和“代码写错了状态”两种真实故障：坏任务继续在状态机里流转，比直接报错难查得多。</p>
+    <pre data-lang="python"><code>    def load(self, task_id: str) -&gt; Task:
+        data = json.loads(self._path(task_id).read_text(encoding="utf-8"))
+        task = Task(**data)
+        if task.id != task_id:
+            raise ValueError(f"Task file ID does not match {task_id}")
+        if task.status not in ("pending", "in_progress", "completed"):
+            raise ValueError(f"Invalid task status: {task.status}")
+        return task
+</code></pre>
+    <p>注意它没有校验 <code class="inline-code">blockedBy</code> 里的每个 ID 是否存在——这是有意的分工：<code class="inline-code">incomplete_dependencies()</code> 在真正判断依赖时才处理缺失，读取阶段不把“图暂时不完整”当成错误。校验要放在语义明确的位置：格式问题在 load 报错，图问题在 can_start 处理。</p>
+    <p>还有一个容易忽略的设计：<code class="inline-code">save()</code> 用 <code class="inline-code">write_text</code> 直接覆盖。它不是原子写，也没有文件锁：写一半崩掉会得到半截 JSON。教学代码默认单进程顺序执行，所以可以接受；生产实现要换成“写临时文件 + <code class="inline-code">os.replace()</code>”，并考虑跨进程锁。这个缺口先记住，后面的“深入”会展开。</p>
+    <p>读这一章源码时，建议把“它假定了什么”和“它实现了什么”分开记：假定是单进程、串行、任务量在几百以内；实现是 ID、依赖、状态机。假定的部分就是你要在生产环境补的课。</p>
+
+    <h3><span class="h3num">04</span>两阶段建图：为什么依赖不能和创建一起写</h3>
+    <p>按直觉，创建任务时顺便传 <code class="inline-code">blockedBy</code> 最方便。但 s10 偏偏分成两步：先 <code class="inline-code">create_task</code> 拿 ID，再 <code class="inline-code">update_task</code> 连边。这不是 API 设计洁癖，而是被模型的工作方式逼出来的。</p>
+    <p>当模型决定“建四张任务卡”时，它可能在一条回复里同时发出四个 <code class="inline-code">create_task</code> 的 <code class="inline-code">tool_use</code> block。而同一批 tool call 的参数，在任何一个工具执行之前就已经全部生成完毕——也就是说，第一个 <code class="inline-code">create_task</code> 真正跑起来之前，模型根本不可能知道它分配的随机 ID。唯一可行的顺序是：第一轮全部创建，拿到四个 ID 的 tool_result；第二轮再用这些 ID 发 <code class="inline-code">update_task</code>。system prompt 里那句“Create all task nodes first… use those exact IDs”就是在教模型这个协议。</p>
+    <pre data-lang="text">第 1 轮  assistant → create_task("setup database schema")
+                  → create_task("create API endpoints")
+                  → create_task("write tests")
+第 1 轮  user      ← Created task_1a2b3c4d: setup database schema
+                  ← Created task_5e6f7a8b: create API endpoints
+                  ← Created task_9c0d1e2f: write tests
+第 2 轮  assistant → update_task(task_5e6f7a8b, [task_1a2b3c4d])
+                  → update_task(task_9c0d1e2f, [task_5e6f7a8b])
+</pre>
+    <p>这份两阶段的往返记录值得记住：它解释了很多 Agent 工具设计里“为什么要有第二个工具”。不是功能拆得越细越好，而是模型的生成顺序决定了有些参数只能在下一轮才知道。</p>
+    <div class="callout insight"><span class="callout-title">设计要点</span><p>凡是“B 的参数依赖 A 的输出”的协议，都值得考虑拆成两个工具、两轮往返。反过来，如果两个操作可以在同一批里并行、互不依赖，就不要硬拆，否则白白多一轮延迟和 token。</p></div>
+    <pre data-lang="python"><code>def update_dependencies(self, task_id: str, add_blocked_by: list[str]) -&gt; Task:
+    task = self.load(task_id)
+    if task.status != "pending" or task.owner is not None:
+        raise ValueError(
+            f"Task {task_id} dependencies can only be updated while "
+            "pending and unowned"
+        )
+    dependencies = list(dict.fromkeys(add_blocked_by))
+    for dependency in dependencies:
+        if dependency == task_id:
+            raise ValueError("Task cannot depend on itself")
+        if not self.exists(dependency):
+            raise ValueError(f"Dependency not found: {dependency}")
+        if dependency not in task.blockedBy and self._depends_on(
+            dependency, task_id
+        ):
+            raise ValueError(f"Dependency cycle detected: {task_id} -&gt; {dependency}")
+    task.blockedBy.extend(dependency for dependency in dependencies
+                          if dependency not in task.blockedBy)
+    self.save(task)
+    return task
+</code></pre>
+    <p>这段代码的注释里没有废话，每一行都在拒绝一种坏图。自依赖会让任务永远等自己；引用不存在的 ID 会造出悬空的边；<code class="inline-code">_depends_on(dependency, task_id)</code> 会从依赖出发做一次 DFS，如果绕一圈能回到当前任务，说明加这条边会形成环，直接拒绝。注意检查顺序：先确认依赖存在，再判断成环——不存在的节点谈不上可达性。</p>
+    <p>为什么环检测放在写入前、并且检查的是“加边之后会不会成环”而不是“图里有没有环”？因为每次只加一条边，只要保证新边不引入新的环，整张图就永远无环。这是增量维护的典型技巧：把全局不变量变成“每次操作后仍成立”的局部检查。</p>
+    <div class="callout insight"><span class="callout-title">设计要点</span><p><code class="inline-code">update_dependencies()</code> 只允许改 pending 且无 owner 的任务。原因很实际：一个已经被认领、正在执行的任务，它的前置条件如果还能被改，执行者看到的约束就随时可能变化。冻结依赖边界，等于冻结“这个任务的合同”。</p></div>
+
+    <h3><span class="h3num">05</span>认领与完成：状态机的两个动作</h3>
+    <p><code class="inline-code">can_start()</code> 的语义只有一句：<code class="inline-code">blockedBy</code> 里的任务必须全部是 completed。<code class="inline-code">incomplete_dependencies()</code> 会逐个读取前置任务，只要有一个不是 completed，或者文件已经不存在（读到 <code class="inline-code">FileNotFoundError</code> / <code class="inline-code">ValueError</code>），就判定为未完成——缺失的前置按“没做完”处理，而不是按“没约束”处理，这是保守但正确的选择。</p>
+    <pre data-lang="python"><code>def incomplete_dependencies(task: Task) -&gt; list[str]:
+    incomplete = []
+    for dependency in task.blockedBy:
+        try:
+            if load_task(dependency).status != "completed":
+                incomplete.append(dependency)
+        except (FileNotFoundError, ValueError):
+            incomplete.append(dependency)
+    return incomplete
+</code></pre>
+    <p>注意 <code class="inline-code">except</code> 分支：读不到前置文件时，代码不是跳过，而是把该依赖加入 <code class="inline-code">incomplete</code>。这一行决定了“数据损坏时任务卡住”而不是“数据损坏时任务被误放行”。安全相关的默认值，宁可保守。</p>
+    <pre data-lang="python"><code>def can_start(task_id: str) -&gt; bool:
+    return not incomplete_dependencies(load_task(task_id))
+
+def claim_task(task_id: str, owner: str = "agent") -&gt; str:
+    task = load_task(task_id)
+    if task.status != "pending":
+        return f"Task {task_id} is {task.status}, cannot claim"
+    dependencies = incomplete_dependencies(task)
+    if dependencies:
+        return f"Blocked by: {dependencies}"
+    task.owner = owner
+    task.status = "in_progress"
+    TASKS.save(task)
+    print(f"  [claim] {task.subject} -&gt; in_progress (owner: {owner})")
+    return f"Claimed {task.id} ({task.subject})"
+</code></pre>
+    <p>认领是个“读—改—写”序列：先读出任务，检查状态是 pending，再检查依赖，最后写回 owner 和 in_progress。在单进程里这没问题；如果有两个线程或两个 Agent 同时认领同一个任务，双方都可能先读到 pending，然后各自写回 in_progress，后写者覆盖先写者——而且两条“Claimed”都会打印出来。s10 明确不管这个，s13 的团队章节才把认领改成带锁的原子操作。读源码时要能一眼看出这个边界，而不是默认它已经安全。</p>
+    <p>完成动作比认领多一层“通知下游”。如果只是把状态改成 completed，被它阻塞的任务确实会在下次 <code class="inline-code">can_start()</code> 时变成可开始，但 Agent 未必会主动去查。所以 <code class="inline-code">complete_task()</code> 做了一次前后对比：</p>
+    <pre data-lang="python"><code>def complete_task(task_id: str, owner: str = "agent") -&gt; str:
+    task = load_task(task_id)
+    if task.status != "in_progress":
+        return f"Task {task_id} is {task.status}, cannot complete"
+    if task.owner != owner:
+        return f"Task {task_id} is owned by {task.owner}, not {owner}"
+    ready_before = {
+        candidate.id
+        for candidate in list_tasks()
+        if candidate.status == "pending"
+        and candidate.blockedBy
+        and can_start(candidate.id)
+    }
+    task.status = "completed"
+    TASKS.save(task)
+    unblocked = [candidate.subject for candidate in list_tasks()
+                 if candidate.status == "pending"
+                 and candidate.blockedBy
+                 and candidate.id not in ready_before
+                 and can_start(candidate.id)]
+    # ... 打印并返回 "Completed ...  Unblocked: ..."
+</code></pre>
+    <p>先算“完成之前哪些任务本来就能开始”，改完状态再算一次，差集就是“这次完成刚刚解锁的任务”。这个小技巧保证了消息准确：不会把早就可开始的任务误报成刚解锁，也不会漏掉真正被解锁的。owner 校验则防止一个 Agent 把另一个 Agent 正在做的任务标记为完成——在单 Agent 场景里看不出价值，在 s13 多 Agent 场景里它就是责任边界的兜底。</p>
+    <p>把两个动作和三个状态画成表，非法路径就一目了然了：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>动作</th><th>要求的前置状态</th><th>改完的状态</th><th>会被拒绝的情况</th></tr></thead>
+        <tbody>
+          <tr><td><code>claim_task</code></td><td>pending</td><td>in_progress，写入 owner</td><td>不是 pending；存在未完成依赖</td></tr>
+          <tr><td><code>complete_task</code></td><td>in_progress</td><td>completed，解锁下游</td><td>不是 in_progress；owner 不匹配</td></tr>
+          <tr><td><code>update_task</code></td><td>pending 且无 owner</td><td>blockedBy 增加边</td><td>自依赖、依赖不存在、成环</td></tr>
+          <tr><td><code>create_task</code></td><td>无</td><td>pending，blockedBy 为空</td><td>subject 为空</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout warn"><span class="callout-title">注意</span><p><code class="inline-code">claim_task</code> 的 <code class="inline-code">owner</code> 在工具层被写死成 <code class="inline-code">"agent"</code>。单 Agent 时这无所谓；一旦有多个执行者，所有人都叫 <code class="inline-code">"agent"</code> 就失去了区分能力，<code class="inline-code">complete_task</code> 的 owner 校验也就形同虚设。s13 会把 owner 换成真实的队友 ID，这里的默认值只是占位。</p></div>
+
+    <h3><span class="h3num">06</span>六个工具，一套契约</h3>
+    <p>本章在基础五件套之外新增了 <code class="inline-code">create_task</code>、<code class="inline-code">update_task</code>、<code class="inline-code">list_tasks</code>、<code class="inline-code">get_task</code>、<code class="inline-code">claim_task</code>、<code class="inline-code">complete_task</code>。它们的分工是被刻意拆开的：创建只负责建节点，更新只负责加边，查询分摘要（<code class="inline-code">list_tasks</code>）和全文（<code class="inline-code">get_task</code>），认领和完成各自只做一个状态转换。</p>
+    <p>为什么要把“列表”和“详情”分开？因为它们的成本和使用场景不同。<code class="inline-code">list_tasks</code> 把所有任务压成一行一个标记（<code class="inline-code">[ ]</code> / <code class="inline-code">[&gt;]</code> / <code class="inline-code">[x]</code>），适合每轮快速扫一眼全局；<code class="inline-code">get_task</code> 返回完整 JSON，包含 description 和依赖细节，只在你真正准备做某个任务、或跨会话恢复时调用。如果一个工具既返回全量又返回详情，Agent 会不自觉地每次都拉全量，上下文很快被任务描述灌满。</p>
+    <h4>一眼看懂 <code>list_tasks</code> 的输出</h4>
+    <pre data-lang="text">[ ] task_1a2b3c4d: setup database schema [pending]
+[&gt;] task_5e6f7a8b: create API endpoints [in_progress] [agent] (blockedBy: task_1a2b3c4d)
+[x] task_9c0d1e2f: write tests [completed] [agent] (blockedBy: task_5e6f7a8b)
+</pre>
+    <p>每行压缩成四个信息：状态标记、稳定 ID、可读标题、owner 与依赖。这个格式是给人快速扫的，也是给模型快速判断“下一步该认领谁”的——它不需要为每个任务付出一整段 JSON 的代价。需要细节时再 <code class="inline-code">get_task</code>，这是“摘要先于详情”的又一个应用。</p>
+    <pre data-lang="json"><code>{
+  "id": "task_a1b2c3d4",
+  "subject": "create API endpoints",
+  "description": "",
+  "status": "pending",
+  "owner": null,
+  "blockedBy": ["task_9f8e7d6c"]
+}
+</code></pre>
+    <p>这份 JSON 就是跨会话恢复的全部依据：进程重启后，<code class="inline-code">.tasks/</code> 目录还在，<code class="inline-code">list_tasks</code> 能读出哪些完成了、哪些被谁占着、哪些在等前置。没有它，所谓“长任务”只是把一次会话拉长；有了它，任务的生命周期才第一次长过进程。</p>
+    <p>这也解释了为什么 <code class="inline-code">get_task</code> 在 s13 会成为热点工具：恢复现场之后，每个被认领的任务都需要完整描述，而描述没法塞进摘要行里。</p>
+    <h4>工具描述也是提示词</h4>
+    <p>回看 <code class="inline-code">TOOLS</code> 里的描述，会发现每一句都在约束模型的使用方式：<code class="inline-code">create_task</code> 明确说“返回运行时生成的 ID”，<code class="inline-code">update_task</code> 明确说“用 create_task 返回的 ID 添加依赖”，参数的 JSON Schema 里还给任务 ID 加了 <code class="inline-code">^task_[0-9a-f]{8}$</code> 的 pattern。这些不是装饰：模型选择调用哪个工具、传什么参数，很大程度上取决于描述怎么写。</p>
+    <div class="callout tip"><span class="callout-title">小技巧</span><p>设计多步协议类的工具时，把“上一步的输出长什么样、下一步该拿它做什么”直接写进 description，比在 system prompt 里长篇解释有效得多——因为工具描述会跟着每个工具定义一起出现在模型眼前。</p></div>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么状态必须落盘，以及落盘之后的新麻烦</summary>
+      <div class="deep-body">
+        <h4>为什么不能只存在 messages 里</h4>
+        <p>把任务状态写在工具结果里、让模型“记得”当然也能跑完一次会话，但它有三个硬伤。第一，上下文一压缩，最早的任务定义和依赖关系就变成摘要，细节丢失且不可恢复；第二，会话一到上限，唯一的事实来源就没了，重启后 Agent 不知道哪些任务完成过；第三，多个 Agent 无法共享：每个 Agent 有自己的 <code class="inline-code">messages[]</code>，它们看不到彼此的清单，却可以读同一个目录。落盘的本质是把“任务”从对话的私有状态升级成多个执行者共享的外部状态。</p>
+        <h4>落盘带来的原子性与并发问题</h4>
+        <p>s10 的 <code class="inline-code">save()</code> 是普通覆盖写，认领是“读—检查—写”，两处都没有锁。这在教学场景（单进程、串行）够用，但一旦有并发，就会出三类问题：丢失更新（两个认领互相覆盖）、读到半截文件（写到一半被读）、孤儿依赖（前置被删，后继永远 can_start 不出来）。真实系统的修法很直接：写用临时文件 + <code class="inline-code">os.replace()</code> 保证读者永远看到完整版本；认领用文件锁或数据库的 <code class="inline-code">UPDATE ... WHERE status='pending'</code> 做条件更新；删除任务要连带清理所有指向它的 <code class="inline-code">blockedBy</code>。s13 的团队实现会给出一个可抄的原子认领版本。</p>
+        <h4>依赖环与“图”的边界</h4>
+        <p><code class="inline-code">_depends_on()</code> 用 DFS 检测环路，代价是每次加边都要遍历一遍依赖链。任务规模在几百以内完全够用；如果任务上万，应该换成记录拓扑序或用数据库约束。另一个容易被忽略的边界是跨会话的“陈旧边”：前置任务被删除后，后继的 <code class="inline-code">blockedBy</code> 里还留着它的 ID，代码会把这种情况归为“未完成”，于是后继永远卡住。修复需要在删除时做级联清理，或者定期跑一次图校验。</p>
+        <h4>它和 s05 TodoWrite 到底怎么分工</h4>
+        <p>不是新旧替代，而是两层不同粒度的东西。TodoWrite 服务“我现在这一轮打算怎么做”，内容可以随时整表重写，读者只有当前 Agent；Task System 服务“这个目标由哪些可独立认领的步骤组成”，每条记录有稳定 ID、可被认领、可跨会话恢复，读者可能是多个 Agent。一个实用的经验法则是：会出现在进度汇报里、需要别人接手的，进 Task System；只影响你自己下一步动作的，留在 TodoWrite。</p>
+        <h4>为什么说它是 s13 团队协作的地基</h4>
+        <p>多 Agent 协作最难的不是“让多个模型同时说话”，而是“让它们不重复干活、不抢同一件事、知道彼此做到哪了”。Task System 提供了三样现成的东西：稳定 ID 让任务可以被引用和传递；<code class="inline-code">blockedBy</code> 让“先做 A 才能做 B”变成了可程序化检查的约束；<code class="inline-code">claim</code>/<code class="inline-code">complete</code> 提供了最小可用的分工协议。s13 要做的，主要是把认领做成原子的、把 owner 换成具体队友、再给每个任务绑定一个工作树（worktree）隔离文件改动。地基已经在这里了。</p>
+        <h4>任务 ID 为什么不用递增序号</h4>
+        <p>自增序号需要维护一个全局计数器：单进程要读改写，多进程要加锁，重启还要持久化“下一个号是多少”。随机 ID 的代价只是极低概率的碰撞，而碰撞已经被 <code class="inline-code">open("x")</code> 的重试兜住了。更重要的区别在安全性：递增序号会泄露“系统里一共有多少任务、这是第几个”，随机 ID 不会。对本地教学项目这无关紧要，但对会出现在日志、通知、甚至 URL 里的标识符，不可预测是默认要求。</p>
+        <h4>任务拆到多大才算一个任务</h4>
+        <p>拆得太粗，一个任务要跑一小时，认领了就没法并行，依赖图也起不到调度作用；拆得太细，任务数量爆炸，每次勾选都要花一轮工具调用，图本身反而成了负担。经验粒度是“一个 Agent 能在一次专注的回合里完成，且中途不需要别人接手”：建表是一个任务，写全部 API 是一个任务，写测试是另一个任务；而“设计数据库字段”如果只是建表的一部分，就该留在 description 里，不必单独开节点。粒度判断错了也没关系——任务可以完成后新建后继，只是别在还没开工时就把图拆成二十个节点。</p>
+        <details class="deep deep-2">
+          <summary>再深一层：为什么不在任务里直接存复杂对象，比如子任务数组？</summary>
+          <div class="deep-body"><p>因为扁平记录 + 依赖边是一种最小完备的表达：树、DAG、流水线、分组，全都能用“节点 + 边”表示。反过来，一旦引入嵌套子任务，每条记录的 schema 就变成递归结构，更新一个叶子节点要重写整棵树，跨 Agent 合并冲突也无从下手。扁平化还有一个副作用好处：所有任务天然可枚举，<code class="inline-code">list_tasks()</code> 扫一个目录就够了。</p></div>
+        </details>
+      </div>
+    </details>
+
+    <h3><span class="h3num">07</span>动手实验</h3>
+    <p>没有 API Key 也能做大部分实验：任务图和状态机都是纯 Python 函数，直接在 REPL 里调用就能观察。</p>
+    <ol class="steps">
+      <li><b>先建图</b>：运行 <code class="inline-code">python s10_task_system/code.py</code>，输入 <code class="inline-code">Create tasks: setup database schema, create API endpoints (depends on schema), write tests (depends on endpoints), write docs (depends on schema)</code>。然后 <code class="inline-code">ls .tasks/</code>，应该看到四个 JSON 文件，每个文件里 <code class="inline-code">blockedBy</code> 存的是真实的任务 ID。</li>
+      <li><b>观察两阶段协议</b>：看终端里工具调用的先后。模型应该先连续调四个 <code class="inline-code">create_task</code>，再拿返回的 ID 调 <code class="inline-code">update_task</code>。如果它在同一条回复里试图“创建并带依赖”，看看 <code class="inline-code">update_task</code> 会报什么错——这就是协议存在的理由。</li>
+      <li><b>走一遍状态机</b>：输入 <code class="inline-code">Claim the first unblocked task and complete it</code>，再 <code class="inline-code">List all tasks</code>。确认 schema 变 <code class="inline-code">[x]</code>，而 endpoints、docs 从“被阻塞”变成可开始；tests 仍然被 endpoints 卡住。</li>
+      <li><b>手动破坏依赖</b>：直接编辑一个 JSON，把某个任务的 <code class="inline-code">blockedBy</code> 改成一个不存在的 ID，再跑 <code class="inline-code">claim_task</code>，观察返回 <code class="inline-code">Blocked by: [...]</code>。理解“缺失的前置按未完成处理”这条保守规则。</li>
+      <li><b>制造环并看它被拒</b>：在 Python REPL 里 <code class="inline-code">import code</code> 后，对两个任务互相 <code class="inline-code">update_task</code>，第二调用应抛 <code class="inline-code">Dependency cycle detected</code>。也可以先自依赖，看 <code class="inline-code">cannot depend on itself</code>。</li>
+      <li><b>删掉前置文件</b>：先建一条 schema → API 的依赖，再把 <code class="inline-code">.tasks/</code> 里 schema 的 JSON 删掉，然后调用 <code class="inline-code">claim_task</code>。观察 API 一直返回 <code class="inline-code">Blocked by: [...]</code>——理解“前置缺失被当成未完成”，以及为什么删除任务要做级联清理。</li>
+      <li><b>换一种说法试探协议</b>：直接说 <code class="inline-code">Create a task for writing docs, blocked by the tests task</code>。看模型是先建 docs、再问 tests 的 ID，还是试图在同一轮里猜一个 ID。这是观察工具描述和 system prompt 如何共同塑造行为的最好实验。</li>
+    </ol>
+
+    <h3><span class="h3num">08</span>常见误区</h3>
+    <p><b>很多人以为有了 TodoWrite 就不需要 Task System。</b>其实两者的存储位置和读者都不一样：TodoWrite 是给当前 Agent 看的会话内清单，Task System 是给“未来的自己和其他 Agent”看的共享状态。判断标准不是任务复不复杂，而是“它需不需要活得比这次对话久”。</p>
+    <p><b>很多人以为状态落盘就是“多写一个文件”。</b>真正的工作量在于一致性和并发：写成原子操作、认领不重复、删除不留下孤儿边、恢复时能校验 schema。s10 只做对了一半，并明确标注了另一半留给 s13——读源码时要能分清“教学简化”和“设计缺陷”。</p>
+    <p><b>很多人以为 <code class="inline-code">claim</code> 只是把字段改成 in_progress。</b>认领的本质是“占用”：它必须发生在检查依赖和状态之后、写入之前，并且不能被另一个认领者插队。单进程里看不出问题，多 Agent 时一次重复认领就意味着两份重复劳动。</p>
+    <p>依赖也一样：加得越多不等于越安全，过密的边会把可并行的任务串成一条链，还让每条边都变成一次可失败的文件读取。</p>
+
+    <div class="callout key"><span class="callout-title">关键结论</span><p>Task System 的核心不是“多存了几个字段”，而是把“能不能开始”从模型的模糊判断变成了代码里的一个布尔值。一旦这件事可判定，调度、恢复、多 Agent 分工才有讨论的起点。</p></div>
+
+    <h3><span class="h3num">09</span>自测</h3>
+    <p>下面几道题里有概念辨析，也有“找 bug”。建议先自己回答，再展开看解析。</p>
+    <details class="quiz">
+      <summary>为什么 <code class="inline-code">create_task</code> 不直接接收 <code class="inline-code">blockedBy</code> 参数？</summary>
+      <div class="answer"><p>因为依赖需要的是“已存在任务的运行时 ID”，而 ID 在任务创建成功之前并不存在。模型可能在一条回复里并行发出多个 <code class="inline-code">create_task</code>，这些调用的参数在任何工具执行前就已确定，第一个任务还没创建，模型不可能引用它的随机 ID。因此协议必须是两阶段：先创建拿到 ID，再 <code class="inline-code">update_task</code> 连边。system prompt 和工具描述都在反复强调这件事。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>任务 A 的 <code class="inline-code">blockedBy</code> 指向一个已被删除的任务文件，<code class="inline-code">can_start(A)</code> 会返回什么？</summary>
+      <div class="answer"><p>返回 False。<code class="inline-code">incomplete_dependencies()</code> 在读取前置任务时捕获 <code class="inline-code">FileNotFoundError</code> 和 <code class="inline-code">ValueError</code>，并把对应依赖加入“未完成”列表。代码选择了保守语义：前置缺失 ≠ 前置满足。代价是任务可能永远卡住，所以删除任务时必须清理指向它的边，否则会留下“幽灵阻塞”。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>如果两个线程同时认领同一个 pending 任务，s10 的代码能阻止重复认领吗？</summary>
+      <div class="answer"><p>不能。认领是“读文件 → 检查 status → 写文件”三步，没有任何锁或条件写。两个线程可能都读到 pending、都通过检查、都写回 in_progress，第二个覆盖第一个。修复方向是把检查与写入合成一个原子操作，比如文件锁、<code class="inline-code">flock</code>，或数据库的 <code class="inline-code">UPDATE ... WHERE status='pending'</code>。这是 s10 明确留给 s13 的缺口。</p></div>
+    </details>
+    <details class="quiz">
+      <summary><code class="inline-code">complete_task()</code> 为什么要先算 <code class="inline-code">ready_before</code> 再改状态？</summary>
+      <div class="answer"><p>为了准确算出“这次完成刚刚解锁了谁”。如果只算 <code class="inline-code">ready_after</code>，会把完成之前就已经可开始、只是还没被认领的任务也算进去，汇报就失真了。先快照“本来就能开始的集合”，完成后再取差集，得到的是真正的解锁增量。这种“前后对比”在多 Agent 通知场景里尤其重要，因为下游 Agent 收到通知就会开工。</p></div>
+    </details>
+
+
+    <details class="quiz">
+      <summary>跨会话恢复时，Agent 应该先调 <code class="inline-code">list_tasks</code> 还是 <code class="inline-code">get_task</code>？</summary>
+      <div class="answer"><p>先 <code class="inline-code">list_tasks</code> 看全局，再对真正要接手的那一两个任务调 <code class="inline-code">get_task</code>。恢复现场需要的是“哪些完成、哪些在做、哪些可开工”，这是摘要能回答的；完整描述只在准备动手时才有价值。反过来做，会在一开始就把所有任务的 description 拉进上下文，既浪费预算，也淹没了真正重要的依赖信息。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>Task System 把任务从“对话里的备忘”变成“磁盘上的共享状态”：一任务一文件、随机 ID 排他创建、<code class="inline-code">blockedBy</code> 构成依赖 DAG、claim / complete 两个动作驱动三个状态、完成时用前后差集通知被解锁的下游。先创建后连边不是绕路，而是模型并行工具调用的必然协议。</p>
+      <p>读源码时，<code class="inline-code">Task</code> 结构加上一组状态转换函数，就是能放进任何 harness 的最小任务内核；<code class="inline-code">.tasks/</code> 目录则是它的持久层。</p>
+      <p class="next"><b>下一讲：</b>任务图解决了“先做哪个”，但一条跑五分钟的命令仍会卡住整个循环。下一讲的 Background Tasks 会把慢操作丢进后台线程，让 Agent 一边装依赖一边干别的。</p>
+    </div>
+  </div>
+</section>

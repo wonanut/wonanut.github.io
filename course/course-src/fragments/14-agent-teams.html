@@ -1,0 +1,406 @@
+<section id="ch14" class="chapter">
+  <p class="chapter-kicker">第 14 讲 · 阶段四 · 多 Agent 协作</p>
+  <h2 class="chapter-title">Agent Teams：Lead 先提方案，队友各自循环
+    <small>对应 s13_agent_teams：约 1900 行 Python，持久队友 + 共享任务板 + 协作协议</small>
+  </h2>
+  <p class="chapter-lede">上一讲的 cron 让同一个 Agent 按时醒来、接着干活。可当一项工作本身就要同时推进配置、认证、测试三个方向时，把同一个 Agent 叫醒三次，得到的只是一个更忙的 Agent，而不是三个能并行的人。这一讲回答：多个 Agent 怎么分工、怎么通信、怎么不互相污染上下文。</p>
+  <p class="source-line">
+    <span>源码 <code>s13_agent_teams/code.py</code></span>
+    <span>原章 <a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/s13_agent_teams/README.zh.md">README.zh.md</a></span>
+  </p>
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>说清 Lead 与队友各自负责什么，为什么启动队友前必须先问用户</li>
+    <li>理解 MessageBus 如何把通信放在模型上下文之外，以及运行时如何投递事件</li>
+    <li>看懂"发现任务"和"认领任务"为什么必须分成两步，认领又为什么必须原子</li>
+    <li>用 request_id 和状态机解释关机、计划审批这类控制协议</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>一个人干不完，不是活太多，是形状不对</h3>
+    <p>设想你让 Agent 重构一个示例后端：清理配置加载、重写认证、补回归测试。一个 Agent 当然能做完，但它是串行的。更要命的是上下文：改到测试时，最早读过的配置细节早已被压缩、被裁掉，它开始凭印象改代码。你得到的不是"慢一点"，而是"越做越飘"。</p>
+    <p>cron 解决不了这个问题。cron 让 Agent <em>在时间上</em>更持久，但一项任务的三个方向仍然是同一段对话里的三条线。要让工作真正并行，你需要三个独立的执行单元，各自有自己的 <code class="inline-code">messages[]</code>、自己的工具、自己的当前任务。</p>
+    <p>但"多开几个 Agent"这句话太轻了。用户通常只说出目标，不会替运行时设计团队。真正要 Harness 回答的是一串互相咬合的问题：</p>
+    <ul>
+      <li>谁判断并行有没有用？新增的 Agent 由谁批准？</li>
+      <li>队友跨任务怎么保留身份和上下文？</li>
+      <li>结果怎么自动回到 Lead，而不是让模型一遍遍轮询收件箱？</li>
+      <li>空闲队友能不能自己接手就绪任务，而不是等 Lead 逐个派发？</li>
+      <li>两个队友要改同一个仓库时，用哪个工作目录？</li>
+      <li>关机和"先给我看计划"这种控制动作，怎么变成可追踪、可执行的协议？</li>
+    </ul>
+    <div class="analogy">
+      <span class="analogy-title">像一个装修队，而不是一个全能师傅</span>
+      <p>一个师傅当然可以从头装到尾，但他一次只能待在一个房间。装修队的做法是：业主先跟工长确认方案和预算，工长把活拆成水电、木工、油漆几张工单贴在墙上，工人各自认领，干完回报。工长不需要站在每个工人身后盯着，他看的是工单状态和回报。</p>
+      <p><b>类比到哪为止：</b>装修队共享同一个房子、同一套图纸；Agent 团队却不能共享同一段对话历史。工人看到别人在墙上画的线是正常的，模型看到别的 Agent 的工具输出却会被带偏。所以团队运行时不是"把几个人塞进一个聊天室"，而是"每人一间房，靠收件箱通信"。</p>
+    </div>
+    <div class="callout insight"><span class="callout-title">设计要点</span><p>这一讲最容易被忽略的门槛不是"怎么并行"，而是"谁有权决定并行"。启动队友会同时改变成本、并发度和可以修改工作区的角色集合，所以 s13 把这条边界写进了 Lead 的系统提示词，而不是交给模型自由发挥。</p></div>
+
+    <h3><span class="h3num">02</span>直觉：给 Lead 配一个团队运行时</h3>
+    <p>s13 的答案可以拆成四个部件，全部围绕同一个 Lead：</p>
+    <ul>
+      <li><b>Lead</b>：照常与用户对话，负责提方案、建任务图、审批计划、决定何时关机。</li>
+      <li><b>队友（teammate）</b>：每个跑一个独立 Agent 循环，在 WORK 和 IDLE 之间切换，直到被关机。</li>
+      <li><b>MessageBus</b>：每个 Agent 一个文件收件箱，通信发生在模型上下文之外。</li>
+      <li><b>共享任务板</b>：空闲队友发现 ready task，在锁内完成认领。</li>
+    </ul>
+    <p>整体时序如下。注意两个细节：用户确认发生在建任务之前；Lead 启动队友后会主动结束当前轮次，等事件来唤醒自己。</p>
+    <div class="flow">
+      <div class="flow-node"><b>User</b>提出目标</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>Lead</b>提分工方案</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>User</b>确认</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>Lead</b>create_task 建图</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>spawn_teammate</b>启动队友</div>
+    </div>
+    <div class="flow">
+      <div class="flow-node"><b>队友</b>WORK 工具循环</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>result</b> + <b>idle_notification</b></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>Lead 收件箱</b>文件</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>运行时</b>注入团队事件</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>Lead</b>新一轮</div>
+    </div>
+    <p>为什么 Lead 必须先提方案？因为"是否并行"本质上是一个资源与风险决策，不是一次函数调用。队友会消耗额外的模型调用，会同时持有写权限，还可能把仓库改乱。让模型在看到用户明确同意之后再 <code class="inline-code">spawn_teammate</code>，是把一个不可逆动作放在人类确认之后。</p>
+    <p>队友和 s06 的子代理（subagent）长得很像，但定位完全不同：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>维度</th><th>s06 Subagent</th><th>s13 队友</th></tr></thead>
+        <tbody>
+          <tr><td>生命周期</td><td>一次调用后结束</td><td><code>WORK → IDLE → WORK</code>，直到关机</td></tr>
+          <tr><td>上下文</td><td>只服务一个任务</td><td>跨任务保留</td></tr>
+          <tr><td>通信</td><td>返回一次结果</td><td>接收消息并发出事件</td></tr>
+          <tr><td>协作方向</td><td>单向委派</td><td>与 Lead 双向协作</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>子代理解决"这一坨上下文别污染主线程"，队友解决"长期并行协作"。前者是函数，后者是进程。</p>
+    <div class="card-grid">
+      <div class="card"><h4>用户</h4><p>给目标、确认团队方案、最后决定合并还是丢弃工作树（worktree）。</p></div>
+      <div class="card"><h4>Lead</h4><p>拆任务、审计划、接收事件、决定何时关机。</p></div>
+      <div class="card"><h4>队友</h4><p>独立循环，WORK 与 IDLE 切换，只对自己认领的任务负责。</p></div>
+      <div class="card"><h4>运行时</h4><p>投递事件、原子认领、维护协议状态与 assignment lease。</p></div>
+    </div>
+    <p>把这四个角色对照 s10 的单 Agent 版本，能清楚看出团队运行时到底加了什么：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>组件</th><th>s10 单 Agent</th><th>s13 团队</th></tr></thead>
+        <tbody>
+          <tr><td>执行单元</td><td>一个 Agent</td><td>一个 Lead 加持久队友</td></tr>
+          <tr><td>用户流程</td><td>直接执行请求</td><td>先提团队方案，再确认启动</td></tr>
+          <tr><td>通信</td><td>无</td><td>文件收件箱加运行时投递</td></tr>
+          <tr><td>生命周期</td><td>一个循环</td><td><code>WORK / IDLE / shutdown</code></td></tr>
+          <tr><td>共享工作</td><td>单 Agent 使用任务工具</td><td>IDLE 扫描加队友原子认领</td></tr>
+          <tr><td>工作目录</td><td>仓库 <code>WORKDIR</code></td><td>必须认领任务，任务可选 worktree</td></tr>
+          <tr><td>结果上报</td><td>当前 Agent 输出</td><td>分开的 result 与 idle_notification</td></tr>
+          <tr><td>执行约束</td><td>无团队约束</td><td>必需计划会锁住修改型工具</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+
+    <h3><span class="h3num">03</span>代码精读：消息不进模型上下文，事件才进</h3>
+    <p>团队设计里最容易写错的一行，是让所有 Agent 共享同一个 <code class="inline-code">messages</code> 数组。那样一个队友读文件的结果会进入另一个队友的推理上下文，两个模型开始互相"记得"对方做过的事，很快就说不清谁改了什么。s13 的做法是给每个 Agent 一个文件收件箱，通信数据落在磁盘上，只在需要时被消费成消息。</p>
+    <pre data-lang="python"><code>class MessageBus:
+    # ...  _changed 是一个 threading.Condition，兼任锁和唤醒
+    def send(self, from_agent, to_agent, content,
+             msg_type="message", metadata=None):
+        msg = {"from": from_agent, "to": to_agent,
+               "content": content, "type": msg_type,
+               "ts": time.time(), "metadata": metadata or {}}
+        with self._changed:
+            MAILBOX_DIR.mkdir(parents=True, exist_ok=True)
+            with self._path(to_agent).open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(msg, ensure_ascii=True) + "\n")
+            self._changed.notify_all()
+
+</code></pre>
+    <p>等待端必须把超时算清楚，否则 IDLE 会永久阻塞，连任务板都不去扫：</p>
+    <pre data-lang="python"><code>    def wait_for_messages(self, agent, timeout=None):
+        deadline = None if timeout is None else time.monotonic() + timeout
+        with self._changed:
+            while not self.peek(agent):
+                remaining = (None if deadline is None
+                             else deadline - time.monotonic())
+                if remaining is not None and remaining &lt;= 0:
+                    return []
+                self._changed.wait(remaining)
+            return self._read_unlocked(agent)
+</code></pre>
+    <p>这段代码有三个防御点。第一，收件箱是 <code class="inline-code">.mailboxes/&lt;name&gt;.jsonl</code>，一行一条 JSON，追加写不用改写整个文件。第二，<code class="inline-code">_changed</code> 既保护文件读写，又让 IDLE 的队友能在消息到达时被立刻唤醒，不用忙等。第三，<code class="inline-code">_path()</code> 会校验名字并确认解析后的路径仍在邮箱目录里，防止队友名字被拼成 <code class="inline-code">../..</code> 之类的越界路径。</p>
+    <p>消息写进收件箱后，谁来读？不是模型。Lead 只有一个消费者 <code class="inline-code">consume_lead_inbox()</code>：</p>
+    <pre data-lang="python"><code>def consume_lead_inbox() -&gt; list[dict]:
+    """Consume Lead events and update protocol state before model delivery."""
+    msgs = BUS.read_inbox("lead")
+    for msg in msgs:
+        metadata = msg.get("metadata", {})
+        request_id = metadata.get("request_id", "")
+        if request_id and msg.get("type", "").endswith("_response"):
+            match_response(msg["type"], request_id,
+                           metadata.get("approve", False),
+                           msg.get("from", ""), msg.get("to", ""))
+    return msgs
+</code></pre>
+    <p><code class="inline-code">read_inbox()</code> 是破坏性读取：读完就把文件删掉。这保证同一事件不会被同一个进程消费两次，也意味着"谁读谁负责"。所以 Lead 侧只保留一个消费者，读完先更新协议状态，再把格式化后的 <code class="inline-code">[Team events]</code> 文本追加进 history，然后发起新一轮 Lead 调用。</p>
+    <p>运行时的投递路径在 CLI 主循环里：主线程同时等待终端输入和 Lead 收件箱，任一到达就处理。队友事件不是模型"查"出来的，而是运行时"送"进下一轮对话的。因此 Lead 启动队友后可以直接结束本轮，不必在 <code class="inline-code">while</code> 里反复调用 <code class="inline-code">list_teammates</code> 或 <code class="inline-code">get_task</code> 空转。</p>
+    <div class="callout tip"><span class="callout-title">小技巧</span><p>判断一个多 Agent 系统是否"事件驱动"，看它有没有轮询：如果主循环每轮都要模型主动查队友状态，成本会随队友数量线性上涨；如果状态变化能唤醒模型，模型只在真有事时付费。</p></div>
+    <p>队友干完活时，运行时按顺序发两个事件。这不是啰嗦，而是两个不同的问题：</p>
+    <pre data-lang="python"><code>summary = _last_assistant_text(response.content)
+gate = plan_gates.get(self.name, "not_required")
+if gate != "pending" and summary:
+    BUS.send(self.name, "lead", summary, "result")
+if gate == "pending":
+    with team_lock:
+        active_teammates[self.name] = "waiting_approval"
+else:
+    release_completed_assignment(self.name)
+    with team_lock:
+        active_teammates[self.name] = "idle"
+    BUS.send(self.name, "lead", "Waiting for more work.",
+             "idle_notification")
+</code></pre>
+    <p><code class="inline-code">result</code> 回答"这项任务产出了什么"，<code class="inline-code">idle_notification</code> 回答"这个队友现在能不能接下一项"。一句含糊的"完成了"同时承担不了这两个语义：Lead 需要结果来汇总，也需要知道该不该继续派活。把状态当成独立事件发出来，Lead 的决策才不需要猜。</p>
+
+    <h3><span class="h3num">04</span>任务板：发现和认领必须分成两步</h3>
+    <p>队友进入 IDLE 后，先看收件箱，再看任务板：</p>
+    <pre data-lang="python"><code>def wait_for_work(self) -&gt; bool:
+    while True:
+        inbox = BUS.wait_for_messages(self.name, IDLE_SCAN_INTERVAL)
+        if inbox:
+            before = len(self.messages)
+            if self.handle_inbox(inbox):
+                return False
+            if len(self.messages) &gt; before:
+                return True
+            continue
+        task = claim_next_task(self.name)
+        if not task:
+            continue
+        self.messages.append({
+            "role": "user",
+            "content": f"[Auto-claimed task {task.id}] {task.subject}",
+        })
+        return True
+</code></pre>
+    <p>顺序很重要：关机、计划审批、Lead 的直接指令必须先于"临时发现的工作"。如果队友先扫任务板，一个正要被关机的队友可能又接了个新任务，握手就永远完不成。另外要注意，这段代码里没有新循环——认领成功后只是往 <code class="inline-code">self.messages</code> 里塞一条 user 消息，然后返回 <code class="inline-code">True</code>，回到原来的 <code class="inline-code">work()</code>。任务发现只是 WORK 循环的另一个入口。</p>
+    <p>发现和认领为什么不能是一步？因为扫描结果只是某一时刻的快照。多个队友（甚至另一个共享同一任务目录的 Harness 进程）可能同时看到同一张 ready 任务。真正的所有权变更必须放进 <code class="inline-code">claim_task()</code>，并由 <code class="inline-code">task_store_lock()</code> 同时取到进程内锁和文件锁：</p>
+    <pre data-lang="python"><code>def claim_task(task_id: str, owner: str = "agent") -&gt; str:
+    """Atomically claim one task and bind the owner's filesystem cwd."""
+    with task_store_lock():
+        task = load_task(task_id)
+        if task.status != "pending":
+            return f"Task {task_id} is {task.status}, cannot claim"
+        if task.owner:
+            return f"Task {task_id} is already owned by {task.owner}"
+        # ... 还要检查 owner 没有在途任务、依赖已完成
+        if not can_start(task_id):
+            return f"Blocked by: {_incomplete_dependencies(task)}"
+        cwd, error = task_worktree_cwd(task)
+        if error:
+            return f"Cannot claim {task_id}: {error}"
+        task.owner = owner
+        task.status = "in_progress"
+        save_task(task)
+        teammate_assignments[owner] = {"task_id": task.id, "cwd": cwd}
+        advance_assignment_version(owner)
+    return f"Claimed {task.id} ({task.subject})"
+</code></pre>
+    <p>认领是一个"读—判断—写"的临界区：检查状态、写 owner、改成 in_progress、保存、绑定工作目录，全部在同一把锁里完成。这样即使十个队友同时发现同一张任务，也只有一个能把 <code class="inline-code">pending</code> 推进到 <code class="inline-code">in_progress</code>，其余拿到的是 <code class="inline-code">already owned</code>，转身去找下一张。任务写入也遵循同样的谨慎：先写临时文件，再原子替换正式文件，避免进程崩溃留下半截 JSON。</p>
+    <div class="callout warn"><span class="callout-title">注意</span><p>"检查时可用"不等于"写的时候仍然可用"。任何"先看再改"的共享状态，如果中间没有锁或版本号，都会在并发下翻车。任务板如此，认领如此，计划审批的 work_version 也如此。</p></div>
+    <p>认领成功后，<code class="inline-code">teammate_assignments[owner]</code> 同时记下 <code class="inline-code">task_id</code> 和解析后的 <code class="inline-code">cwd</code>。队友的 <code class="inline-code">bash</code>、<code class="inline-code">read_file</code>、<code class="inline-code">write_file</code>、<code class="inline-code">edit_file</code>、<code class="inline-code">glob</code> 全部从这个 assignment 取工作目录。没有认领任务的队友不能用这些工具——它不是"默认在仓库根目录工作"，而是明确被拒绝。这条设计把"这个队友现在该在哪个目录干活"从模型的自由心证变成了运行时的事实。</p>
+    <p>任务上的 <code class="inline-code">worktree</code> 是可选的。当两个队友要并行改同一仓库、又不想互相踩文件时，Lead 可以先用 <code class="inline-code">create_worktree(name, task_id)</code> 创建并绑定一个独立 checkout：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>情况</th><th>运行时动作</th></tr></thead>
+        <tbody>
+          <tr><td>任务 pending、无人认领、尚未绑定</td><td>可以创建 worktree 并写入绑定</td></tr>
+          <tr><td>Git 报错但已留下分支或 checkout</td><td>报告 partial operation，任务保持未绑定，保留现场供人工恢复</td></tr>
+          <tr><td>任务在待办或进行中</td><td>拒绝移除 worktree</td></tr>
+          <tr><td>干净 worktree</td><td>宿主可移除目录，但保留 <code>wt/&lt;name&gt;</code> 分支</td></tr>
+          <tr><td>有改动 worktree</td><td>由用户决定保留还是丢弃</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>关键在后两行：worktree 的创建是模型可以请求的，移除却留在宿主侧，由 <code class="inline-code">remove_worktree()</code> 这个函数承担，而且模型工具表里根本没有它。因为删除一个带未提交改动的目录是破坏性动作，运行时不能替用户做这个决定。还有一个常见误解：worktree 只分离 Git 工作目录和分支，<b>不是安全沙箱</b>，Shell 命令仍然能访问父进程有权访问的一切。</p>
+    <p>认领和启动的顺序也被固定死了。<code class="inline-code">spawn_teammate</code> 会先认领初始任务，认领失败就不启动线程：</p>
+    <pre data-lang="python"><code>def spawn_teammate_thread(name, role, prompt, task_id=None,
+                          require_plan=False):
+    # ... 名字校验、保留名检查、同名队友检查
+    if task_id:
+        claimed = claim_task(task_id, owner=name)
+        if not claimed.startswith("Claimed "):
+            # 认领失败：回滚 active_teammates / plan_gates，不启动线程
+            return f"Cannot spawn teammate '{name}': {claimed}"
+    # ... 创建并启动 TeammateRuntime 线程
+</code></pre>
+    <p>为什么不是先启动线程再让它自己认领？因为那样会出现一个"已经在跑、却没有工作目录"的队友。它可能先读文件、先跑命令，然后才被告知认领失败。把认领放在启动之前，让"启动成功"这件事本身就意味着"已经有任务和工作目录"。这也解释了 <code class="inline-code">TeammateRuntime.current_cwd()</code> 里那句错误信息为什么是"Claim a Task before using workspace tools"——这不是建议，而是运行时的硬约束。</p>
+
+
+    <h3><span class="h3num">05</span>协议：把"关机"和"计划审批"变成有状态的消息</h3>
+    <p>普通协作可以发自由文本："认证改完了，你继续。"但关机不行。如果 Lead 发一句"你可以休息了"，队友只能靠语义猜测这是不是关机指令；如果队友回一句"好的"，Lead 也无法确认它到底停没停。s13 的答案是把控制消息做成带类型和 ID 的状态对象：</p>
+    <pre data-lang="python"><code>@dataclass
+class ProtocolState:
+    request_id: str
+    type: str
+    sender: str
+    target: str
+    status: str
+    payload: str
+    work_version: int | None = None
+    task_id: str | None = None
+</code></pre>
+    <p>关机走一条明确的双向路径：</p>
+    <div class="flow down">
+      <div class="flow-node"><b>Lead</b>创建 pending 的 shutdown 请求</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>shutdown_request</b> 进入队友收件箱</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>队友</b>完成当前步骤</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>shutdown_response</b> 带同一 request_id 返回</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>pending → approved</b>，循环退出</div>
+    </div>
+    <p><code class="inline-code">match_response()</code> 会逐条核对：request_id 是否存在、回复类型是否匹配请求类型、发送方和接收方方向是否对、请求是否仍处于 pending。任何一项不符就忽略。ID 把回复关联到请求，类型阻止不匹配的回复改状态，状态阻止同一回复重复生效。这三件事少了任何一件，协议都会出现"关错了人"或"重复关机"的边界情况。</p>
+    <p>计划审批是反方向的：Lead 先发 <code class="inline-code">plan_request</code>，队友提交 <code class="inline-code">plan_approval_request(request_id, plan)</code>，Lead 再用 <code class="inline-code">plan_approval_response</code> 批准或驳回。真正执行约束的是工具分发层：</p>
+    <pre data-lang="python"><code>def _run_teammate_tool(name: str, block, handlers: dict) -&gt; str:
+    gate = plan_gates.get(name, "not_required")
+    if block.name in {"bash", "write_file", "edit_file"}:
+        if gate != "approved":
+            if gate != "not_required":
+                return (f"Blocked: plan status is {gate}. Submit or revise the "
+                        "plan and wait for approval before changing the workspace.")
+        blocked = check_permission(block, prompt_user=False)
+        if blocked:
+            return blocked
+    handler = handlers.get(block.name)
+    # ...
+</code></pre>
+    <p>状态为 <code class="inline-code">required</code>、<code class="inline-code">pending</code> 或 <code class="inline-code">rejected</code> 时，队友可以读文件、可以提交或修改计划，但不能跑 Shell、不能写文件、不能编辑文件。这就是"审批"和"提示"的区别：提示只是建议，闸门是执行路径上的硬拦截。</p>
+    <p>还有一个容易漏掉的细节：提交计划时会记录当时的 <code class="inline-code">task_id</code> 和 <code class="inline-code">work_version</code>，审批生效时要求两者仍然一致。如果队友在等待审批期间认领或释放了任务，版本号变化会让旧审批自动失效。否则就会出现"计划批的是任务 A，执行的却是任务 B"这种最危险的错配。</p>
+
+    <h3><span class="h3num">06</span>一次完整运行：队友是怎么被叫起来又安静下去的</h3>
+    <p>把前面所有部件串起来看一遍。下面这段终端轨迹重点不是输出内容，而是每一行背后是谁在动：</p>
+    <pre data-lang="text"><code>s13 >> 把后端重构拆到共享任务板，尽量并行完成配置、认证和测试。
+       认证任务使用 worktree，保持现有接口，并确保测试通过。
+
+Lead：我建议按 config、auth 和 tests 三个方向分工。
+      是否启动团队？
+
+s13 >> 开始吧
+
+[task] config created
+[task] auth created -&gt; worktree auth-refactor
+[task] tests created
+[claim] alice -&gt; config (cwd: repository)
+[claim] bob -&gt; auth (cwd: .worktrees/auth-refactor)
+[teammate] alice spawned
+[teammate] bob spawned
+[complete] auth
+[bus] bob -&gt; lead (result) ...
+[bus] bob -&gt; lead (idle_notification) ...
+[wake: 2 team events -&gt; new turn]
+Lead：我已收到认证任务的结果，接下来继续协调其余工作。
+</code></pre>
+    <p>数一下责任方。用户只说了两句话；Lead 说了两句；剩下的任务创建、认领、启动、完成事件、收件箱投递、唤醒新一轮，全部由运行时完成。模型没有被要求"记得去查一下队友"，也没有被要求"轮询任务板"。这正是"通信放在模型上下文之外"带来的直接收益：模型的注意力只花在决策上，状态同步是运行时的事。</p>
+    <p>再注意最后一行。Lead 被唤醒后看到的是格式化好的 <code class="inline-code">[Team events]</code> 文本，而不是原始的 JSON 行。格式化由 <code class="inline-code">format_team_events()</code> 完成，它把消息类型、request_id 和发送者拼成人类可读的一行。这一步看似只是美化，实际上定义了模型看到的"团队世界模型"：它知道是谁、什么类型、针对哪个请求，而不是面对一堆裸数据。</p>
+    <div class="callout tip"><span class="callout-title">小技巧</span><p>调试多 Agent 系统时，先看收件箱文件的时间顺序，再看模型收到了什么。很多"模型不听话"的问题，其实是事件被投递成了错误的顺序，或者被压缩掉了。</p></div>
+
+    <h3><span class="h3num">07</span>动手实验：拆开一条 30 秒的团队消息</h3>
+    <ol class="steps">
+      <li><b>先跑一遍</b>：<code class="inline-code">python s13_agent_teams/code.py</code>，输入"把后端重构拆到共享任务板，尽量并行完成配置、认证和测试。认证任务使用 worktree。"等 Lead 提出分工后回复"开始吧"。</li>
+      <li><b>看三处目录</b>：<code class="inline-code">.tasks/</code> 里任务如何从 pending 走到 in_progress、completed；<code class="inline-code">.mailboxes/</code> 里 <code class="inline-code">lead.jsonl</code> 是否出现 result 和 idle_notification 两条；<code class="inline-code">.worktrees/</code> 是否只为绑定的任务创建。</li>
+      <li><b>改一处再跑</b>：把 <code class="inline-code">IDLE_SCAN_INTERVAL</code> 从 2.0 改成 10.0，观察空闲队友是不是更晚才发现任务板上的新任务；再改回 0.2，看看它会多频繁地"空转"读任务目录。</li>
+      <li><b>故意制造冲突</b>：手动把两张任务的 <code class="inline-code">owner</code> 字段改成同一个队友，观察 <code class="inline-code">claim_task()</code> 的哪一条检查先把它挡下来。</li>
+    </ol>
+
+    <h3><span class="h3num">08</span>常见误区</h3>
+    <div class="callout warn"><span class="callout-title">误区一：队友共享对话历史更"同步"</span><p>很多人以为让所有 Agent 看同一份 history，协作会更一致。恰恰相反：一个队友的 <code class="inline-code">tool_result</code> 会进入另一个队友的推理上下文，模型会开始基于别人的中间过程做决定，错误也会跟着扩散。正确做法是共享<b>状态</b>（任务板、文件、收件箱），而不是共享<b>对话</b>。</p></div>
+    <div class="callout warn"><span class="callout-title">误区二：多开几个 Agent 就是并行</span><p>如果所有队友都等 Lead 逐个派活、派完还要轮询结果，那只是把串行搬到了更多线程里。s13 的并行来自两个地方：Lead 启动后主动结束本轮，以及 IDLE 队友自己原子认领 ready task。没有这两条，团队只是一个更贵的单 Agent。</p></div>
+    <div class="callout warn"><span class="callout-title">误区三：worktree 就是沙箱</span><p>worktree 只改变 Git 工作目录和分支，不限制进程能访问什么。队友仍然能 <code class="inline-code">cd</code> 到别处、读环境变量、调用网络。要真正隔离，需要容器或虚拟机这一层，而不是 Git。</p></div>
+
+    <h3><span class="h3num">09</span>深入区</h3>
+    <details class="deep">
+      <summary>🔬 深入：投递保证与重复消费——文件收件箱到底靠不靠谱？</summary>
+      <div class="deep-body">
+        <p>MessageBus 的语义不是"恰好一次"，而是"至少一次"的近似：<code class="inline-code">send()</code> 追加一行就返回，<code class="inline-code">read_inbox()</code> 读完删文件。如果进程在"读到内容"和"删除文件"之间崩溃，这条消息可能丢；如果消费者在"处理完"和"删文件"之间崩溃，这条消息会被重新读一次。课程用两个设计把风险压到最低：一是同一收件箱只有一个消费者，二是消费动作和协议状态更新在同一个临界区附近完成。</p>
+        <p>真正的生产系统通常会把"读取"改成"读取并标记 lease"，处理完成后再显式 ack，超时未 ack 则重新投递。代价是消费者必须幂等：同一条关机请求被处理两次，第二次必须因为 <code class="inline-code">status != "pending"</code> 被忽略。你在 <code class="inline-code">match_response()</code> 里看到的每一行校验，本质上都是在为"消息可能重复"买单。</p>
+        <p>为什么不用内存队列？因为队友是线程，但任务板和收件箱要跨进程、跨重启存活。把通信写成文件，代价是延迟和多一步 IO，收益是崩溃后状态还在。这是一个很典型的工程取舍：<b>先选一个能恢复的慢方案，再优化热点</b>。</p>
+        <details class="deep deep-2">
+          <summary>再深一层：为什么不能共享对话历史？</summary>
+          <div class="deep-body">
+            <p>除了上下文污染，还有一个成本问题：共享 history 会让每个队友的每次模型调用都携带所有人的工具输出，token 成本随人数乘积增长。独立 <code class="inline-code">messages[]</code> 让每个队友只为自己的任务付费。再往深一层，独立上下文也是权限边界的一部分：队友 A 看到的敏感输出，不应该自动进入队友 B 的推理，否则"最小上下文"就无从谈起。</p>
+          </div>
+        </details>
+      </div>
+    </details>
+    <details class="deep">
+      <summary>🔬 深入：队友失败、失联，以及团队与工作流（s16）的分工</summary>
+      <div class="deep-body">
+        <h4>队友失败时会发生什么？</h4>
+        <p><code class="inline-code">TeammateRuntime.run()</code> 用 <code class="inline-code">try/except/finally</code> 包住整个循环：模型调用抛异常，就先给 Lead 发一条 <code class="inline-code">error</code> 事件；无论怎么退出，<code class="inline-code">finally</code> 都会 <code class="inline-code">release_teammate_assignment()</code> 释放未完成的 assignment，把任务还给任务板，并从 <code class="inline-code">active_teammates</code> 里摘掉自己。这样 Lead 收到的是一个"任务被释放 + 队友消失"的可观察结果，而不是一个永远等不到回复的黑洞。</p>
+        <h4>失联怎么发现？</h4>
+        <p>课程里的运行时没有复杂的心跳超时，它依赖两个简单事实：队友线程崩溃一定会走 <code class="inline-code">finally</code>；阻塞中的 IDLE 每 <code class="inline-code">IDLE_SCAN_INTERVAL</code> 醒一次，不会永久卡死。真实系统还需要心跳和 lease 过期，否则一个卡在网络调用里的队友会让任务永远停在 in_progress。</p>
+        <h4>Worktree 的隔离与合并</h4>
+        <p>worktree 只负责"各改各的目录"。合并仍然要回到普通 Git 流程：用户或宿主检查分支差异、跑测试、决定 merge 还是丢弃。<code class="inline-code">complete_task</code> 只记录任务结果，不会自动合并分支，也不会自动删除目录。这个"完成 ≠ 清理"的分离很重要，它让用户有机会在删除前看到改动。</p>
+        <h4>团队 vs 工作流，别用错工具</h4>
+        <p>s13 的团队是<b>动态编排</b>：下一步做什么，由 Lead 根据收件箱事件和任务板状态临场决定。s16 的工作流是<b>固定编排</b>：步骤和依赖在代码里写死，运行时只负责执行和恢复。判断标准很简单——如果流程每次都不一样、需要临场判断，用团队；如果流程固定、只是要并行和可恢复，用工作流。下一讲之后你会看到，固定编排写成脚本后，token 成本和可测试性都会好很多。</p>
+      </div>
+    </details>
+
+    <details class="deep">
+      <summary>🔬 深入：消息类型怎么设计？自由文本、通知、许可与计划审批</summary>
+      <div class="deep-body">
+        <p>团队里的消息可以粗分成几类，处理方式完全不同：</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>类型</th><th>例子</th><th>需要回复吗</th><th>能改变执行吗</th></tr></thead>
+            <tbody>
+              <tr><td>message</td><td>"前端接口我改了，注意字段名"</td><td>否</td><td>否，只进上下文</td></tr>
+              <tr><td>notification</td><td>result / idle_notification / error</td><td>否</td><td>否，只让 Lead 观察</td></tr>
+              <tr><td>permission</td><td>危险命令、越界写入</td><td>是，宿主或用户</td><td>是，直接拦截</td></tr>
+              <tr><td>plan_approval</td><td>提交计划、批准或驳回</td><td>是，带 request_id</td><td>是，闸门锁住写操作</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>判断一条消息该做成哪种类型，问两个问题：它需不需要一个明确的回复？它的回复会不会改变执行路径？两个都否，就是普通 message 或 notification，没必要上协议；任一为是，就必须带类型、request_id 和状态，否则回复无法关联、重复无法去重、越权无法拦截。</p>
+        <p>还有一个容易忽略的设计点：notification 是<b>单向</b>的。result 和 idle_notification 都不需要 Lead 回复"收到"，因为它们是状态播报，不是请求。把播报也做成需要 ack 的请求，会制造大量无意义的往返，还会让状态机复杂到没人能维护。协议应该只用在真正需要"请求—响应—状态"三元组的地方。</p>
+        <p>最后一条实用建议：把消息类型写成常量或枚举，不要在代码里散落裸字符串。<code class="inline-code">type.endswith("_response")</code> 这种判断只有在类型命名有统一约定时才成立；一旦有人把 <code class="inline-code">shutdown_response</code> 写成 <code class="inline-code">shutdown-reply</code>，协议匹配会静默失效，而静默失效比抛异常更难查。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">10</span>自测：你真的理解团队运行时了吗？</h3>
+    <details class="quiz">
+      <summary>为什么 Lead 必须在用户确认之后才能调用 spawn_teammate，而不是先启动再解释？</summary>
+      <div class="answer"><p>因为启动队友同时改变了三件事：模型调用成本、并发度、以及能修改工作区的角色集合。它是一个不可逆的资源和权限动作。先启动再解释，等于把"是否值得并行"的决定权从用户手里拿走了。s13 把这条规则写进 Lead 的系统提示词，要求先提出小团队方案并等待确认。另外，先提方案也迫使 Lead 在花 token 之前想清楚每个队友的职责边界。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>队友完成任务后，为什么运行时发了 result 又发 idle_notification，二合一不行吗？</summary>
+      <div class="answer"><p>因为这两个事件的消费者和用途不同。result 是"任务产出"，Lead 要拿它汇总给用户；idle_notification 是"执行单元状态"，Lead 要据此决定是否继续派活或关机。如果合成一条"完成了"，Lead 无法区分"任务做完了但队友还在整理"和"队友空闲可接新任务"，也没法在计划审批期间表达 waiting_approval 这个中间状态。分开事件，等于把状态机的迁移显式化。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>既然扫描任务板能拿到候选任务，为什么还非要在 claim_task 里再检查一遍状态？</summary>
+      <div class="answer"><p>因为扫描结果只是快照，从扫描到认领之间，别的队友或别的进程可能已经把任务抢走、把依赖改掉、把 worktree 绑定弄坏。claim_task 在锁内重新 <code class="inline-code">load_task</code> 并检查 <code class="inline-code">status == "pending"</code>、<code class="inline-code">owner is None</code>、依赖已完成、worktree 可用，只有全部通过才写入。这类似数据库的乐观并发：先读后写必须用条件更新或锁来兜底，否则就是经典的 TOCTOU 竞态。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>队友 A 在等待计划审批时，Lead 把它原本的任务改派给了队友 B。A 之后收到"批准"消息，还能继续执行吗？</summary>
+      <div class="answer"><p>不能。计划提交时记录了当时的 <code class="inline-code">task_id</code> 和 <code class="inline-code">work_version</code>；任务改派会改变 assignment version，审批返回时 <code class="inline-code">apply_plan_response()</code> 会发现版本或任务 ID 对不上，于是忽略这条回复并返回 request mismatch。旧审批自动失效，避免"批的是 A 的计划，执行的是 B 的任务"。这说明审批不是一次性布尔值，而是绑定在具体工作身份上的租约。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>如果 Lead 在启动队友后继续在 while 循环里反复调用 list_teammates 等结果，会发生什么？</summary>
+      <div class="answer"><p>会产生大量没有信息增量的模型调用：每轮都在花 token 查看"还没变"的状态，成本随等待时间线性上涨，而且容易把上下文塞满无意义的轮询结果。s13 的设计是启动后结束当前轮次，由运行时在队友事件到达时唤醒下一轮。判断标准是：等待应该由事件驱动，而不是由模型主动查询驱动。轮询不是错，错在让模型去轮询。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>团队运行时的核心不是"多开线程"，而是三件事的组合：Lead 把并行决策交还给用户；每个队友拥有独立循环和独立 <code class="inline-code">messages[]</code>；通信走上下文之外的收件箱，由运行时把事件投递进下一轮对话。共享的是任务板和工作目录，不是对话历史。</p>
+      <p class="next"><b>下一讲：</b>Lead 和队友现在只能调用写死在 <code class="inline-code">code.py</code> 里的工具。每接一个 Jira、部署平台或知识库，就要再手写一套工具定义和调用代码。有没有可能让外部服务自己报出"我有哪些工具"，Harness 只负责连接、命名、鉴权和组装？</p>
+    </div>
+  </div>
+</section>

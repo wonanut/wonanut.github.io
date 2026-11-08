@@ -1,0 +1,350 @@
+<section id="ch05" class="chapter">
+  <p class="chapter-kicker">第 5 讲 · 阶段一 · 让 Agent 动起来</p>
+  <h2 class="chapter-title">Hooks：挂在循环外，不改循环
+    <small>对应 s04_hooks：一张注册表，四个事件，循环只多两行</small>
+  </h2>
+  <p class="chapter-lede">权限检查已经写进循环了。明天想加日志、后天想加“执行完自动 git add”，每次都要改循环——迟早有一天，你会认不出那二十行。这一讲把扩展点做成插座。</p>
+  <p class="source-line">
+    <span>源码 <code>s04_hooks/code.py</code></span>
+    <span>原章 <a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/s04_hooks/README.zh.md">README.zh.md</a></span>
+  </p>
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>说清 hook 和“直接改循环”的本质区别</li>
+    <li>用 <code class="inline-code">register_hook</code> / <code class="inline-code">trigger_hooks</code> 接住四个生命周期事件</li>
+    <li>知道哪些事件的返回值是控制信号，哪些只是“顺便做点事”</li>
+    <li>避开 hook 的经典坑：顺序依赖、异常炸循环、隐式控制流</li>
+  </ul>
+
+  <div class="chapter-body">
+
+    <h3><span class="h3num">01</span>循环正在变胖</h3>
+    <p>上一讲结束时，<code class="inline-code">agent_loop</code> 里多了一行 <code class="inline-code">if not check_permission(block):</code>。干净利落。但需求不会停在“一个权限检查”：</p>
+    <ul>
+      <li>“每次工具调用都记一条日志，方便复盘。”</li>
+      <li>“写文件成功后自动跑一下格式化。”</li>
+      <li>“工具输出特别大的时候提醒我一下。”</li>
+      <li>“用户输入前，把当前工作目录和项目信息补进上下文。”</li>
+      <li>“任务结束时，统计一下这轮用了多少次工具。”</li>
+    </ul>
+    <p>每一条都合理，每一条都要求你在工具执行前后插几行。你确实可以这么做——但循环会从二十行变成四十行、六十行，而且每加一个需求，你都要重新理解整段控制流，重新跑一遍回归。更糟的是，这些需求彼此无关，却被迫挤在同一个函数里，谁先谁后全靠读代码猜。</p>
+    <p>问题的根子不在“需求多”，而在于<b>你把扩展点写进了循环</b>。循环应该是一条稳定的主干，扩展应该像插座上的电器，插拔随意，墙不用砸。s04 就是来装插座的。</p>
+    <p>不妨先想一下：上面五条需求，有几条是真的需要修改循环的“决策”？几乎没有。它们只需要在固定时机“顺便做点事”或“看一眼”。既然时机是固定的、逻辑是独立的，那就可以把时机和逻辑分开——循环提供时机，扩展提供逻辑。</p>
+<p>这个思路在软件工程里有个朴素的名字：把“什么时候”和“做什么”解耦。数据库的触发器、Web 框架的中间件、构建工具的插件，本质上都是同一个想法。hook 不是新发明，只是把这个老思路搬进了 agent loop。</p>
+    <div class="callout key">
+      <span class="callout-title">这一讲的一句话</span>
+      <p><b>把“在哪扩展”做成固定的位置，把“扩展什么”放到注册表里。</b>循环只负责在正确的时机喊一声，具体谁来响应、响应几个，循环不需要知道。</p>
+    </div>
+    <p>这句话也可以反过来说：如果你发现自己在循环里反复写“顺便做点记录”“顺便检查一下”，那就是该装扩展点的信号了。重复的模式往往不是巧合，而是缺少一个抽象。</p>
+
+    <h3><span class="h3num">02</span>直觉：四个事件，一张注册表</h3>
+    <p>一个完整的 agent cycle 有四个天然的时间点，对应四个事件：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>事件</th><th>触发时机</th><th>典型用途</th><th>返回值语义</th></tr></thead>
+        <tbody>
+          <tr><td><code>UserPromptSubmit</code></td><td>用户输入后、进入模型前</td><td>输入校验、注入上下文、记录请求</td><td>当前实现不参与控制流</td></tr>
+          <tr><td><code>PreToolUse</code></td><td>工具执行前</td><td>权限检查、日志、审计</td><td>返回非 <code>None</code> 表示阻止本次调用</td></tr>
+          <tr><td><code>PostToolUse</code></td><td>工具执行后</td><td>副作用、输出检查、清理</td><td>不参与控制流（工具已经跑完了）</td></tr>
+          <tr><td><code>Stop</code></td><td>循环即将退出时</td><td>收尾统计、决定是否继续</td><td>返回非 <code>None</code> 表示不要停</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="flow">
+      <div class="flow-node"><b>用户输入</b></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>UserPromptSubmit</b></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>LLM</b>决策</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>PreToolUse</b></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>执行工具</b></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>PostToolUse</b></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>回填结果</b></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>Stop</b></div>
+    </div>
+    <p>注册表本身简单得出奇：一个字典，四个事件名，每个对应一个回调列表。<code class="inline-code">register_hook</code> 往列表里追加，<code class="inline-code">trigger_hooks</code> 遍历列表依次调用。没有继承、没有插件协议、没有异步调度——就是最简单的 Python。</p>
+    <p>你可以把这张表理解成一份“生命周期契约”：不管以后加多少能力，能挂的位置永远只有这四个。约束本身也是设计的一部分——它逼着你把需求归类，而不是随手在循环里找个空行插代码。归类的过程，往往就能发现哪些逻辑其实不该放在这里。</p>
+    <div class="analogy">
+      <span class="analogy-title">像给房间装四个插座</span>
+      <p>装修时你不会为每件电器单独凿墙改线，而是先按位置预留插座：床头一个、书桌旁一个、厨房台面一个。以后想插台灯、插电脑、插咖啡机，直接插上就行，墙不用动。四个事件就是四个插座的位置，<code class="inline-code">register_hook</code> 就是插头，哪个事件需要什么能力，往上插即可。</p>
+      <p><b>类比到哪为止：</b>真实插座只供电，不会影响电流方向；而这里的 hook 能<b>反过来控制循环</b>——<code class="inline-code">PreToolUse</code> 返回一个字符串就能拦下工具，<code class="inline-code">Stop</code> 返回一个字符串就能拒绝结束。插座不只有“通电”一个语义，它还带着“否决权”。这正是 hook 强大又危险的地方。</p>
+    </div>
+    <p>所以更准确的说法可能是：你装的不是插座，而是<b>四道可以随时加装的门</b>。门本身不做事，但它决定谁能通过、通过之后放不放行、以及什么时候不许关门。装门容易，想清楚每道门该管什么，才是设计。</p>
+
+    <h3><span class="h3num">03</span>代码精读：注册表与触发器</h3>
+    <h4>骨架只有九行</h4>
+    <pre data-lang="python"><code>HOOKS = {"UserPromptSubmit": [], "PreToolUse": [], "PostToolUse": [], "Stop": []}
+
+def register_hook(event: str, callback):
+    HOOKS[event].append(callback)
+
+def trigger_hooks(event: str, *args):
+    for callback in HOOKS[event]:
+        result = callback(*args)
+        if result is not None:  # A hook result blocks this tool call.
+            return result
+    return None
+</code></pre>
+    <p>逐行看，几个设计选择值得注意：</p>
+    <ul>
+      <li><b>事件名是写死的四个 key</b>。拼错事件名会在 <code class="inline-code">register_hook</code> 或 <code class="inline-code">trigger_hooks</code> 时抛 <code class="inline-code">KeyError</code>。这看起来脆弱，其实是“快速失败”：与其静默注册到一个不存在的事件、永远不被触发，不如立刻报错。用 <code class="inline-code">defaultdict(list)</code> 会更宽容，但也更容易写出拼写错误的钩子。</li>
+      <li><b>顺序就是注册顺序</b>。Python 列表有序，谁先注册谁先跑。这给了你排序能力，也埋下了顺序依赖的隐患——后面深入区会展开。</li>
+      <li><b>第一个非 <code class="inline-code">None</code> 返回值会短路</b>。后面的 hook 不再执行，返回值直接交给调用方。权限 hook 正是靠这个机制实现“拦截”。</li>
+      <li><b><code class="inline-code">*args</code> 是通用参数</b>。不同事件传的东西不同：<code class="inline-code">PreToolUse</code> 传 block，<code class="inline-code">PostToolUse</code> 传 block 和 output，<code class="inline-code">Stop</code> 传 messages。灵活，但完全没有类型检查，写错参数个数只会在运行时炸。</li>
+    </ul>
+
+    <h4>接口设计：<code class="inline-code">*args</code> 的灵活与代价</h4>
+    <p>触发器用 <code class="inline-code">*args</code> 接收任意参数，再原样转发给每个回调。对教学实现来说，这是最省事的选择：四个事件参数不同，但都能塞进同一个函数签名。<code class="inline-code">PreToolUse</code> 只需要 block，<code class="inline-code">PostToolUse</code> 需要 block 和 output，<code class="inline-code">Stop</code> 需要 messages——调用方传什么，回调就收什么。</p>
+    <p>代价是类型安全为零。注册一个 <code class="inline-code">def my_hook(block, extra)</code> 却挂到 <code class="inline-code">PreToolUse</code> 上，只会在真正触发时抛 <code class="inline-code">TypeError</code>，而且这类错误往往藏在某条少走的分支里。生产级的 hook 系统通常会给每个事件定义明确的签名或参数对象，让错误在注册时、而不是运行时暴露。</p>
+    <p>另一个隐含约定是：回调只能读取参数，不能修改它（至少 s04 没有提供修改通道）。<code class="inline-code">block</code> 是对象，理论上你可以改它的属性，但那会让“钩子”变成“半个中间件”，行为更难预测。先接受“只读观察 + 返回值控制”这个简化模型，你的 hook 会好写很多。</p>
+
+    <h4>权限逻辑原封不动搬进钩子</h4>
+    <pre data-lang="python"><code>def permission_hook(block):
+    # PreToolUse: s03 check_permission() logic moved here.
+    if block.name == "bash":
+        command = block.input.get("command", "")
+        for pattern in DENY_LIST:
+            if pattern in command:
+                print(f"\n\033[31m[blocked] '{pattern}'\033[0m")
+                return "Permission denied by deny list"
+        if contains_destructive_command(command) or any(kw in command for kw in DESTRUCTIVE):
+            # ... 提示打印略 ...
+            choice = input("   Allow? [y/N] ").strip().lower()
+            if choice not in ("y", "yes"):
+                return "Permission denied by user"
+    if block.name in ("read_file", "write_file", "edit_file"):
+        path = block.input.get("path", "")
+        if not (WORKDIR / path).resolve().is_relative_to(WORKDIR):
+            # ... 提示打印略 ...
+            choice = input("   Allow? [y/N] ").strip().lower()
+            if choice not in ("y", "yes"):
+                return "Permission denied by user"
+    return None
+</code></pre>
+    <p>把 s03 的 <code class="inline-code">check_permission</code> 和这个函数放在一起看，会发现<b>判断逻辑一模一样</b>，只是外壳变了：以前返回 <code class="inline-code">True/False</code>，现在返回 <code class="inline-code">None</code> 或一段拒绝原因字符串。这个改造的精髓是：<b>逻辑没变，位置变了</b>。判断从“循环直接调用”变成“挂在 PreToolUse 上”，于是它可以和其他 PreToolUse 钩子共存、可以整体替换、可以在不改循环的前提下调整顺序。</p>
+    <p>返回值的选择也很讲究。<code class="inline-code">None</code> 表示“我不管，放行”；字符串表示“拦下，并把这个理由告诉模型”。用字符串而不是布尔，是因为调用方要把它写进 <code class="inline-code">tool_result</code>——模型看到的是“Permission denied by deny list”，比一个冷冰冰的 False 有信息量得多。</p>
+
+    <h4>另外三个钩子：日志、提醒、总结</h4>
+    <pre data-lang="python"><code>def log_hook(block):
+    """PreToolUse: log every tool call."""
+    args_preview = str(list(block.input.values())[:2])[:60]
+    print(f"\033[90m[HOOK] {block.name}({args_preview})\033[0m")
+    return None
+
+def large_output_hook(block, output):
+    """PostToolUse: warn on large output."""
+    if len(str(output)) &gt; 100000:
+        print(f"\033[33m[HOOK] Large output from {block.name}: {len(str(output))} chars\033[0m")
+    return None
+
+def summary_hook(messages: list):
+    """Stop: print summary when loop is about to exit."""
+    tool_count = sum(1 for m in messages
+                     for b in (m.get("content") if isinstance(m.get("content"), list) else [])
+                     if isinstance(b, dict) and b.get("type") == "tool_result")
+    print(f"\033[90m[HOOK] Stop: session used {tool_count} tool calls\033[0m")
+    return None
+</code></pre>
+    <p>三个钩子展示了三种典型形态：<code class="inline-code">log_hook</code> 是<b>纯观察</b>（只读参数、打印、不改变任何东西）；<code class="inline-code">large_output_hook</code> 是<b>事后提醒</b>（工具已经执行完，只能提醒，不能撤销）；<code class="inline-code">summary_hook</code> 是<b>收尾读取</b>（遍历 messages 统计，注意它要防御性地处理 content 可能是字符串的情况）。</p>
+    <p>它们都返回 <code class="inline-code">None</code>。这不是随手写的，而是明确的约定：<b>不想干预控制流，就返回 None</b>。返回一个字符串的后果，取决于事件的语义——在 PostToolUse 里返回字符串基本没影响，在 PreToolUse 里就是拦截。同一个返回值，在不同事件里含义不同，这是 hook 系统里最容易踩的坑之一。</p>
+
+    <h4>注册：谁在什么时候被挂上</h4>
+    <pre data-lang="python"><code>register_hook("UserPromptSubmit", context_inject_hook)
+register_hook("PreToolUse", permission_hook)
+register_hook("PreToolUse", log_hook)
+register_hook("PostToolUse", large_output_hook)
+register_hook("Stop", summary_hook)
+</code></pre>
+    <p>五个注册，两个挂在 <code class="inline-code">PreToolUse</code> 上。注册顺序很关键：<code class="inline-code">permission_hook</code> 在前，<code class="inline-code">log_hook</code> 在后。这意味着权限拦截时，<code class="inline-code">trigger_hooks</code> 会短路，<code class="inline-code">log_hook</code> 根本不执行——被拒绝的调用不会出现在日志里。这是设计缺陷还是有意为之？先留个悬念，深入区会回来算这笔账。</p>
+<p>注册通常集中写在文件末尾、紧挨着循环之前，这是一个健康的位置：读代码的人从循环往下看几屏，就能看到“这个系统一共装了哪些扩展”。如果注册散落在各个模块的 import 副作用里，你就要靠 grep 才能拼出全局图景——那才是 hook 系统真正难维护的时刻。</p>
+
+    <h4>循环里到底改了什么</h4>
+    <pre data-lang="python"><code>for block in tool_calls:
+    # ... 打印工具名略 ...
+    # s04 change: hook replaces hard-coded check_permission()
+    blocked = trigger_hooks("PreToolUse", block)
+    if blocked:
+        results.append({"type": "tool_result", "tool_use_id": block.id,
+                        "content": str(blocked)})
+        continue
+
+    handler = TOOL_HANDLERS.get(block.name)
+    output = handler(**block.input) if handler else f"Unknown: {block.name}"
+
+    trigger_hooks("PostToolUse", block, output)  # s04: post hook
+</code></pre>
+    <p>对比 s03，循环里“调用哪个检查函数”的硬编码消失了，取而代之的是一个通用入口 <code class="inline-code">trigger_hooks("PreToolUse", block)</code>。权限检查还在，只是它现在只是注册表里的一个回调，循环不再知道它的存在。</p>
+    <p>PostToolUse 的位置也很有讲究：它在 handler 执行之后、结果 append 之前。放在这里，意味着钩子能看到“这次工具执行的真实输出”，但又不会影响传给模型的结果（除非钩子自己去改——目前的签名只传值，改不了）。</p>
+    <pre data-lang="python"><code>if not tool_calls:
+    force = trigger_hooks("Stop", messages)
+    if force:
+        messages.append({"role": "user", "content": force})
+        continue
+    return
+</code></pre>
+    <p>Stop 的用法最反直觉：它不是“结束之后通知一下”，而是“在决定结束之前问一句”。hook 返回非 <code class="inline-code">None</code>，循环就把这段字符串当成一条用户消息追加进去，然后 <code class="inline-code">continue</code>——相当于有人在你准备下班时塞给你一张新工单。这个机制可以用来做“任务还没验证完，别停”的强制续跑，但也很容易写出停不下来的循环。</p>
+    <pre data-lang="python"><code>trigger_hooks("UserPromptSubmit", query)
+history.append({"role": "user", "content": query})
+agent_loop(history)
+</code></pre>
+    <p>UserPromptSubmit 挂在主循环的输入之后、<code class="inline-code">agent_loop</code> 之前。注意 <code class="inline-code">context_inject_hook</code> 目前的实现只是打印一行工作目录，并返回 <code class="inline-code">None</code>——它<b>并没有真的修改 query</b>。名字里的“inject”是意图，不是事实。想真正注入上下文，得让触发方接收返回值并拼进 query，或者直接修改 <code class="inline-code">history</code>。这个细节提醒你：读 hook 代码时，别被函数名骗了，看它到底改了什么。</p>
+<p>这也是读开源项目的一个重要习惯：先看调用点，再看实现。函数名和注释表达的是“作者想做什么”，调用点表达的是“它实际被怎么用”。两者对不上时，以代码为准。</p>
+
+    <h3><span class="h3num">04</span>返回值就是控制信号</h3>
+    <p>理解 hook，关键是理解“返回值不是数据，是控制信号”。你可以用一张表记住各事件的语义：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>事件</th><th>返回 <code>None</code></th><th>返回字符串</th></tr></thead>
+        <tbody>
+          <tr><td><code>UserPromptSubmit</code></td><td>继续，无副作用</td><td>当前实现忽略；设计上可用于注入或拦截</td></tr>
+          <tr><td><code>PreToolUse</code></td><td>放行，执行工具</td><td>拦截，字符串作为 <code>tool_result</code> 回填</td></tr>
+          <tr><td><code>PostToolUse</code></td><td>继续</td><td>返回值被丢弃，无法撤销已执行的工具</td></tr>
+          <tr><td><code>Stop</code></td><td>允许退出</td><td>拒绝退出，把字符串作为用户消息注入并继续</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>这套语义有一个隐含的不对称：<b>“拦在事前”和“拦在事后”能力完全不同</b>。PreToolUse 可以阻止副作用，PostToolUse 只能观察副作用。所以权限、审计这类“必须阻止”的逻辑，要放在 PreToolUse；格式化、提醒、清理这类“事后补偿”，才放 PostToolUse。位置选错，逻辑就失效。</p>
+<p>反过来，如果你发现自己想在 PostToolUse 里“撤销”某个操作，那说明这个逻辑本就不该放在这里——它应该被前置成一次 PreToolUse 检查，或者干脆做成一个可回滚的操作。hook 的位置不是装饰，它决定了你能做什么、不能做什么。</p>
+<p>判断一个 hook 该挂在哪，最快的办法是问：“如果这一步失败，我希望工具的副作用发生了吗？”希望没发生，就前置；已经发生了也无所谓，才后置。这个问题比背四个事件的名字管用。</p>
+    <p>还有一个容易忽略的细节：<code class="inline-code">trigger_hooks</code> 的短路只发生在“返回值非 None”时。多个 PreToolUse 钩子里，只要第一个返回了字符串，后面的都不执行。这意味着<b>钩子的注册顺序决定了谁能先否决</b>，也决定了哪些钩子会“看不到”被否决的调用。顺序不是无关紧要的装饰，它是控制流的一部分。</p>
+    <p>把这张表再读一遍，你会发现“返回 None”和“返回字符串”在不同事件下是一套不对称的约定。写钩子时最稳妥的习惯是：<b>先明确它属于哪个事件，再决定返回什么</b>；而不是先写完逻辑，再随便 return 一个值碰运气。</p>
+    <p>还有一个小建议：在团队里把“事件 → 返回值语义”写进一两行文档，比口口相传可靠得多。</p>
+
+    <h3><span class="h3num">05</span>为什么这样设计：开闭原则</h3>
+    <p>s03 到 s04 的循环差异小到可以列出来：把 <code class="inline-code">check_permission(block)</code> 换成 <code class="inline-code">trigger_hooks("PreToolUse", block)</code>，在 Stop 前加一次 <code class="inline-code">trigger_hooks</code>。就这两处。而能力上，你新增了日志、大输出提醒、会话总结、输入处理——四个完全不同的关注点。</p>
+    <p>这就是“对扩展开放、对修改关闭”的实际收益：<b>加能力的时候，改的是注册表，不是控制流</b>。改动范围小，回归范围就小；不同人可以各自写自己的 hook，不必在同一个函数里抢地盘。对一个会持续演进的项目来说，这种可组合性比“少几行代码”重要得多。</p>
+<p>但别把“开闭原则”当成教条。它真正的含义不是“永远不要改循环”，而是“把容易变的东西和不容易变的东西分开”。如果某个需求每次都要动核心，那说明抽象层次选错了，该重构的是抽象，而不是硬套模式。</p>
+    <p>但它也有代价，而且必须诚实地说：<b>控制流变得隐式了</b>。读 s03 时，你看一眼循环就知道“会做权限检查”。读 s04 时，你必须去翻注册表，才知道一共有哪些钩子、按什么顺序执行、谁可能返回非 None。代码行数少了，理解成本不一定少。用不用 hook，取决于这个项目是“少数人短时间跑通”，还是“多人长期维护”——前者可能直接改循环更省事，后者才值得上插座。</p>
+    <h4>s03 → s04 的完整差异</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>组件</th><th>s03</th><th>s04</th></tr></thead>
+        <tbody>
+          <tr><td>扩展方式</td><td><code>check_permission()</code> 硬编码在循环里</td><td><code>HOOKS</code> 注册表 + <code>trigger_hooks()</code></td></tr>
+          <tr><td>权限逻辑</td><td><code>check_permission</code> 函数</td><td><code>permission_hook</code> 回调</td></tr>
+          <tr><td>新增钩子</td><td>—</td><td>日志、大输出提醒、输入处理、会话总结</td></tr>
+          <tr><td>循环改动</td><td>直接调用检查函数</td><td>只调用通用的 <code>trigger_hooks</code></td></tr>
+          <tr><td>退出控制</td><td>无</td><td><code>Stop</code> 钩子可以拒绝退出</td></tr>
+          <tr><td>输入控制</td><td>无</td><td><code>UserPromptSubmit</code> 事件</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>这张表最值得看的是最后三行：能力增加了四项，循环的接口只多了一个通用调用。新增的能力没有挤在循环里，而是各自躺在注册表后面——这就是“扩展点”的价值。</p>
+    <div class="card-grid">
+      <div class="card"><h4>先问时机</h4><p>这个逻辑必须在执行前、执行后、退出前，还是输入后？先确定事件，再写代码。</p></div>
+      <div class="card"><h4>只返回该返回的</h4><p>不想干预就返回 None。别用 False、空字符串表达“没问题”，它们的语义可能被误读。</p></div>
+      <div class="card"><h4>别藏业务逻辑</h4><p>模型需要知道的规则，应该做成工具或写进提示；hook 只放模型不需要知道的横切逻辑。</p></div>
+    </div>
+    <p>把这三条当成使用 hook 的前置检查，很多设计问题在写第一行代码之前就能避免。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：hook 顺序为什么是隐形的地雷？</summary>
+      <div class="deep-body">
+        <p>回到那个悬念：<code class="inline-code">permission_hook</code> 注册在 <code class="inline-code">log_hook</code> 前面，导致被权限拒绝的调用不会进日志。这是 bug 吗？从“审计所有尝试”的角度看，是；从“只记录真正执行的操作”的角度看，又不是。问题在于<b>这个选择藏在注册顺序里</b>，读循环的人根本看不出来。</p>
+        <p>顺序至少影响三件事：<b>谁先否决</b>（第一个返回非 None 的赢）、<b>谁能看到完整信息</b>（后置钩子可能因为短路而看不到）、<b>副作用发生的先后</b>（如果两个钩子都写文件，顺序决定最终内容）。这些都不是“实现细节”，而是系统行为。</p>
+        <p>工程上常见的缓解手段：把注册集中在一个显式的位置，按“观察类 → 决策类”分组并加注释；约定“决策类钩子尽量只返回 None / 字符串，不产生副作用”；给关键顺序写测试；在日志里记录每次触发经过了哪些钩子。更彻底的做法是给 hook 声明优先级，而不是依赖注册顺序——但那是更大的设计，这个教学仓库刻意保持简单。</p>
+        <p>你现在要建立的直觉是：<b>看到 hook 系统，第一件事是问“顺序是什么、短路规则是什么”</b>，而不是急着往里加逻辑。顺序错了，逻辑再对也白搭。</p>
+      </div>
+    </details>
+
+    <details class="deep">
+      <summary>🔬 深入：hook 抛异常，整个循环陪葬</summary>
+      <div class="deep-body">
+        <p>看 <code class="inline-code">trigger_hooks</code> 的实现，它没有 <code class="inline-code">try/except</code>。回调里任何异常都会沿着 <code class="inline-code">trigger_hooks → agent_loop</code> 一路冒泡，直接终止整个会话。你辛辛苦苦搭的循环、攒的上下文，一个手滑的 <code class="inline-code">KeyError</code> 就没了。</p>
+        <p>这在教学实现里没问题，因为钩子都是你自己写的、可控的。但在真实系统里，钩子可能来自插件、来自用户配置、来自第三方——你不能假设它们不犯错。<b>扩展点的健壮性原则是：一个插件挂掉，不该拖垮宿主。</b>常见做法是每个回调外面包一层 <code class="inline-code">try/except</code>，捕获后记录日志、把该钩子标记为失败、然后继续跑下一个。至于“失败时放行还是拒绝”，是个安全取舍：权限钩子失败时应该默认拒绝（fail closed），日志钩子失败时应该放行（fail open）。</p>
+        <p>还有一个相邻问题：钩子里如果做了耗时操作（比如同步网络请求），会直接卡住整个循环。hook 是同步调用的，没有超时保护。这也是为什么“钩子里只做轻量的事”是一条实用经验。</p>
+        <details class="deep deep-2">
+          <summary>再深一层：钩子里能注册新钩子吗？</summary>
+          <div class="deep-body">
+            <p><code class="inline-code">trigger_hooks</code> 正在遍历 <code class="inline-code">HOOKS[event]</code> 这个列表。如果某个回调里调用 <code class="inline-code">register_hook</code> 往同一个列表追加，Python 的 <code class="inline-code">for</code> 循环会继续遍历新加入的元素——这意味着你可以在运行中动态挂载钩子，但也很容易写出“钩子不断注册自己”的无限循环。</p>
+            <p>安全做法是：触发时先复制一份列表再遍历（<code class="inline-code">for callback in list(HOOKS[event])</code>），让“遍历时的注册”只影响下一次触发。这个小改动能避免很多诡异的行为，值得在你自己的实现里加上。</p>
+          </div>
+        </details>
+      </div>
+    </details>
+
+    <details class="deep">
+      <summary>🔬 深入：hook 应该写成纯函数，还是有状态的对象？</summary>
+      <div class="deep-body">
+        <p>课程里的钩子大多是“纯观察”：读参数、打印、返回 None，不改变任何内部状态。这类钩子最好写——可测试、可重复、顺序无关（只要不短路）。但真实需求会逼你有状态：</p>
+        <ul>
+          <li>“本会话内已经批准过读操作，别再问我。”——需要记住批准历史。</li>
+          <li>“同一个命令连续失败三次就提醒。”——需要计数器。</li>
+          <li>“统计本轮用了多少 token。”——需要累加器。</li>
+        </ul>
+        <p>一旦有状态，就必须回答三个问题：<b>状态归谁所有</b>（钩子实例、会话、还是全局？）、<b>什么时候重置</b>（每轮、每会话、还是每天？）、<b>并发时安全吗</b>（这个循环是单线程的，但将来接后台任务呢？）。这些问题的答案会直接影响行为，不能含糊。</p>
+        <p>一个实用的分层建议：<b>PreToolUse 尽量无状态</b>，因为它决定“准不准”，状态会让判断变得难以预测；<b>PostToolUse / Stop 可以有状态</b>，因为它们做的是记录和收尾，天然需要累积。权限批准记忆这种“需要状态”的逻辑，最好放在专门的权限管理器里，由一个薄的 hook 去调用，而不是让 hook 自己长出一堆成员变量。</p>
+        <p>另一个检验标准是“可重放”：如果我把同一串事件重新喂给你的钩子，结果应该一样吗？纯函数答案是“一样”，有状态钩子可能“不一样”。不是所有钩子都需要可重放，但你要知道自己放弃了什么。</p>
+      </div>
+    </details>
+
+    <details class="deep">
+      <summary>🔬 深入：什么时候该用 hook，什么时候该改工具？</summary>
+      <div class="deep-body">
+        <p>不是所有逻辑都适合挂到钩子上。一个简单的判断标准：<b>这件事是“横切的”，还是“这个工具本身的一部分”？</b></p>
+        <p>横切逻辑——日志、权限、审计、通知、上下文注入——作用于多个工具，且和工具的具体实现无关，适合放 hook。工具自己的业务逻辑——读文件怎么读、edit 怎么匹配——属于工具内部，放 hook 反而割裂：模型看不到钩子的存在，无法推理它的行为，调试时你还得在两个地方来回找。</p>
+        <p>还有一种常见误用：用 hook 实现“业务规则”，比如“写文件后必须跑测试”。这听起来像横切，但它其实是任务流程的一部分，模型需要知道“写完要跑测试”，才能安排步骤。把它藏进 PostToolUse，模型只会看到测试忽然开始跑，不知道发生了什么。这种逻辑更适合做成一个显式的工具，或者写进系统提示让模型自己编排。</p>
+        <p>所以顺序是：先问“模型需不需要知道这件事”；需要，就做成工具或写进提示；不需要，再看“是不是多个工具共享”，是就上 hook，不是就直接写进那个工具。<b>hook 是为“模型不需要知道、但系统必须做”的逻辑准备的。</b></p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">06</span>动手实验</h3>
+    <ol class="steps">
+      <li><b>加一个审计钩子。</b>写一个 <code class="inline-code">audit_hook(block)</code>，把工具名和参数写进一个全局列表，然后 <code class="inline-code">register_hook("PreToolUse", audit_hook)</code>。跑几轮后打印列表。预期：每次工具调用前都有一条记录，包括被拒绝的那些吗？——看你的注册位置，如果放在 <code class="inline-code">permission_hook</code> 后面，被拒的调用不会出现。把这个差异记下来。</li>
+      <li><b>验证短路。</b>在 <code class="inline-code">permission_hook</code> 前面再注册一个总是返回 <code class="inline-code">"blocked for test"</code> 的钩子。输入任何任务，预期：所有工具都被拦，<code class="inline-code">log_hook</code> 一次都不打印。删掉这个测试钩子再跑，恢复正常。你亲眼看到了“第一个非 None 返回值获胜”。</li>
+      <li><b>让 Stop 拒绝结束。</b>写一个 <code class="inline-code">nag_hook(messages)</code>，第一次调用返回 <code class="inline-code">"再检查一遍任务是否真的完成了"</code>，之后返回 <code class="inline-code">None</code>（用一个全局计数器控制）。预期：循环在模型第一次想停时被拉回来，模型看到一条新的 user 消息后继续工作；第二次想停时才真正退出。注意观察它注入的那条消息长什么样。</li>
+      <li><b>制造一次钩子异常。</b>在 <code class="inline-code">log_hook</code> 里加一行 <code class="inline-code">raise RuntimeError("boom")</code>，跑一次工具调用。预期：整个程序带着 traceback 退出，循环没有机会回填结果。然后给 <code class="inline-code">trigger_hooks</code> 里的回调调用包一层 <code class="inline-code">try/except</code>，再跑一次，预期：异常被记录，循环继续。两相对比，你就理解了“扩展点要隔离故障”。</li>
+      <li><b>调小大输出阈值。</b>把 <code class="inline-code">large_output_hook</code> 里的 <code class="inline-code">100000</code> 改成 <code class="inline-code">10</code>，输入“列出目录”。预期：几乎每次工具执行后都会出现 <code class="inline-code">[HOOK] Large output</code> 提醒。这让你直观感受 PostToolUse 的执行时机——它确实在工具之后、结果回填之前。</li>
+    </ol>
+    <p>做完这五个实验，你对 hook 的理解应该已经从“一个字典”变成“一条有顺序、有短路、有异常风险的控制链”。这比记住 API 重要——API 会变，控制链的直觉不会。</p>
+<p>如果时间只够做一个，就做“短路”那个：它最能暴露 hook 系统里那些“看不见的顺序”。</p>
+
+    <h3><span class="h3num">07</span>常见误区</h3>
+    <ul>
+      <li><b>很多人以为 hook 是异步事件，会在后台执行。</b>不是。这里的 <code class="inline-code">trigger_hooks</code> 是同步的 <code class="inline-code">for</code> 循环，钩子跑完才继续。钩子慢了，整个 agent 就慢；钩子抛异常，整个循环就挂。它更像“函数调用链上的拦截器”，不是消息队列。</li>
+      <li><b>很多人以为返回值会被忽略，随便 return 什么都行。</b>不同事件语义不同：<code class="inline-code">PreToolUse</code> 返回非 <code class="inline-code">None</code> 会拦截，<code class="inline-code">Stop</code> 返回非 <code class="inline-code">None</code> 会拒绝退出。<b>“不想干预”就明确返回 <code class="inline-code">None</code></b>，别返回 <code class="inline-code">False</code> 或空字符串——<code class="inline-code">False</code> 不是 <code class="inline-code">None</code>，有些实现里它会被当成“有返回值”而触发拦截。</li>
+      <li><b>很多人以为把逻辑改成 hook 就算架构升级了，钩子越多越灵活。</b>逻辑本身没变，只是从循环里搬到了回调里。收益在“可组合、可替换、改扩展不动核心”，代价在“控制流变隐式、调试变难”。每多一个钩子，就多一处看不见的控制流；十个 PreToolUse 钩子按顺序串行短路，排查一个问题要翻十个文件。如果项目只有两个钩子、一个人维护，直接写循环可能更清楚——工具要为场景服务，别为模式服务。</li>
+    </ul>
+    <div class="callout warn">
+      <span class="callout-title">调试 hook 的顺序</span>
+      <p>遇到“行为不符合预期”时，先别改逻辑，先打印：这次触发了哪个事件、按什么顺序执行了哪些钩子、每个钩子的返回值是什么、在哪里短路。多数 hook 问题不是逻辑写错，而是“你以为它在跑，其实被前面的钩子短路了”。</p>
+    </div>
+    <p>如果调试信息显示“钩子根本没被触发”，先检查三件事：事件名有没有拼错、注册有没有真的执行、拼接的参数个数对不对。这三类错误占了新手调试时间的大头，而且都不会在启动时报错。</p>
+<p>另外，别一上来就给所有事件都挂钩子。先把一个事件、一个钩子跑通，确认触发时机和返回值语义都对，再往上加。hook 系统最怕的不是功能少，而是你同时开了四扇门，却说不清哪扇门在什么时候关上了。</p>
+
+    <h3><span class="h3num">08</span>自测</h3>
+<p>这五道题分别考机制、顺序、控制信号和异常，建议先合上答案自己推一遍。</p>
+    <details class="quiz">
+      <summary><code class="inline-code">PreToolUse</code> 的钩子返回非 <code class="inline-code">None</code> 后，循环会怎么走？</summary>
+      <div class="answer"><p>工具不会执行。返回值被转成字符串，作为 <code class="inline-code">tool_result</code> 用原来的 <code class="inline-code">tool_use_id</code> 回填，然后 <code class="inline-code">continue</code> 处理同批的下一个工具调用。也就是说，拦截是一次“有结果的拒绝”，不是抛异常，也不是跳过不记——模型下一轮能看到这条拒绝信息。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>两个 <code class="inline-code">PreToolUse</code> 钩子，第一个返回字符串，第二个还会执行吗？</summary>
+      <div class="answer"><p>不会。<code class="inline-code">trigger_hooks</code> 在遇到第一个非 <code class="inline-code">None</code> 返回值时立即 <code class="inline-code">return</code>，后面的回调被短路。这是“谁先否决谁生效”的机制。也正因如此，注册顺序决定了哪个钩子有优先否决权，还把后续钩子的执行一并取消了——顺序和短路必须一起理解。</p></div>
+    </details>
+    <details class="quiz">
+      <summary><code class="inline-code">Stop</code> 钩子返回一段字符串，会发生什么？</summary>
+      <div class="answer"><p>循环不会退出。这段字符串被当作一条 <code class="inline-code">user</code> 消息追加进 <code class="inline-code">messages</code>，然后 <code class="inline-code">continue</code>，重新进入下一轮。模型会把它当成用户的新指令来响应。这个机制可以做“任务未验证完，别停”，但要小心：如果钩子每次都返回字符串，循环就永远停不下来，而且模型可能会困惑“用户为什么一直催我”。</p></div>
+    </details>
+    <details class="quiz">
+      <summary><code class="inline-code">PostToolUse</code> 返回一个错误字符串，能阻止这次工具调用吗？</summary>
+      <div class="answer"><p>不能。PostToolUse 在工具执行完之后才触发，副作用已经发生。它的返回值在 s04 的实现里被直接丢弃，既不影响 <code class="inline-code">results</code>，也不改变控制流。想“阻止”，必须用 PreToolUse；PostToolUse 只能做事后观察、提醒或补偿。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>在 <code class="inline-code">log_hook</code> 里抛出一个未捕获异常，会怎样？被拒绝的调用会进日志吗？</summary>
+      <div class="answer"><p>第一问：异常会沿 <code class="inline-code">trigger_hooks → agent_loop</code> 冒泡，整个会话崩溃，因为 <code class="inline-code">trigger_hooks</code> 没有做异常隔离。第二问：不会。因为 <code class="inline-code">permission_hook</code> 先注册、先返回字符串并短路，<code class="inline-code">log_hook</code> 根本没被调用。两个现象都指向同一个教训——hook 的顺序、短路和异常隔离，必须作为系统行为来设计，不能当成实现细节。</p></div>
+    </details>
+
+  </div>
+
+  <div class="takeaway">
+    <span class="tk-label">这一讲带走</span>
+    <p>Hook 不改变任何一条业务逻辑，只改变“逻辑挂在哪”。四个事件给循环装了四个插座，<code class="inline-code">register_hook</code> 负责插，<code class="inline-code">trigger_hooks</code> 负责在正确时机喊人，返回值就是控制信号。循环从此稳定下来，扩展都发生在外面。</p>
+    <p class="next"><b>下一讲：</b>Agent 现在能安全地动手了，但它拿到“重构一下这个项目”时，会先停下来想想步骤，还是一头扎进去改到一半才发现漏了？第 6 讲给它一个计划工具——先列清单，再动手。</p>
+  </div>
+</section>

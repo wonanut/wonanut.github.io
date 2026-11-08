@@ -1,0 +1,213 @@
+<section id="ch00" class="chapter">
+  <div class="hero">
+    <p class="eyebrow">Learn Claude Code · Harness Engineering</p>
+    <h1 class="chapter-title">用 17 个机制，造一台自己的 Agent</h1>
+    <p class="chapter-lede">这不是又一份"Claude Code 使用技巧"。这是一门把 Agent 拆到零件级别的工程课：从 30 行的 <code class="inline-code">while</code> 循环开始，一层层加上工具、权限、记忆、任务、团队、工作流，最后你会拥有一个能读懂、能改动、能替换模型的 Agent 运行框架。</p>
+    <div class="hero-meta">
+      <span class="pill accent">中文 · 单页可离线阅读</span>
+      <span class="pill">21 章 · 约 7 小时精读</span>
+      <span class="pill">主干通俗 + 源码折叠</span>
+      <span class="pill">每章带实验与自测</span>
+    </div>
+  </div>
+
+  <p class="source-line">
+    <span>课程依据 <a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/README.md">learn-claude-code</a> 仓库 s01–s17</span>
+    <span>代码对照各章 <code>code.py</code></span>
+    <span>原章给"怎么做"，本课补"为什么"</span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">读完这门课，你会</li>
+    <li>从零写出一个模型能连续行动的 Agent 循环，并说清它为什么能收敛</li>
+    <li>独立设计工具、权限、钩子、上下文压缩等关键层，而不是照抄别人的框架</li>
+    <li>看懂 Claude Code 这类真实产品背后的 17 个机制，以及它们各自解决什么问题</li>
+    <li>拥有一个可以持续迭代的个人 harness 项目，并知道下一步该往哪里走</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>一句话说清这门课</h3>
+    <p>所有 Agent 产品，拆到底只有两样东西：<b>一个训练出来的模型</b>，和<b>一套让模型能在某个环境里干活的运行框架</b>。前者是智力，后者是身体。这门课只讲后者，也就是 <b>harness</b>。</p>
+    <p>整门课围绕同一个循环展开。循环本身三十行就能写完，而且从第 2 讲到第 18 讲<b>一行都不用改</b>。真正在变的，是循环周围不断长出来的机制：工具怎么分发、危险操作怎么拦截、上下文满了怎么腾地方、任务怎么落盘、多个 Agent 怎么分工、流程固定时怎么把编排写进代码。</p>
+    <p>所以这门课的骨架非常朴素：<b>一个恒定不变的循环 + 17 个可插拔的机制</b>。学会这 17 个机制，你就具备了读任何 Agent 框架源码的能力，也具备了从零搭一套属于自己的 harness 的能力。</p>
+
+    <div class="analogy">
+      <span class="analogy-title">像学开车，而不是先学内燃机</span>
+      <p>驾校不会让你先拆发动机。它让你先挂挡、起步、上路，等你真正能开了，再告诉你离合器和变速箱在干什么。这门课的章节顺序也是这样：每一讲先让你看到"没有这个机制会出什么事故"，再带你拆开看它怎么解决。</p>
+      <p><b>类比到哪为止：</b>开车最终可以只靠肌肉记忆，而 harness engineering 必须真的理解机制 —— 因为你要自己造车。所以每个"深入"折叠区，还是得翻。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>先自测：你属于哪一类读者</h3>
+    <p>这门课有三种读法，选错读法会浪费你最多的时间。先看看你像哪一类：</p>
+    <div class="card-grid">
+      <div class="card">
+        <h4>① 会 Python，没写过 Agent</h4>
+        <p>你能读懂函数和类，但没调用过带 tool 参数的 LLM API。建议主线速通：第 0–9 章按顺序读，每章亲手跑一次，遇到源码细节先跳过。</p>
+      </div>
+      <div class="card">
+        <h4>② 用过 Agent 产品，没读过源码</h4>
+        <p>你天天用 Claude Code / Cursor，但对"它为什么这么设计"说不清。建议从第 1 章心智模型读起，重点看每章的"设计取舍"和"常见误区"。</p>
+      </div>
+      <div class="card">
+        <h4>③ 写过 Agent demo，想工程化</h4>
+        <p>你拼过 API、写过提示词链。直接跳第 8 章之后，把折叠区当正文读，重点看状态落盘、并发、恢复与多代理协调。</p>
+      </div>
+    </div>
+
+    <h3><span class="h3num">03</span>课程地图：一条主线，七个阶段</h3>
+    <p>17 个机制不是平铺的。它们按"一个 Agent 从能干事，到能长期干复杂的事"的顺序层层叠加。下面这张表就是整门课的地图，也是你日后复习时的索引：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>阶段</th><th>章节</th><th>要解决的问题</th><th>核心机制</th></tr></thead>
+        <tbody>
+          <tr><td>出发之前</td><td>ch00–ch01</td><td>到底什么是 Agent，什么是 harness</td><td>模型 + 运行框架的分工</td></tr>
+          <tr><td>一 · 动起来</td><td>ch02–ch05</td><td>模型只会"说"，不会"做"，而且会做危险的事</td><td>循环、工具分发、权限、钩子</td></tr>
+          <tr><td>二 · 做复杂任务</td><td>ch06–ch09</td><td>任务一长就跑偏，上下文一满就失忆</td><td>计划、子代理、技能加载、上下文压缩</td></tr>
+          <tr><td>三 · 记忆与长跑</td><td>ch10–ch13</td><td>会话结束就全忘，长任务无法跨轮次推进</td><td>记忆、磁盘任务图、后台任务、定时触发</td></tr>
+          <tr><td>四 · 多人协作</td><td>ch14</td><td>一个 Agent 干不完，多个又互相踩</td><td>团队运行时、原子认领、任务绑定工作树</td></tr>
+          <tr><td>五 · 开放与组装</td><td>ch15–ch16</td><td>能力不够要外接，机制一多就拼不起来</td><td>MCP 工具接入、集成运行时</td></tr>
+          <tr><td>六 · 编排与收敛</td><td>ch17–ch18</td><td>流程固定却靠模型现编，任务何时算完没人管</td><td>工作流运行时、目标循环与独立评审</td></tr>
+          <tr><td>结课</td><td>ch19–ch20</td><td>知识如何变成自己的东西</td><td>结课项目、能力清单、调试手册</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3><span class="h3num">04</span>三种学法，按你的时间选</h3>
+    <ol class="steps">
+      <li><b>三小时速通（面试/决策用）</b>：读 ch01、ch02、ch08、ch16、ch17、ch18 六章，跳过所有折叠区，只看主干与流程图。目标是能向别人解释"Agent 产品 = 模型 + harness"。</li>
+      <li><b>两周标准路线（推荐）</b>：每天 1–2 章，按 ch00 → ch18 顺序读，每章至少跑一次代码、做一次实验、完成自测。第 19 章用一周做一个自己的小 harness。</li>
+      <li><b>三十天深挖路线</b>：每周 4–5 章，所有折叠区都读，并把每章机制亲手重写一遍（不看源码），再和仓库实现对比差异。结课时你会有自己的 harness 仓库。</li>
+    </ol>
+    <div class="callout insight">
+      <span class="callout-title">唯一重要的建议</span>
+      <p>不要"读完再动手"。这门课的每一讲都设计成"读一半就能改"的形状：看完流程图就去看代码，看完代码就去做实验。光读不写，三周后你只记得"好像有个 while 循环"。</p>
+    </div>
+
+    <h3><span class="h3num">05</span>每一讲的固定结构</h3>
+    <p>为了让你形成稳定的阅读节奏，每一讲都遵循同一套结构。你可以把它当成每次学习的 checklist：</p>
+    <div class="flow">
+      <div class="flow-node"><b>真实场景</b>没有它会出什么事故</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>直觉方案</b>只加一个机制</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>代码精读</b>真实片段逐块拆</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>动手实验</b>改一行看变化</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>自测 + 标记已读</b>验证真的会了</div>
+    </div>
+    <p>主干正文是"通俗层"：用类比讲动机，用流程图讲结构，尽量不出现大段代码。带 <b>🔬 深入</b> 标记的折叠区是"源码层"：边界情况、失败模式、为什么不用另一种设计。带 <b>Q</b> 标记的是自测题，答案在折叠里，先自己答再看。</p>
+
+    <h3><span class="h3num">06</span>五分钟把环境跑起来</h3>
+    <p>课程所有代码都在仓库的 <code class="inline-code">s01_*/</code> 到 <code class="inline-code">s17_*/</code> 目录里，每章一个独立可运行文件。首次运行只需四步：</p>
+<pre data-lang="bash"><code># 1. 安装依赖（只需 anthropic + python-dotenv + pyyaml）
+pip install -r requirements.txt
+
+# 2. 准备环境变量
+cp .env.example .env
+# 编辑 .env，填入 ANTHROPIC_API_KEY 和 MODEL_ID
+
+# 3. 从第一讲开始
+python s01_agent_loop/code.py
+
+# 4. 之后每章独立运行，例如
+python s08_context_compact/code.py
+</code></pre>
+    <div class="callout warn">
+      <span class="callout-title">没有 API Key 也能学完这门课</span>
+      <p>课程不要求你每章都跑通。没有 key 时，用"读代码 + 改代码 + 预测行为"的方式完成实验：把 <code class="inline-code">client.messages.create(...)</code> 换成打印参数并返回假响应，你同样能验证循环、分发、权限、压缩这些逻辑。第 2 讲的实验就给了这种离线做法。</p>
+    </div>
+    <p>用的是什么模型其实不重要。仓库支持 Anthropic 官方接口，也支持任何 Anthropic 兼容的第三方端点（见 <code class="inline-code">.env.example</code> 里的提供商列表）。<b>这门课讲的是模型外面的那层壳</b>，换模型只会影响"聪明程度"，不影响机制是否成立。</p>
+<pre data-lang="bash"><code># .env：最小可用配置（也可换成任意 Anthropic 兼容端点）
+ANTHROPIC_API_KEY=sk-ant-xxx
+MODEL_ID=claude-sonnet-4-6
+# ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic   # 可选：第三方端点
+</code></pre>
+
+    <h3><span class="h3num">07</span>这门课的约定</h3>
+    <ul>
+      <li><b>源码为准。</b>本课是对仓库的重新讲解，不是逐字翻译。遇到描述与代码冲突，以 <code class="inline-code">code.py</code> 为准，并把差异当成一个学习点。</li>
+      <li><b>代码片段有删减。</b>为了聚焦机制，示例代码会截取关键行，删减处用 <code class="inline-code"># ...</code> 标注。完整实现始终在对应章节目录里，请对照阅读。</li>
+      <li><b>"深入"和"自测"是折叠的。</b>不是可选项，是第二遍阅读的主线。第一遍读主干建立直觉，第二遍翻折叠区建立准确理解。</li>
+      <li><b>每章都有实验。</b>实验默认在临时目录里做，涉及 shell 执行的章节请务必不要在自己的重要项目目录里乱跑。</li>
+      <li><b>进度存在你本机。</b>侧边栏每章右侧的小方块可以标记"已读"，刷新不丢。双击章节空白处也能切换标记。</li>
+    </ul>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么用"单文件 HTML 课程"这种形态？</summary>
+      <div class="deep-body">
+        <p>三个理由，都跟"学习行为"有关，而不是跟技术炫耀有关：</p>
+        <ul>
+          <li><b>降低启动成本。</b>学习最大的敌人是"打开环境"。一个文件、双击就能读、离线可用、目录常驻左侧，比拉一个文档站省掉 90% 的摩擦。</li>
+          <li><b>保留双向跳转。</b>课程在仓库根目录，正文里的源码路径都是真实相对链接。读到哪一章，直接点开对应的 <code class="inline-code">code.py</code>，不用切换工具。</li>
+          <li><b>可打印。</b>右上角"打印"会把所有折叠区自动展开，导出成 PDF 就是一份完整讲义，适合通勤时读。</li>
+        </ul>
+        <p>它也有代价：单文件意味着所有内容一次性加载，章节多了文件会变大；没有后端，所以没有账号同步、没有讨论区。对一门"自学 + 对照源码"的课来说，这些代价可以接受。如果你要把它做成团队共学平台，正确的形态反而是仓库里已有的 <code class="inline-code">web/</code> 应用。</p>
+        <details class="deep deep-2">
+          <summary>再深一层：为什么课程要"重写"而不是直接翻译仓库 README？</summary>
+          <div class="deep-body">
+            <p>原章 README 是"机制说明书"：面向已经决定要读源码的读者，信息密度高、铺垫少、没有问题引导。课程是"学习路径"：需要先建立动机、再给类比、再拆代码、再验证理解，还要处理章节之间的连贯与复习。两者的目标函数不同，所以最好的做法不是翻译，而是以原章为事实来源重写一遍 —— 这也是仓库作者在 README 里反复强调的"grasp the key designs and build it yourself"。</p>
+          </div>
+        </details>
+      </div>
+    </details>
+
+    <h3><span class="h3num">08</span>一个不用 API 的先导实验</h3>
+    <p>在正式进入第 2 讲之前，先做一件小事：打开 <a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/s01_agent_loop/code.py"><code class="inline-code">s01_agent_loop/code.py</code></a>，只读 <code class="inline-code">agent_loop</code> 这个函数（大约 30 行），然后回答三个问题：</p>
+    <ol class="steps">
+      <li><b>循环在什么条件下退出？</b>找出那唯一一个 <code class="inline-code">return</code>，并说清它依赖响应里的什么信息。</li>
+      <li><b>工具执行的结果以什么身份回到对话里？</b>注意 <code class="inline-code">messages.append</code> 里的 role，以及每条结果必须带的字段。</li>
+      <li><b>如果模型一次要求执行两条命令，这段代码会怎样？</b>回到 <code class="inline-code">for block in tool_calls</code> 那几行找答案。</li>
+    </ol>
+    <p>先别翻后面的章节。把答案写在纸上，等你读完第 2 讲再回来对照 —— 这就是整门课的学习方法：<b>先预测，再验证</b>。预测错误的地方，恰恰是你真正需要读的地方。</p>
+
+    <h3><span class="h3num">09</span>常见误区</h3>
+    <div class="callout warn">
+      <span class="callout-title">误区一：以为"Agent = 一堆 if-else 编排"</span>
+      <p>把 LLM 当成流程里的一个文本生成节点，用节点图、规则树、prompt 瀑布把行为硬编码出来，得到的不是 Agent，而是一台"加了 LLM 的 shell 脚本"。Agent 的决策权必须在模型手里，harness 只负责提供环境、执行动作、划定边界。第 1 讲会把这件事说透。</p>
+    </div>
+    <div class="callout warn">
+      <span class="callout-title">误区二：以为"机制越多越强"</span>
+      <p>17 个机制不是 checklist。每个机制都在解决一个具体故障；没有那个故障就加上去，只会增加复杂度和失败面。课程里每讲都会告诉你"什么时候不该用它"。</p>
+    </div>
+    <div class="callout warn">
+      <span class="callout-title">误区三：先收藏，再学习</span>
+      <p>收藏夹里的课程永远不会读完。给自己定一个最小承诺：今天只读第 1 讲，读完在侧边栏打勾。进度条会替你记住这件事。</p>
+    </div>
+
+    <h3><span class="h3num">10</span>自测</h3>
+    <details class="quiz">
+      <summary>没有 API Key，这门课还能学吗？哪些部分会受影响？</summary>
+      <div class="answer">
+        <p>能。17 个机制的设计、源码、流程图、实验设计都不依赖真实 API 调用。受影响的是"真实运行并观察模型行为"的环节 —— 尤其是多轮工具调用、压缩摘要质量、多代理协作这类需要模型参与才能观察到涌现行为的实验。</p>
+        <p>替代方案是把 API 调用替换成脚本化的假响应（第 2 讲实验给了模板），先验证 harness 逻辑是否正确；等拿到 key 再跑真实模型，对比差异。这反而是更好的学习顺序：先确认机制正确，再看模型表现。</p>
+      </div>
+    </details>
+    <details class="quiz">
+      <summary>为什么课程建议"每章跑一次代码"，而不是通读完全部章节再动手？</summary>
+      <div class="answer">
+        <p>因为 harness 的知识是<b>因果知识</b>，不是<b>陈述知识</b>。你知道"tool_result 要带 tool_use_id"是陈述；你亲手删掉这个字段、看到 API 报 400，才是因果。后者才会在你自己造 harness 时救你。</p>
+        <p>另外，每章代码都只比上一章多一个机制，改动很小，运行成本极低。等到通读 17 章再回头跑，你会发现自己已经忘了每章"只改了一行"的关键细节。</p>
+      </div>
+    </details>
+    <details class="quiz">
+      <summary>课程地图里，为什么 s08 Context Compact 排在 s06 Subagent 之后，而不是更早？</summary>
+      <div class="answer">
+        <p>因为压缩的前提是"上下文真的满了"，而上下文变满往往来自两件事：任务变复杂（s05 计划、s06 子代理）和工具结果越堆越多。先让读者体验"上下文爆掉"的痛，再讲四段式压缩，机制的存在理由才立得住。</p>
+        <p>顺带一提，子代理本身就是一种"上下文隔离"手段：把子任务放进全新的 <code class="inline-code">messages[]</code>，主对话就不会被细节撑爆。两种机制解决的是同一个问题的两端：一个是隔离，一个是清理。</p>
+      </div>
+    </details>
+    <details class="quiz">
+      <summary>如果只能记住课程里的一句话，应该记住哪句？</summary>
+      <div class="answer">
+        <p>"<b>循环属于 Agent，机制属于 Harness。</b>" 模型负责决定下一步做什么，代码只负责让这件事发生、让结果可见、让边界成立。你之后看到的每一个机制，都只是在回答"如何让模型的决策更好地落地"。</p>
+      </div>
+    </details>
+  </div>
+
+  <div class="takeaway">
+    <span class="tk-label">这一讲带走</span>
+    <p>17 个机制共享同一个循环，学的是"为什么需要"，不是"背 API"。先选一条学习路线，把环境跑起来，然后从第 1 讲开始建立心智模型。</p>
+    <p class="next"><b>下一讲：</b>先别急着写代码。搞清楚"Agent 的智能到底从哪来"，你才不会在后面的 17 个机制里迷路。</p>
+  </div>
+</section>

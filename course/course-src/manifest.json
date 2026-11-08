@@ -1,0 +1,37 @@
+{
+  "title": "Claude Code 内功课 · 从 17 个机制看懂 Agent Harness",
+  "description": "一份深入浅出的中文课程：沿着 learn-claude-code 仓库的 s01–s17，从零搭出属于你自己的 Agent Harness。主干通俗，难点折叠，每章带代码精读、动手实验与自测。",
+  "parts": [
+    {"id": "p0", "title": "出发之前", "note": "先建立正确的心智模型"},
+    {"id": "p1", "title": "阶段一 · 让 Agent 动起来", "note": "循环、工具、权限、钩子"},
+    {"id": "p2", "title": "阶段二 · 做复杂任务", "note": "计划、技能、子代理、压缩"},
+    {"id": "p3", "title": "阶段三 · 记忆、长跑与自动化", "note": "记忆、任务图、后台、定时"},
+    {"id": "p4", "title": "阶段四 · 多 Agent 协作", "note": "团队、协议、工作树"},
+    {"id": "p5", "title": "阶段五 · 开放与组装", "note": "MCP、集成运行时"},
+    {"id": "p6", "title": "阶段六 · 编排与收敛", "note": "工作流、目标循环"},
+    {"id": "p7", "title": "结课与进阶", "note": "项目、术语、调试手册"}
+  ],
+  "chapters": [
+    {"id": "ch00", "num": "00", "part": "p0", "nav": "课程导览：怎么学最有效", "title": "课程导览", "file": "00-guide.html", "source": null, "readme": null},
+    {"id": "ch01", "num": "01", "part": "p0", "nav": "心智模型：Agent = 模型 + Harness", "title": "心智模型", "file": "01-mindset.html", "source": null, "readme": null},
+    {"id": "ch02", "num": "02", "part": "p1", "nav": "Agent Loop：一个 while 循环", "title": "Agent Loop", "file": "02-agent-loop.html", "source": "s01_agent_loop/code.py", "readme": "s01_agent_loop/README.zh.md"},
+    {"id": "ch03", "num": "03", "part": "p1", "nav": "Tool Use：从 1 个工具到 5 个", "title": "Tool Use", "file": "03-tool-use.html", "source": "s02_tool_use/code.py", "readme": "s02_tool_use/README.zh.md"},
+    {"id": "ch04", "num": "04", "part": "p1", "nav": "Permission：执行前先问一句", "title": "Permission", "file": "04-permission.html", "source": "s03_permission/code.py", "readme": "s03_permission/README.zh.md"},
+    {"id": "ch05", "num": "05", "part": "p1", "nav": "Hooks：挂在循环外，不改循环", "title": "Hooks", "file": "05-hooks.html", "source": "s04_hooks/code.py", "readme": "s04_hooks/README.zh.md"},
+    {"id": "ch06", "num": "06", "part": "p2", "nav": "TodoWrite：先列计划再动手", "title": "TodoWrite", "file": "06-todo-write.html", "source": "s05_todo_write/code.py", "readme": "s05_todo_write/README.zh.md"},
+    {"id": "ch07", "num": "07", "part": "p2", "nav": "Subagent：给子任务一间独立房间", "title": "Subagent", "file": "07-subagent.html", "source": "s06_subagent/code.py", "readme": "s06_subagent/README.zh.md"},
+    {"id": "ch08", "num": "08", "part": "p2", "nav": "Skill：知识按需加载", "title": "Skill Loading", "file": "08-skill-loading.html", "source": "s07_skill_loading/code.py", "readme": "s07_skill_loading/README.zh.md"},
+    {"id": "ch09", "num": "09", "part": "p2", "nav": "Context Compact：给上下文腾地方", "title": "Context Compact", "file": "09-context-compact.html", "source": "s08_context_compact/code.py", "readme": "s08_context_compact/README.zh.md"},
+    {"id": "ch10", "num": "10", "part": "p3", "nav": "Memory：跨会话记住重要的事", "title": "Memory", "file": "10-memory.html", "source": "s09_memory/code.py", "readme": "s09_memory/README.zh.md"},
+    {"id": "ch11", "num": "11", "part": "p3", "nav": "Task System：写在磁盘上的任务图", "title": "Task System", "file": "11-task-system.html", "source": "s10_task_system/code.py", "readme": "s10_task_system/README.zh.md"},
+    {"id": "ch12", "num": "12", "part": "p3", "nav": "Background Tasks：慢活丢后台", "title": "Background Tasks", "file": "12-background-tasks.html", "source": "s11_background_tasks/code.py", "readme": "s11_background_tasks/README.zh.md"},
+    {"id": "ch13", "num": "13", "part": "p3", "nav": "Cron Scheduler：让时间触发任务", "title": "Cron Scheduler", "file": "13-cron-scheduler.html", "source": "s12_cron_scheduler/code.py", "readme": "s12_cron_scheduler/README.zh.md"},
+    {"id": "ch14", "num": "14", "part": "p4", "nav": "Agent Teams：多代理协作运行时", "title": "Agent Teams", "file": "14-agent-teams.html", "source": "s13_agent_teams/code.py", "readme": "s13_agent_teams/README.zh.md"},
+    {"id": "ch15", "num": "15", "part": "p5", "nav": "MCP：把外部工具接进同一个池子", "title": "MCP Plugin", "file": "15-mcp-plugin.html", "source": "s14_mcp_plugin/code.py", "readme": "s14_mcp_plugin/README.zh.md"},
+    {"id": "ch16", "num": "16", "part": "p5", "nav": "Integrated Harness：多机制，一个循环", "title": "Integrated Harness", "file": "16-integrated-harness.html", "source": "s15_integrated_harness/code.py", "readme": "s15_integrated_harness/README.zh.md"},
+    {"id": "ch17", "num": "17", "part": "p6", "nav": "Workflow Runtime：把编排写进代码", "title": "Workflow Runtime", "file": "17-workflow-runtime.html", "source": "s16_workflow_runtime/code.py", "readme": "s16_workflow_runtime/README.zh.md"},
+    {"id": "ch18", "num": "18", "part": "p6", "nav": "Goal Loop：让目标决定何时停", "title": "Goal Loop", "file": "18-goal-loop.html", "source": "s17_goal_loop/code.py", "readme": "s17_goal_loop/README.zh.md"},
+    {"id": "ch19", "num": "19", "part": "p7", "nav": "结课项目：造一台自己的 Harness", "title": "结课项目", "file": "19-capstone.html", "source": null, "readme": null},
+    {"id": "ch20", "num": "20", "part": "p7", "nav": "附录：术语表 · 调试手册 · 路线", "title": "附录", "file": "20-appendix.html", "source": null, "readme": null}
+  ]
+}

@@ -1,0 +1,260 @@
+<section id="ch20" class="chapter">
+  <p class="chapter-kicker">第 20 讲 · 结课与进阶 · 附录</p>
+  <h2 class="chapter-title">附录：术语表、调试手册与下一步
+    <small>把 17 个机制压缩成一张可以贴在显示器旁边的速查卡</small>
+  </h2>
+  <p class="chapter-lede">学完最后一讲，真正的问题才浮出来：这些机制该怎么记住、怎么排查、怎么用到自己的项目里。这一讲不引入新概念，只做三件事 —— 统一术语、给出故障排查表、规划你的下一段路。</p>
+
+  <p class="source-line">
+    <span>速查依据 s01–s17 全部章节</span>
+    <span>故障表来自各章"常见错误/边界"段落</span>
+    <span>建议配合 <a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/README.md">仓库 README</a> 使用</span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">这一讲可以当工具用</li>
+    <li>遇到"Agent 行为不对"时，用症状表在 5 分钟内定位到机制层</li>
+    <li>用统一术语和团队沟通，避免"上下文""记忆""任务"各说各话</li>
+    <li>用成熟度清单评估一个开源 Agent 框架，而不是只看 README 宣传</li>
+    <li>知道学完之后的三条进阶路线，以及各自该读什么</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>17 个机制一页速查</h3>
+    <p>先给你最重要的那张表。左边是机制，中间是"没有它会出什么事"，右边是它在源码里的落点。排查问题时，从"事故"反查"机制"比从头想快得多：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>机制</th><th>没有它会怎样</th><th>源码落点</th><th>章节</th></tr></thead>
+        <tbody>
+          <tr><td>Agent 循环</td><td>模型只说不做，需要人手动搬运结果</td><td><code>agent_loop</code></td><td>ch02</td></tr>
+          <tr><td>工具分发</td><td>读文件靠 <code>cat</code>，改文件靠 <code>echo</code>，易错且浪费轮次</td><td><code>TOOL_HANDLERS</code></td><td>ch03</td></tr>
+          <tr><td>权限</td><td>模型可能执行 <code>rm -rf</code> 或把密钥发出去</td><td><code>check_permission</code></td><td>ch04</td></tr>
+          <tr><td>钩子</td><td>每加一个横切需求就要改循环，循环越改越乱</td><td><code>trigger_hooks</code></td><td>ch05</td></tr>
+          <tr><td>计划（TodoWrite）</td><td>长任务做到一半跑偏，忘了目标</td><td><code>TodoManager</code></td><td>ch06</td></tr>
+          <tr><td>子代理</td><td>探索性工作把主上下文塞满，主线任务失焦</td><td><code>run_subagent</code></td><td>ch07</td></tr>
+          <tr><td>技能加载</td><td>把所有知识塞进 system prompt，既贵又导致注意力稀释</td><td><code>SkillLoader</code></td><td>ch08</td></tr>
+          <tr><td>上下文压缩</td><td>长会话撞上上下文上限，API 直接报错或质量骤降</td><td><code>ContextCompactor</code></td><td>ch09</td></tr>
+          <tr><td>记忆</td><td>会话一关全忘，每次都要重新解释背景</td><td><code>extract_memories</code></td><td>ch10</td></tr>
+          <tr><td>任务图</td><td>任务只活在对话里，进程一断全部丢失，也无法排序</td><td><code>TaskStore</code></td><td>ch11</td></tr>
+          <tr><td>后台任务</td><td>慢命令阻塞整个循环，模型干等</td><td><code>BackgroundManager</code></td><td>ch12</td></tr>
+          <tr><td>定时调度</td><td>必须有人手动触发，无法"到点自己做"</td><td><code>CronJob</code></td><td>ch13</td></tr>
+          <tr><td>团队运行时</td><td>单个 Agent 上下文与算力封顶，复杂任务做不完</td><td><code>MessageBus</code></td><td>ch14</td></tr>
+          <tr><td>MCP 接入</td><td>每接一个外部系统就改一次核心代码</td><td><code>assemble_tool_pool</code></td><td>ch15</td></tr>
+          <tr><td>集成运行时</td><td>机制各自为战，拼在一起顺序错、状态乱</td><td><code>agent_loop</code> 全链路</td><td>ch16</td></tr>
+          <tr><td>工作流运行时</td><td>固定流程靠模型每轮现编，慢、贵、不可恢复</td><td><code>WorkflowTool</code></td><td>ch17</td></tr>
+          <tr><td>目标循环</td><td>模型说"做完了"就停，没人验证是否真的完成</td><td><code>GoalController</code></td><td>ch18</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3><span class="h3num">02</span>术语表</h3>
+    <p>Agent 领域最大的沟通成本，是同一个词在不同团队指不同东西。下面这组定义是本课的统一口径，建议你在自己的项目文档里也固定下来：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>术语</th><th>本课定义</th><th>容易混淆的说法</th></tr></thead>
+        <tbody>
+          <tr><td><b>Agent</b></td><td>模型 + harness 构成的完整系统，能在环境中自主决策与行动</td><td>"一个 prompt""一个工作流"</td></tr>
+          <tr><td><b>模型 / LLM</b></td><td>通过训练获得判断能力的神经网络，Agent 的"驾驶员"</td><td>把它当成"文本生成器"</td></tr>
+          <tr><td><b>Harness</b></td><td>围绕模型运行的全部工程代码：工具、权限、上下文、状态、编排</td><td>"脚手架"（脚手架暗示临时）</td></tr>
+          <tr><td><b>Agent 循环</b></td><td>调用模型 → 检查 <code>tool_use</code> → 执行工具 → 回填结果 → 重复</td><td>"Agent 引擎"</td></tr>
+          <tr><td><b>工具（tool）</b></td><td>模型可请求的一个原子动作，有 JSON schema 和 handler</td><td>"技能"（技能是指令与知识）</td></tr>
+          <tr><td><b>技能（skill）</b></td><td>按需加载的领域知识/操作指南，注入上下文而非执行动作</td><td>"工具"</td></tr>
+          <tr><td><b><code>tool_use</code> block</b></td><td>模型响应中表示"我要调用工具"的结构化内容块</td><td>"函数调用"（在不同 API 里同名不同物）</td></tr>
+          <tr><td><b><code>tool_result</code></b></td><td>harness 把工具输出包装成的消息块，必须带 <code>tool_use_id</code></td><td>"工具返回值"</td></tr>
+          <tr><td><b>上下文（context）</b></td><td>本次模型调用实际看到的全部 token：system + 历史 + 工具结果</td><td>"记忆"</td></tr>
+          <tr><td><b>压缩（compact）</b></td><td>在不破坏 <code>tool_use</code>/<code>tool_result</code> 配对的前提下缩短历史</td><td>"截断"（粗暴丢弃会破坏协议）</td></tr>
+          <tr><td><b>记忆（memory）</b></td><td>跨会话持久化、可被召回的事实与偏好，存于磁盘</td><td>"上下文"</td></tr>
+          <tr><td><b>子代理（subagent）</b></td><td>用全新 <code>messages[]</code> 执行子任务、只回传最终文本的独立循环</td><td>"小模型"</td></tr>
+          <tr><td><b>队友（teammate）</b></td><td>持久存在、有独立循环与收件箱、通过消息总线协作的 Agent</td><td>"子代理"（子代理是一次性的）</td></tr>
+          <tr><td><b>任务（task）</b></td><td>落盘的状态机记录，含依赖、拥有者、状态，可被认领与完成</td><td>"todo"（todo 是注意力工具）</td></tr>
+          <tr><td><b>工作树（worktree）</b></td><td><code>git worktree</code> 创建的独立工作目录，隔离并行编辑</td><td>"工作区"（IDE 概念）</td></tr>
+          <tr><td><b>钩子（hook）</b></td><td>在循环固定事件点（PreToolUse 等）注册的回调</td><td>"中间件"</td></tr>
+          <tr><td><b>权限（permission）</b></td><td>执行前的决策：allow / deny / ask，以及拒绝后的回填</td><td>"鉴权"（那是身份认证）</td></tr>
+          <tr><td><b>MCP</b></td><td>Model Context Protocol，外部工具服务器的发现与调用协议</td><td>"插件系统"</td></tr>
+          <tr><td><b>工作流（workflow）</b></td><td>由可信脚本固定编排多次 agent 调用，可恢复</td><td>"Agent"（工作流不含判断权）</td></tr>
+          <tr><td><b>目标（goal）</b></td><td>会话级的完成条件，由独立判断器评审是否达成</td><td>"prompt 里写一句'直到完成'"</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="analogy">
+      <span class="analogy-title">附录像汽车仪表盘和维修手册</span>
+      <p>正文教你开车，附录帮你在车出问题时看懂仪表、翻到对应章节。你不需要背下整张术语表，但要知道"仪表亮这个灯，该查哪一章"。</p>
+      <p><b>类比到哪为止：</b>修车可以交给 4S 店，harness 出问题只能你自己翻日志 —— 因为你造的车没有别人见过。</p>
+    </div>
+
+    <h3><span class="h3num">03</span>故障排查手册</h3>
+    <p>下面每一条都是真实会遇到的症状。按"症状 → 最可能的机制层 → 先做什么"的顺序排查，不要一上来就改 prompt：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>症状</th><th>先怀疑</th><th>排查动作</th></tr></thead>
+        <tbody>
+          <tr><td>模型一直调工具，停不下来</td><td>循环终止条件 / 工具结果没回填</td><td>打印每轮 <code>tool_calls</code> 与 <code>messages</code> 长度；检查 <code>tool_result</code> 是否真的 append 了</td></tr>
+          <tr><td>模型反复做同一个动作</td><td>工具结果没有提供新信息 / 系统提示缺少约束</td><td>看工具返回是否与上次相同；给工具加"已存在/已完成"状态，或加计划机制</td></tr>
+          <tr><td>API 返回 400 <code>tool_use</code> 配对错误</td><td>压缩或手工编辑破坏了配对</td><td>检查每个 <code>tool_result.tool_use_id</code> 是否都能找到对应 <code>tool_use.id</code>；压缩必须成对处理</td></tr>
+          <tr><td>长会话突然变傻</td><td>上下文压缩丢信息 / 注意力稀释</td><td>看是否触发了 compact；检查摘要是否保留了目标与关键约束；考虑子代理隔离</td></tr>
+          <tr><td>Agent 读不到刚写的文件</td><td>工作目录 / 沙箱路径</td><td>打印 <code>cwd</code> 与绝对路径；检查是否在不同 worktree 里操作</td></tr>
+          <tr><td>任务"完成了"但产物不对</td><td>缺少验收步骤 / 停止条件太弱</td><td>加可检查的完成条件（测试通过、文件存在、命令退出码为 0）；启用目标循环机制</td></tr>
+          <tr><td>多 Agent 互相覆盖文件</td><td>共享工作目录，没有隔离</td><td>任务绑定 worktree；认领必须原子；写入前检查任务所有权</td></tr>
+          <tr><td>后台任务结果丢了</td><td>通知队列未在下轮注入</td><td>检查 <code>collect_background_results</code> 是否在循环开头被调用；确认注入发生在模型调用之前</td></tr>
+          <tr><td>定时任务没触发</td><td>cron 表达式 / 时区 / 队列未消费</td><td>用固定时间点验证匹配函数；确认调度线程存活、队列在下轮被 ack</td></tr>
+          <tr><td>权限被拒后模型卡住</td><td>拒绝理由没有回填</td><td>拒绝也必须返回一条说明原因的 <code>tool_result</code>，让模型换路径</td></tr>
+          <tr><td>同一个工具调用被重复执行</td><td>重试 / 恢复机制不幂等</td><td>给副作用操作加幂等键（ch17 的稳定调用键思路）</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>排查时有一个通用原则：<b>先把"模型看到的上下文"完整打印出来</b>。90% 的"模型犯蠢"，打开上下文一看都是 harness 给错了信息 —— 结果没回填、顺序错了、压缩压掉了关键约束。</p>
+<pre data-lang="bash"><code># 调试三件套：上下文、工具结果、循环轮次
+# 1. 每轮打印实际发给模型的 messages（脱敏后）
+def debug_dump(messages, turn):
+    print(f"=== turn {turn} | messages: {len(messages)} ===")
+    for m in messages[-4:]:
+        print(m["role"], str(m["content"])[:300])
+
+# 2. 定位循环与工具分发
+grep -n "def agent_loop\|TOOL_HANDLERS\|tool_result" s0*/code.py
+
+# 3. 检查配对关系（必须 1:1）
+python3 - &lt;&lt;'PY'
+import re, pathlib
+src = pathlib.Path("s08_context_compact/code.py").read_text()
+print("tool_use 提及次数:", len(re.findall(r"tool_use", src)))
+print("tool_result 提及次数:", len(re.findall(r"tool_result", src)))
+PY
+</code></pre>
+
+    <h3><span class="h3num">04</span>从 demo 到生产：还差哪些东西</h3>
+    <p>仓库里的 17 个 demo 是教学用的最小实现。真实产品在这之上还有一层"工程化"，理解差异能帮你知道哪些代码不能直接抄：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>维度</th><th>教学 demo</th><th>生产 harness</th></tr></thead>
+        <tbody>
+          <tr><td>错误处理</td><td>工具返回错误字符串，模型自己调整</td><td>分类重试、熔断、降级、告警；区分可重试与不可重试</td></tr>
+          <tr><td>权限</td><td>命令黑名单 + 简单询问</td><td>策略引擎、沙箱、审计日志、审批工作流、按租户隔离</td></tr>
+          <tr><td>状态</td><td>JSON 文件落盘</td><td>数据库 + 乐观锁 + 迁移；崩溃恢复与幂等</td></tr>
+          <tr><td>可观测</td><td><code>print</code> + 日志</td><td>结构化 trace、每轮 token/成本、工具延迟、失败率看板</td></tr>
+          <tr><td>上下文</td><td>四段式压缩</td><td>分层记忆、检索增强、按任务动态预算、摘要质量评估</td></tr>
+          <tr><td>并发</td><td>线程/进程级</td><td>队列、限流、分布式租约、跨节点锁</td></tr>
+          <tr><td>评估</td><td>手动试</td><td>轨迹回放、任务成功率、黄金集回归、A/B 对比</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <details class="deep">
+      <summary>🔬 深入：如何评估一个 Agent 框架的 harness 成熟度？</summary>
+      <div class="deep-body">
+        <p>看 README 里的功能列表最不可靠。下面这份清单按"越靠后越难伪装"排序，用来快速判断一个框架是不是真的工程化：</p>
+        <ol>
+          <li><b>循环是否干净？</b>核心循环能否用不到 100 行讲清，机制是否外挂而不是塞进循环。</li>
+          <li><b>工具是否有统一 schema 与错误约定？</b>错误是否可被模型理解并自我修正。</li>
+          <li><b>权限是否在执行前？</b>而不是靠事后审计或 prompt 请求。</li>
+          <li><b>状态是否落盘且可恢复？</b>杀进程再启动能否继续。</li>
+          <li><b>上下文管理是否有不变量检查？</b>比如 tool_use/tool_result 配对。</li>
+          <li><b>是否可观测？</b>能否回答"这一轮模型看到了什么、花了多少 token、工具耗时多少"。</li>
+          <li><b>是否可替换模型？</b>换 provider 不需要改业务逻辑。</li>
+          <li><b>是否有轨迹评估能力？</b>能否回放历史任务并量化成功率。</li>
+        </ol>
+        <p>前四项是及格线，后四项决定它能不能上生产。特别提示：一个框架如果宣称"零代码搭建 Agent"，通常意味着它把判断写进了配置与流程，正好踩中第 1 讲的反模式。</p>
+        <details class="deep deep-2">
+          <summary>再深一层：如果想自己写一个，目录结构长什么样？</summary>
+          <div class="deep-body">
+<pre data-lang="text"><code>my-harness/
+  core/
+    loop.py          # agent_loop：唯一的主循环
+    tools.py         # 工具注册表：schema + handler
+    permission.py    # allow / deny / ask 策略
+    hooks.py         # 生命周期事件
+  context/
+    compact.py       # 四段式压缩 + 配对不变量检查
+    memory.py        # 跨会话记忆的存取与召回
+    skills.py        # 技能目录扫描与按需加载
+  state/
+    tasks.py         # 磁盘任务图、依赖、认领
+    session.py       # 会话与 transcript
+  runtime/
+    background.py    # 线程/进程后台任务
+    scheduler.py     # cron 触发与队列
+    teams.py         # 消息总线、队友、worktree
+  integrations/
+    mcp.py           # 外部工具发现与命名空间
+  eval/
+    replay.py        # 轨迹回放与成功率
+</code></pre>
+            <p>先写 <code>core/loop.py</code> 与 <code>core/tools.py</code>，跑通一个真实任务，再按痛点逐个加目录 —— 不要反过来先搭架子。这是整门课反复强调的顺序：机制由故障驱动，而不是由架构图驱动。</p>
+          </div>
+        </details>
+      </div>
+    </details>
+
+    <h3><span class="h3num">05</span>学完之后的三条路</h3>
+    <div class="card-grid">
+      <div class="card">
+        <h4>① 造产品</h4>
+        <p>把课程机制落地成自己的编码/研究/运维助手。读官方 API 文档与 MCP 规范，重点补：沙箱、审计、评估。参考 Kode CLI 与 Agent SDK。</p>
+      </div>
+      <div class="card">
+        <h4>② 做常驻助手</h4>
+        <p>从"用完即弃"走向"一直在线"：心跳、cron、IM 多通道、长期记忆、人格设定。仓库的姊妹项目 claw0 专门拆这套机制。</p>
+      </div>
+      <div class="card">
+        <h4>③ 参与训练</h4>
+        <p>harness 产生的轨迹就是训练信号。往 RL / SFT 方向走，要补：任务环境构建、奖励设计、轨迹过滤、评估集。</p>
+      </div>
+    </div>
+    <p>推荐资源（按优先级）：本仓库各章 <code class="inline-code">README.md</code> 与 <code class="inline-code">code.py</code> 二刷 → <a href="https://docs.anthropic.com">Anthropic 官方文档</a>（Messages API、tool use、context 管理）→ <a href="https://modelcontextprotocol.io">MCP 官方规范</a> → 姊妹项目 <a href="https://github.com/shareAI-lab/claw0">claw0</a>（常驻 Agent）→ <a href="https://github.com/shareAI-lab/Kode-CLI">Kode CLI</a>（真实产品实现）。</p>
+    <div class="callout tip">
+      <span class="callout-title">最有效的复利动作</span>
+      <p>给学过的每个机制写一段 200 字的"故障笔记"：什么症状、哪个机制、怎么修。三个月后你会拥有一本只属于自己的 harness 手册，比任何教程都值钱。</p>
+    </div>
+
+    <h3><span class="h3num">06</span>常见误区</h3>
+    <div class="callout warn">
+      <span class="callout-title">误区一：把附录当"看完就忘"的附表</span>
+      <p>这张故障表在你真正做项目时才会发挥价值。建议把它收藏成浏览器书签，或在项目里复制一份当 runbook。</p>
+    </div>
+    <div class="callout warn">
+      <span class="callout-title">误区二：以为"生产化 = 加更多机制"</span>
+      <p>生产化是让已有机制更可靠，不是再加 10 个机制。可观测、幂等、恢复、审计，这些是"深度"，不是"广度"。</p>
+    </div>
+    <div class="callout warn">
+      <span class="callout-title">误区三：忽略模型可替换性</span>
+      <p>把 provider 特有行为写进业务逻辑，换模型时会全线崩。第 1 讲说过：模型是变量，harness 是常量。</p>
+    </div>
+
+    <h3><span class="h3num">07</span>自测</h3>
+    <details class="quiz">
+      <summary>用户报告："Agent 昨天还好好的，今天一直重复读同一个文件。" 你的排查顺序是什么？</summary>
+      <div class="answer">
+        <p>第一步查上下文而不是改 prompt：打印最近几轮的消息，确认 read 的 <code>tool_result</code> 是否真的回填、内容是否为空或被压缩掉了。第二步查工具层：文件路径是否变了（cwd / worktree）、读取是否有权限问题导致静默返回错误。第三步查状态：是否有记忆或 todo 注入了过期信息，让模型以为文件还没读。</p>
+        <p>对应机制：ch09 压缩（配对不变量）、ch12 后台（结果注入时机）、ch11 任务状态。多数"重复动作"的根因是"模型没拿到新信息"，不是模型笨。</p>
+      </div>
+    </details>
+    <details class="quiz">
+      <summary>"记忆"和"上下文"最容易混。用一句话说清区别，并各举一个只有它能解决的问题。</summary>
+      <div class="answer">
+        <p>上下文是<b>这一次模型调用能看到的东西</b>（会消失、有 token 上限）；记忆是<b>存在磁盘上、跨会话可召回的事实与偏好</b>（持久、需要检索）。</p>
+        <p>只有记忆能解决：用户上周说过"这个项目用 pnpm 不用 npm"，本周新会话仍要遵守。只有上下文能解决：这一轮刚读到的报错日志，模型必须马上基于它推理。</p>
+      </div>
+    </details>
+    <details class="quiz">
+      <summary>同事说："我们给 Agent 加一个'如果连续失败 3 次就换方案'的 if-else，这样更稳。" 你会怎么回应？</summary>
+      <div class="answer">
+        <p>先确认"连续失败"是否可被模型看到：如果每次失败的原因都已作为 <code>tool_result</code> 回填，模型本来就能自己换方案，硬编码判断反而剥夺了它的判断权；如果失败信息没回填，那才是真正要修的 bug。</p>
+        <p>如果确实需要兜底，正确做法是放在 harness 的"护栏"层：限制最大轮次、最大成本、重复动作检测、必要时升级给人（ch18 的出口设计），而不是写"第 3 次改走 B 方案"这种业务决策。判断归模型，护栏归 harness。</p>
+      </div>
+    </details>
+    <details class="quiz">
+      <summary>如果让你只用 3 个机制、100 行代码做一个能用的个人编码助手，你选哪三个？为什么？</summary>
+      <div class="answer">
+        <p>推荐组合：<b>循环 + 工具分发 + 权限</b>（ch02–ch04）。理由：循环让它能连续行动；工具（读/写/改/glob/bash）决定它能对代码库做哪些动作；权限保证它不会在你睡着时把仓库删了。这三者构成"能用"的下限。</p>
+        <p>下一步按痛点加：如果它跑偏就加 todo（ch06）；如果上下文爆就加压缩（ch09）；如果任务跨天就加任务图（ch11）。不要一次上 17 个机制 —— 课程反复强调：机制由故障驱动。</p>
+      </div>
+    </details>
+  </div>
+
+  <div class="takeaway">
+    <span class="tk-label">全课结语</span>
+    <p>17 个机制，最终只服务一个目标：让模型的判断力在一个安全、可观测、可恢复的环境里充分发挥。你不需要造出第二个 Claude Code，你需要造出适合你自己领域的那一台。</p>
+    <p class="next"><b>下一步：</b>回到 <a href="#ch19">第 19 讲</a>，用一个结课项目把学到的机制真正串起来。造完它，这门课才算结束。</p>
+  </div>
+</section>

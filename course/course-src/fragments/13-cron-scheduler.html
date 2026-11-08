@@ -1,0 +1,350 @@
+<section id="ch13" class="chapter">
+  <p class="chapter-kicker">第 13 讲 · 阶段三 · 记忆、长跑与自动化</p>
+  <h2 class="chapter-title">Cron Scheduler：到点自己开工的闹钟
+    <small>对应 s12_cron_scheduler：792 行，五段式 cron + 队列 + 调度线程 + 持久化</small>
+  </h2>
+  <p class="chapter-lede">上一讲的后台任务解决的是“命令已经开始之后的等待”，但没人规定命令该在什么时刻开始。“每天早上九点跑测试”这种事，不能指望用户在九点整发一条消息。这个讲给 Agent 装一个闹钟：时间到了，任务自己进队列。</p>
+  <p class="source-line">
+    <span>源码 <code>s12_cron_scheduler/code.py</code></span>
+    <span>原章 <a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/s12_cron_scheduler/README.zh.md">README.zh.md</a></span>
+  </p>
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>说清“后台任务”和“定时任务”的分工：一个管执行方式，一个管启动时刻</li>
+    <li>读懂五段式 cron 的匹配与校验、到期先入队再交付、以及至少一次交付的取舍</li>
+    <li>判断 durable 持久化的边界：它保存任务定义，不保存已经错过的触发</li>
+  </ul>
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>“每天早上九点”是一个 Agent 自己回答不了的问题</h3>
+    <p>s11 让慢命令在后台跑，但它的启动时机仍然是“模型决定调用工具的那一瞬间”。如果用户说“每天早上九点跑一遍测试，把结果发我”，模型能做的只有：把这句话理解成一项未来的工作，但当前进程里没有任何东西会在明天九点把它叫醒。Agent 进程关掉，一切归零；进程不关，它也只会傻等用户输入。</p>
+    <p>这件事不能靠模型“记住时间”。模型没有持续运行的时钟，它只在被调用时存在；即使你在 system prompt 里写“现在是 8:59，请等到 9:00”，它也没有办法在两轮对话之间自己醒来。定时能力必须由 harness 提供：一个长期运行的调度器，持续看表，到点把工作塞进某个队列，再找合适的时机交给 Agent。</p>
+    <p>这里有个关键区分：<b>后台任务解决“怎么执行”，定时任务解决“什么时候开始执行”</b>。前者是执行模型，后者是触发模型。把两者混为一谈，就会写出“后台线程里 sleep 到九点”这种实现——它能跑，但进程重启就丢，而且每个任务占一个线程。</p>
+    <p>还有一个设计选择值得提前说：调度器用“每秒轮询”而不是“算出下一次触发时间再 sleep”。轮询实现简单、对系统时间跳变不敏感，但代价是每秒唤醒一次；“算下一次”更省 CPU，却要处理夏令时、时钟回拨、任务新增后重算等一系列麻烦。教学版选简单的那条路，生产系统通常会选省电的那条。</p>
+    <div class="callout warn"><span class="callout-title">注意</span><p>本章的调度器用的是 Agent 进程的本地时间，而且进程一关调度线程就停。durable 持久化只保住“任务定义”，不会在你关机期间替你执行。想要真正的“关掉电脑也准时跑”，得用系统 crontab、systemd timer 或外部调度服务。</p></div>
+
+    <h3><span class="h3num">02</span>直觉：一个 CronJob，就是一张写清时间的任务卡</h3>
+    <p>s12 的设计可以概括成一句话：<b>把“什么时候”和“做什么”存成一条记录，用一个线程每秒看表，到点就排队，Agent 空了再交付</b>。记录就是 <code class="inline-code">CronJob</code>，它只有七个字段，但每个都对应一个真实问题。</p>
+    <div class="analogy">
+      <span class="analogy-title">像医院预约挂号叫号</span>
+      <p>你预约了九点的号（cron 表达式），到点时护士把你的号放进候诊队列（<code class="inline-code">cron_queue</code>），但医生正在看诊时不会打断（<code class="inline-code">agent_lock</code>）；医生看完手头这位，才叫下一个号（空闲后交付）。你预约的是“九点开始排队”，不是“九点整被接诊”。</p>
+      <p><b>类比到哪为止：</b>医院有护士盯着钟、有真实的人在处理突发情况；这里的“护士”是一个每秒轮询的线程，而且它只认本地时间。更要命的是，医院不会因为你迟到就作废预约，而本章的调度器在进程关闭期间不会补号——错过了就是错过了。这个差异是“教学版”和“生产版”最大的分界线。</p>
+    </div>
+    <div class="flow">
+      <div class="flow-node"><b>CronJob</b>cron + prompt + 策略</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>调度线程</b>每秒 poll 匹配</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>cron_queue</b>到期先入队</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>agent_lock</b>Agent 空闲才取</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>[Scheduled]</b>作为 user 消息交付</div>
+    </div>
+    <p>为什么非要“先入队、再等空闲”，而不是匹配到时直接启动一轮 Agent？因为 Agent 的会话是单线程状态机：<code class="inline-code">messages[]</code> 正在被用户的一轮对话修改时，突然插进来一轮定时任务，两条时间线会同时往同一个数组里追加消息，消息顺序和 <code class="inline-code">tool_use</code> / <code class="inline-code">tool_result</code> 的配对都会乱。队列把“时间到了”和“可以执行”解耦：调度线程只负责发现，队列处理线程只负责在安全时机交付。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>字段</th><th>含义</th><th>防的是什么</th></tr></thead>
+        <tbody>
+          <tr><td><code>cron</code></td><td>五段式时间表达式</td><td>“什么时候触发”不可描述</td></tr>
+          <tr><td><code>prompt</code></td><td>触发后交给 Agent 的任务</td><td>到点后不知道要做什么</td></tr>
+          <tr><td><code>recurring</code></td><td>周期任务 or 一次性任务</td><td>一次性任务被反复触发</td></tr>
+          <tr><td><code>durable</code></td><td>是否写进 <code>.scheduled_tasks.json</code></td><td>进程重启后任务定义丢失</td></tr>
+          <tr><td><code>pending_delivery</code></td><td>已到期但还没被模型接收</td><td>同一分钟重复入队、丢任务</td></tr>
+          <tr><td><code>last_fired</code></td><td>上次触发的分钟标记</td><td>一秒一轮询导致同一分钟多次触发</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h4>三条线程，各干一件小事</h4>
+    <p>整章的后台结构只有三条线程，职责被切得很干净：</p>
+    <ul>
+      <li><b>主线程</b>：读用户输入，拿 <code class="inline-code">agent_lock</code> 跑一轮对话。</li>
+      <li><b>调度线程</b>（<code class="inline-code">cron-scheduler</code>）：每秒 <code class="inline-code">poll_due_jobs(datetime.now())</code>，只判断“有没有任务到期”。</li>
+      <li><b>队列处理线程</b>（<code class="inline-code">cron-queue-processor</code>）：每 0.2 秒看一眼队列，抢到锁就启动一轮 Agent。</li>
+    </ul>
+    <p>三条线程共享 <code class="inline-code">cron_lock</code>（保护任务字典与队列）和 <code class="inline-code">agent_lock</code>（保护会话）。把“看时间”“看队列”“改会话”分成三件事，是这段代码能读下去的主要原因：没有哪个函数同时操心所有事。</p>
+    <p>理解这个分工之后，后面读代码就不会再问“为什么调度线程不直接跑 Agent”——它只负责发现，交付是另一条线程的事。</p>
+
+    <h3><span class="h3num">03</span>代码精读：五段式 cron 怎么匹配</h3>
+    <p>先看数据结构。七个字段里，前四个决定“能不能触发”，后两个是运行时状态：<code class="inline-code">pending_delivery</code> 表示“已经到期、正在队列里或等待确认”，<code class="inline-code">last_fired</code> 记录上次触发的分钟（格式 <code class="inline-code">YYYY-MM-DD HH:MM</code>）。</p>
+    <pre data-lang="python"><code>@dataclass
+class CronJob:
+    id: str
+    cron: str
+    prompt: str
+    recurring: bool
+    durable: bool
+    pending_delivery: bool = False
+    last_fired: str | None = None
+</code></pre>
+    <p>五段式表达式的顺序是“分钟 小时 日 月 星期”，一个星期从 0 开始（周日）。<code>cron_matches()</code> 把当前时间拆成五个数值逐一比较，其中星期需要一次转换：Python 的 <code class="inline-code">datetime.weekday()</code> 里周一是 0，而 cron 里周日是 0，所以 <code class="inline-code">(moment.weekday() + 1) % 7</code>。</p>
+    <p>这个 +1 取模看着不起眼，却是一类经典 bug 的来源：不做转换的话，“每周一”的表达式会在周二触发，而且差一天的错误很难靠肉眼发现。凡是“两套编号体系对接”的地方，都值得单独写一行测试。</p>
+    <pre data-lang="python"><code>def cron_matches(cron_expr: str, moment: datetime) -&gt; bool:
+    fields = cron_expr.strip().split()
+    if len(fields) != 5:
+        return False
+    minute, hour, day, month, weekday = fields
+    cron_weekday = (moment.weekday() + 1) % 7
+    if not (
+        _cron_field_matches(minute, moment.minute)
+        and _cron_field_matches(hour, moment.hour)
+        and _cron_field_matches(month, moment.month)
+    ):
+        return False
+    day_matches = _cron_field_matches(day, moment.day)
+    weekday_matches = _cron_field_matches(weekday, cron_weekday)
+    if day == "*" and weekday == "*":
+        return True
+    if day == "*":
+        return weekday_matches
+    if weekday == "*":
+        return day_matches
+    return day_matches or weekday_matches
+</code></pre>
+    <p>最后四行是整段代码里最容易被忽略、也最容易写错的部分：当“日”和“星期”都有限制时，标准 cron 的语义是<b>或</b>，不是与。比如 <code class="inline-code">0 9 1 * 1</code> 表示“每月 1 号或者每周一”的九点，而不是“既是 1 号又是周一”。很多手写调度器在这里写成 <code class="inline-code">and</code>，结果某些任务一年只触发几次。代码用三次分支把三种情况写清楚：两个都是 <code class="inline-code">*</code> 时直接通过；只有一个有约束时只比那个；两个都有约束时取或。</p>
+    <p><code class="inline-code">_cron_field_matches()</code> 是单字段匹配器，支持五种写法：<code class="inline-code">*</code>（任意）、<code class="inline-code">*/N</code>（步长）、<code class="inline-code">N</code>（精确值）、<code class="inline-code">N-M</code>（区间）、<code class="inline-code">N,M,...</code>（列表），而且列表和区间可以嵌套组合。它是对称的：校验函数用同一套语法规则判断合法性，所以“能通过校验的表达式，匹配时不会抛异常”。</p>
+    <p>对称不代表完备。校验只检查取值范围，不检查步长的语义，例如分钟段的 <code class="inline-code">*/90</code> 能通过校验，但实际只在 0 分匹配，效果和 <code class="inline-code">0</code> 一样。这类输入不算错，只是使用者预期和结果不一致；严格的实现会在校验时警告“步长大于取值范围”。读源码时把“它拒绝什么”和“它没拒绝但不合理什么”分开记，能省掉很多调试时间。</p>
+    <p>写入前必须过 <code class="inline-code">validate_cron()</code>。它检查段数是否恰好五段，然后逐段按各自的取值范围校验：分钟 0–59、小时 0–23、日 1–31、月 1–12、星期 0–6。任何一段越界、区间起点大于终点、步长非数字或为 0，都会被拒绝并返回一句可读的错误。</p>
+    <pre data-lang="python"><code>def validate_cron(cron_expr: str) -&gt; str | None:
+    fields = cron_expr.strip().split()
+    if len(fields) != 5:
+        return f"Expected 5 fields, got {len(fields)}"
+
+    field_rules = [
+        ("minute", 0, 59),
+        ("hour", 0, 23),
+        ("day-of-month", 1, 31),
+        ("month", 1, 12),
+        ("day-of-week", 0, 6),
+    ]
+    for field, (name, minimum, maximum) in zip(fields, field_rules):
+        error = _validate_cron_field(field, minimum, maximum)
+        if error:
+            return f"{name}: {error}"
+    return None
+</code></pre>
+    <p>校验发生在两个地方：<code class="inline-code">schedule_job()</code> 里保存前校验，<code class="inline-code">load_durable_jobs()</code> 里加载时再校验一次。后者容易被当成多余——文件是我们自己写的，为什么还要验？因为文件可能被手改、被别的版本写过、或者写到一半损坏。加载时把非法任务跳过并打印日志，比让一个坏表达式在运行期每隔一秒抛一次异常好得多。</p>
+    <h4>把表达式翻译成人话</h4>
+    <p>读 cron 表达式最稳的办法是先确认五段对应“分 时 日 月 周”，再从右往左读约束：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>表达式</th><th>含义</th></tr></thead>
+        <tbody>
+          <tr><td><code>* * * * *</code></td><td>每分钟</td></tr>
+          <tr><td><code>0 9 * * *</code></td><td>每天 09:00</td></tr>
+          <tr><td><code>*/5 * * * *</code></td><td>每 5 分钟</td></tr>
+          <tr><td><code>0 9 * * 1-5</code></td><td>工作日 09:00</td></tr>
+          <tr><td><code>30 8 1 * *</code></td><td>每月 1 号 08:30</td></tr>
+          <tr><td><code>0 9 1 * 1</code></td><td>每月 1 号或每周一 09:00（日与周取或）</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>注意最后一行：它看上去像“每月 1 号且是周一”，实际语义是“或”。如果业务真的需要“每月 1 号且是周一”，就得写成两条表达式分别判断，或者在任务内部再做一次日期过滤。cron 语法本身没有“与”的写法。</p>
+    <p>看懂这一行，就避免了最常见的定时任务误解：以为多了字段就一定能表达更精确的条件。</p>
+    <p>把这张表当成读源码的对照单：看到 <code class="inline-code">cron_matches()</code> 里那三个 <code class="inline-code">if</code> 分支，就回来查一眼“日与周”这一行。能说清每个分支对应哪种输入，这段匹配逻辑就算真正读懂了。</p>
+
+    <h3><span class="h3num">04</span>到期先入队：状态先落盘，任务再排队</h3>
+    <p>调度线程的实现简单到只有五行：每 1 秒醒来一次，调用 <code class="inline-code">poll_due_jobs(datetime.now())</code>。</p>
+    <pre data-lang="python"><code>def cron_scheduler_loop(stop_event: threading.Event = RUNTIME_STOP):
+    while not stop_event.wait(1.0):
+        poll_due_jobs(datetime.now())
+</code></pre>
+    <p>真正的逻辑在 <code class="inline-code">poll_due_jobs()</code>。它遍历所有任务，跳过“已经在等待交付”的，和“这一分钟已经触发过”的，然后对匹配的任务调用 <code class="inline-code">_enqueue_due_job()</code>：</p>
+    <pre data-lang="python"><code>def poll_due_jobs(moment: datetime):
+    minute_marker = moment.strftime("%Y-%m-%d %H:%M")
+    with cron_lock:
+        for job in list(scheduled_jobs.values()):
+            try:
+                if job.pending_delivery or job.last_fired == minute_marker:
+                    continue
+                if cron_matches(job.cron, moment):
+                    _enqueue_due_job(job, minute_marker)
+                    print(f"  [cron] due {job.id}: {job.prompt[:60]}")
+            except Exception as error:
+                print(f"  [cron] could not enqueue {job.id}: {error}")
+</code></pre>
+    <p>为什么需要 <code class="inline-code">last_fired</code>？因为线程每秒都会醒来，而 9:00 这一分钟里它可能匹配 60 次。如果没有分钟粒度的去重，一个任务一分钟就会入队 60 次。<code class="inline-code">pending_delivery</code> 则处理另一个窗口：任务已经入队，但 Agent 还没空处理，此时即使跨过了新的分钟，也不该再次入队。两个字段一个管“同一分钟内不重复”，一个管“未交付期间不重复”。</p>
+    <p>把去重放在“分钟”而不是“秒”，是因为 cron 的最小粒度就是分钟。如果未来要支持秒级调度，这个标记就得改成秒级字符串，<code class="inline-code">last_fired</code> 的格式也要跟着变——数据格式永远跟着精度走。</p>
+    <p>这类“时间标记”字段的命名也值得讲究：叫 <code class="inline-code">last_fired</code> 而不是 <code class="inline-code">last_time</code>，读代码的人能立刻知道它记录的是“触发”而不是“执行”。</p>
+    <p><code class="inline-code">_enqueue_due_job()</code> 的顺序是本章最值得抄的细节：<b>先把 <code class="inline-code">pending_delivery</code> 和 <code class="inline-code">last_fired</code> 写进任务，必要时持久化到磁盘，成功之后才把任务放进内存队列</b>。如果先入队再落盘，一旦磁盘写失败，内存队列里就有一个“状态没记住”的任务——掉电重启后它可能被再次触发，或者反过来永久丢失。先写状态、后入队，让“队列里的任务”永远对应一个“已经记录在案”的事实。</p>
+    <div class="callout insight"><span class="callout-title">设计要点</span><p>持久化失败时，<code class="inline-code">_enqueue_due_job()</code> 会把 <code class="inline-code">pending_delivery</code> 和 <code class="inline-code">last_fired</code> 恢复成旧值再抛异常，队列里不会出现半成品。这和上一讲的“先登记任务再起线程”是同一个思路：<b>让共享状态的一致点尽可能靠前</b>。</p></div>
+    <p>另外注意 <code class="inline-code">cron_lock</code> 是一把可重入锁（<code class="inline-code">threading.RLock</code>）：<code class="inline-code">poll_due_jobs()</code> 持有它遍历任务时，<code class="inline-code">_enqueue_due_job()</code> 又需要它来保存状态。普通锁在这里会直接死锁。选锁的类型不是风格问题，是正确性问题——调用链里是否有嵌套加锁，决定了你该用 Lock 还是 RLock。</p>
+
+    <h3><span class="h3num">05</span>Agent 空闲再交付：不打断当前轮次</h3>
+    <p>队列处理线程和调度线程是两条独立的线。它每 0.2 秒检查一次队列，但只有在能拿到 <code class="inline-code">agent_lock</code>（非阻塞）时才真正启动一轮：</p>
+    <pre data-lang="python"><code>def queue_processor_loop(stop_event: threading.Event = RUNTIME_STOP):
+    while not stop_event.wait(0.2):
+        if not has_cron_queue() or not agent_lock.acquire(blocking=False):
+            continue
+        try:
+            if has_cron_queue():
+                run_agent_turn_locked()
+        finally:
+            agent_lock.release()
+</code></pre>
+    <p><code class="inline-code">agent_lock</code> 同时被主交互循环使用：用户输入时 <code class="inline-code">with agent_lock:</code> 跑一轮，定时任务处理时也拿同一把锁。所以“Agent 空闲”在这份代码里有一个非常具体的定义：<b>没有用户轮次正在跑</b>。这保证了 <code class="inline-code">messages[]</code> 同一时刻只有一个写者。注意 <code class="inline-code">agent_lock.acquire(blocking=False)</code>：拿不到就跳过，绝不阻塞调度线程——如果阻塞等待，定时任务就会把“发现到期”和“用户正好在忙”耦合在一起。</p>
+    <p>取队列的动作本身很短，但必须是原子的：先复制、再清空，两步都在 <code class="inline-code">cron_lock</code> 里完成。否则调度线程可能在“复制完、还没清空”的间隙又塞进一个新任务，下一轮就会重复交付。</p>
+    <pre data-lang="python"><code>def consume_cron_queue() -&gt; list[CronJob]:
+    with cron_lock:
+        jobs = list(cron_queue)
+        cron_queue.clear()
+    return jobs
+</code></pre>
+    <p>拿到锁之后还要再查一次 <code class="inline-code">has_cron_queue()</code>，这不是冗余：从“检查队列”到“拿到锁”之间，另一个线程可能已经把队列消费掉了，或者取消任务清空了队列。典型的 double-checked locking 写法，宁可多查一次，也不要在空队列上白跑一轮。</p>
+    <p>交付发生在 <code class="inline-code">agent_loop()</code> 的最开头：把队列里的任务全部取走，逐个作为一条 <code class="inline-code">[Scheduled]</code> 开头的 user 消息追加到会话里，再进入正常的模型调用循环。</p>
+    <pre data-lang="python"><code>def agent_loop(messages: list, context: dict | None = None):
+    fired = consume_cron_queue()
+    scheduled_start = len(messages)
+    for job in fired:
+        messages.append({"role": "user", "content": f"[Scheduled] {job.prompt}"})
+    waiting_for_ack = list(fired)
+    while True:
+        try:
+            response = client.messages.create(...)
+        except Exception as error:
+            if waiting_for_ack:
+                del messages[scheduled_start:]
+                restore_cron_jobs(waiting_for_ack)
+            return context
+        messages.append({"role": "assistant", "content": response.content})
+        if waiting_for_ack:
+            try:
+                acknowledge_cron_jobs(waiting_for_ack)
+            except Exception as error:
+                print(f"  [cron] acknowledgement failed: {error}")
+            waiting_for_ack = []
+</code></pre>
+    <p>这段代码里藏着一个完整的“至少一次交付”协议。用 <code class="inline-code">scheduled_start</code> 记下追加消息前的位置，如果模型调用失败，就把这些消息从会话里删掉、把任务放回队列——因为模型根本没收到，不能算交付成功。模型成功返回后，才调用 <code class="inline-code">acknowledge_cron_jobs()</code>：周期任务清掉 <code class="inline-code">pending_delivery</code>，一次性任务直接从 <code class="inline-code">scheduled_jobs</code> 删除。先交付、后确认，中间崩溃就会导致重复交付；反过来先确认、后交付，则会丢任务。两害相权，代码选择了“宁可重复,不可丢失”。</p>
+    <p>为什么交付方式是“伪造一条 user 消息”？因为模型只有一个输入通道：<code class="inline-code">messages[]</code> 里的 user 消息。定时任务本质上就是“系统替你发了一条 prompt”，用 <code class="inline-code">[Scheduled]</code> 前缀只是给模型一个可识别的标签，让它知道这不是用户刚刚打的字。这个设计也意味着：定时任务和用户消息共享同一套权限、同一套工具、同一个上下文——它不是一个独立的执行环境。</p>
+    <p>交付时终端还会打印 <code class="inline-code">[cron] delivered ...</code> 日志，方便你对照“到期”和“交付”两个时刻。日志在这里不是装饰，它是排查“任务为什么没跑”的第一手证据。</p>
+    <p>确认动作 <code class="inline-code">acknowledge_cron_jobs()</code> 同样是一段事务式代码：周期任务清 <code class="inline-code">pending_delivery</code>，一次性任务从字典移除；如果持久化失败，就把移除的任务放回字典、把标记恢复、再把任务重新塞回队列。它保证“确认”要么完整生效，要么完全回滚。注意它只处理“已经成功交付”的任务，模型失败时走的是 <code class="inline-code">restore_cron_jobs()</code>，两条路径不会混淆。</p>
+    <pre data-lang="python"><code>def acknowledge_cron_jobs(jobs: list[CronJob]):
+    changed, removed = [], []
+    with cron_lock:
+        for delivered in jobs:
+            current = scheduled_jobs.get(delivered.id)
+            if current is None:
+                continue
+            changed.append((current, current.pending_delivery))
+            if current.recurring:
+                current.pending_delivery = False
+            else:
+                removed.append(current)
+                scheduled_jobs.pop(current.id)
+        try:
+            if any(job.durable for job, _ in changed):
+                save_durable_jobs()
+        except Exception:
+            # ... 回滚：放回任务、恢复 pending、重新入队，然后 re-raise
+</code></pre>
+
+    <h3><span class="h3num">06</span>周期与一次性、durable 与内存、取消与恢复</h3>
+    <p><code class="inline-code">schedule_job()</code> 的默认值是“周期 + durable”，但两个开关可以组合出四种行为：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>组合</th><th>行为</th><th>典型用途</th></tr></thead>
+        <tbody>
+          <tr><td><code>recurring=True</code> + <code>durable=True</code></td><td>每次都触发，进程重启后仍在</td><td>每天九点跑测试</td></tr>
+          <tr><td><code>recurring=True</code> + <code>durable=False</code></td><td>每次都触发，只在本次进程内有效</td><td>临时的“每五分钟看看进度”</td></tr>
+          <tr><td><code>recurring=False</code> + <code>durable=True</code></td><td>只触发一次，重启后若未交付会重投</td><td>“明天九点提醒我发版”</td></tr>
+          <tr><td><code>recurring=False</code> + <code>durable=False</code></td><td>只触发一次，重启即消失</td><td>本次会话内的一次性延后任务</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><b>durable 的边界要说清：</b>它保存的是任务定义和尚未交付的状态，不是“已经错过的触发记录”。保存文件 <code class="inline-code">.scheduled_tasks.json</code> 用“写临时文件 + <code class="inline-code">os.replace()</code>”的方式更新，避免读者读到半截 JSON；加载时逐条校验，非法记录跳过并打印日志。如果你在 8:59 关掉进程、9:30 再打开，任务定义会回来，但 9:00 那一次不会补跑——调度器只往前看，不回头补课。</p>
+    <pre data-lang="python"><code>def save_durable_jobs():
+    with cron_lock:
+        payload = [
+            asdict(job)
+            for job in scheduled_jobs.values()
+            if job.durable
+        ]
+        temporary = DURABLE_PATH.with_name(
+            f"{DURABLE_PATH.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+        )
+        try:
+            temporary.write_text(
+                json.dumps(payload, indent=2), encoding="utf-8"
+            )
+            os.replace(temporary, DURABLE_PATH)
+        finally:
+            temporary.unlink(missing_ok=True)
+</code></pre>
+    <p>临时文件名里带进程 ID 和线程 ID，是为了让多个写者互不覆盖：如果两个线程同时保存，各写各的临时文件，最后 <code class="inline-code">os.replace()</code> 是一个原子重命名——读者要么看到旧的完整文件，要么看到新的完整文件，读不到中间态。<code class="inline-code">finally</code> 里删临时文件是收尾，避免失败时在目录里留下垃圾。</p>
+    <p>取消任务的 <code class="inline-code">cancel_job()</code> 也做了两件事：从 <code class="inline-code">scheduled_jobs</code> 删除，同时从 <code class="inline-code">cron_queue</code> 里移除。如果只删前者，已经入队的任务还会被交付一次；如果持久化失败，它会把任务和队列都恢复回去再抛异常。又是一个“先记状态、再改世界”的原子性练习。</p>
+    <p>“取消”在并发系统里永远比“创建”难写，因为你要考虑任务正处在哪个阶段：还没触发、已入队、正在交付、已经确认。本章只处理了前两个阶段，后两个阶段里取消会表现为“这一轮照常跑完，但不再有下一次”。</p>
+    <p>周期与一次性、durable 与内存，这四个开关看起来只是配置项，实际上决定了任务在“进程生命周期”和“时间维度”上的两重存活范围。写业务任务前先把这两个维度想清楚，比事后补幂等逻辑便宜得多。</p>
+    <p>最后是启动和关闭。调度线程与队列处理线程只在 CLI 入口（<code class="inline-code">__main__</code>）里启动，导入 <code class="inline-code">code.py</code> 不会凭空多出后台线程；关闭时设置 <code class="inline-code">RUNTIME_STOP</code> 事件并 join 两个线程。这个“只在入口启动、只通过事件停止”的结构，是你把它嵌进别的程序时最应该保留的部分——一个 import 就能启动线程的模块，是最难测试的模块。</p>
+    <p>如果你要把 s12 嵌进一个 Web 服务，记得把“启动/停止”挂到应用的生命周期钩子上，而不是模块导入时。定时器是长生命周期资源，它的创建和销毁必须和进程生命周期对齐。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：时区、错过、重复交付与“会话级”的边界</summary>
+      <div class="deep-body">
+        <h4>时区和错过的触发</h4>
+        <p>代码只用 <code class="inline-code">datetime.now()</code>，也就是 Agent 进程所在机器的本地时间，任务里没有时区字段。这意味着同一份 <code class="inline-code">.scheduled_tasks.json</code> 搬到另一个时区的机器上，触发时刻会整体平移；跨时区协作时，“每天早上九点”到底是哪个九点，必须在产品层说清楚。错过触发则是另一个问题：进程关闭期间没有线程在看表，重启后 <code class="inline-code">load_durable_jobs()</code> 只恢复定义，不补跑错过的分钟。要补跑，需要记录“上次醒来时间”并在启动时回溯判断哪些触发点被错过——而补跑本身又牵出“补跑一次还是补跑 N 次”“补跑的任务用当时的数据还是现在的数据”等一连串问题。教学版选择不回答，是诚实的简化。</p>
+        <h4>为什么先入队再 ack，而不是先 ack 再执行</h4>
+        <p>先 ack 的语义是“我已经承诺执行了”，但此时模型可能还没收到 prompt；如果进程在这一刻崩溃，任务就永久消失。先入队、等模型成功返回后再 ack，语义变成“模型确实收到了”，代价是崩溃窗口内可能重复交付。分布式系统里这叫“至少一次（at-least-once）”：不丢，但可能重。幂等性要在任务本身解决——比如“跑测试”重复跑一次无害，而“发版”重复执行就危险，所以危险操作应该在 prompt 里要求先检查当前状态。</p>
+        <h4>它和后台任务到底差在哪</h4>
+        <p>后台任务由模型在工具调用里显式发起，生命周期是“本次进程内、一次命令”；定时任务由一个独立线程按时间发起，生命周期是“一条持久化记录 + 每次触发”。后台结果通过完成队列回到当前会话；定时任务则是新开一轮 Agent 循环，prompt 作为 user 消息进入会话。一个是“执行方式”，一个是“触发方式”，两者可以组合：定时任务被交付后，模型完全可以在那一轮里再发起一个后台 bash。</p>
+        <h4>会话级 vs 系统级</h4>
+        <p>本章的调度器挂在 Agent 进程里，属于“会话级”：进程活着才有闹钟，durable 只是让定义别丢。系统级定时（crontab、systemd timer、云函数）由操作系统或外部服务保证，即使 Agent 没运行，到点也能拉起一次执行。判断该用哪种，看任务是否“必须在 Agent 存活时才有意义”：需要同一份 <code class="inline-code">messages[]</code> 上下文的提醒，适合会话级；需要无条件执行的巡检、备份、报表，适合系统级。</p>
+        <h4>它和 OpenClaw 式 heartbeat 的关系</h4>
+        <p>仓库 README 提到另一条思路：每 30 秒由 harness 主动给 Agent 发一条消息，让它自己检查有没有待办——这叫 heartbeat（心跳）。heartbeat 是“定期叫醒 Agent，让它自己判断”，cron 是“到点把具体任务塞给 Agent”。前者适合“可能有活、也可能没活”的常驻助手，后者适合“明确知道几点该做什么”的自动化。两者不冲突：一个 always-on 的 Agent 往往是 heartbeat 负责唤醒、cron 负责精确触发、后台任务负责执行慢活。</p>
+        <details class="deep deep-2">
+          <summary>再深一层：为什么调度线程不直接调用模型，而要多一个队列？</summary>
+          <div class="deep-body"><p>因为“时间到了”和“会话可写”是两个独立条件。调度线程若直接调用模型，就必须自己处理“用户正在一轮对话中”的情况：要么阻塞等待（拖慢调度）、要么强行插入（破坏 <code class="inline-code">messages[]</code> 的交替结构）。队列把这层协调交给了 <code class="inline-code">agent_lock</code> 和 <code class="inline-code">queue_processor_loop</code>，调度器只做一件纯粹的、可测试的事：判断时间是否匹配。</p></div>
+        </details>
+      </div>
+    </details>
+
+    <h3><span class="h3num">07</span>动手实验</h3>
+    <p>这些实验围绕四个观察点：任务有没有落盘、到点有没有入队、交付有没有等空闲、重启后定义还在不在。</p>
+    <ol class="steps">
+      <li><b>挂一个两分钟的任务</b>：运行 <code class="inline-code">python s12_cron_scheduler/code.py</code>，输入 <code class="inline-code">Schedule "run date" every 2 minutes and keep it after restart.</code>。观察是否返回 <code class="inline-code">Scheduled cron_xxxxxxxx: */2 * * * * -&gt; run date</code>，并用 <code class="inline-code">cat .scheduled_tasks.json</code> 确认任务已经落盘。</li>
+      <li><b>看它到点被交付</b>：保持进程运行最多两分钟，观察终端出现 <code class="inline-code">[cron] due ...</code>、<code class="inline-code">[cron] delivered ...</code>，以及一轮新的模型回复。注意交付的是一条 <code class="inline-code">[Scheduled] run date</code> 用户消息。</li>
+      <li><b>验证周期与一次性</b>：再建一个 <code class="inline-code">recurring=False</code> 的任务，触发一次后用 <code class="inline-code">list_crons</code> 看它是否已经从列表消失；周期任务则应仍然在列表里，<code class="inline-code">pending_delivery</code> 已清零。</li>
+      <li><b>测试取消</b>：对刚建的任务执行 <code class="inline-code">cancel_cron</code>，确认它从 <code class="inline-code">list_crons</code> 消失、也从 <code class="inline-code">.scheduled_tasks.json</code> 消失。如果取消时它正好在队列里，等待下一分钟确认不会再被交付。</li>
+      <li><b>观察重启</b>：保留一个 durable 的周期任务，按 <code class="inline-code">q</code> 退出再重启。启动日志应出现 <code class="inline-code">[cron] loaded N durable job(s)</code>；如果你在停机期间错过了触发点，不会补跑——这正是“不回头”的边界。</li>
+      <li><b>纯代码实验</b>：在 Python REPL 里 <code class="inline-code">import code</code>，直接调用 <code class="inline-code">cron_matches("0 9 * * 1-5", datetime(2026, 1, 5, 9, 0))</code> 与 <code class="inline-code">cron_matches("0 9 1 * 1", datetime(2026, 1, 5, 9, 0))</code>，验证“日与星期都受限时取或”的语义。</li>
+      <li><b>看非法表达式被拒</b>：在 REPL 里调用 <code class="inline-code">schedule_job("0 25 * * *", "x")</code> 与 <code class="inline-code">schedule_job("0 9 * *", "x")</code>，确认分别返回小时越界和段数不足的错误字符串，而不是抛异常。</li>
+    </ol>
+
+    <h3><span class="h3num">08</span>常见误区</h3>
+    <p><b>很多人以为 cron 表达式匹配就是五个字段全部 AND。</b>“日”和“星期”是例外：两者都受限时按标准 cron 语义取或。代码里的三个分支就是为了处理这个例外。写错这里，要么任务几乎不触发，要么在预期之外的日子触发。</p>
+    <p><b>很多人以为 durable 等于“关机也会跑”。</b>它只持久化任务定义，执行仍然依赖进程里的调度线程。进程不在，闹钟就不响；重启后也不会补跑停机期间错过的触发。要真正的“always-on”，得把调度放到系统层。</p>
+    <p>判断标准很简单：把进程杀掉，任务还会不会在预定时间执行？会，就是系统级；不会，就是会话级。</p>
+    <p>另外，别把“调度线程”和“执行线程”混为一谈：前者只负责发现，后者才改会话。</p>
+    <p><b>很多人以为定时任务会“打断”当前对话。</b>不会。到期只是入队，真正交付要等 <code class="inline-code">agent_lock</code> 空闲；一轮用户对话进行中，定时任务只能排在队列里。这个设计牺牲了一点实时性，换来的是会话消息结构不被两个线程同时改写。</p>
+
+    <h3><span class="h3num">09</span>自测</h3>
+    <p>下面的题覆盖匹配、入队、交付、持久化四条链路。建议先自己推一遍再展开答案。</p>
+    <details class="quiz">
+      <summary>如果 <code class="inline-code">pending_delivery</code> 和 <code class="inline-code">last_fired</code> 只保留一个，会发生什么？</summary>
+      <div class="answer"><p>只保留 <code class="inline-code">last_fired</code>：任务入队后，如果交付延迟跨过了下一分钟（例如 Agent 忙了三分钟），同一任务会在新的分钟再次入队，队列里出现重复项。只保留 <code class="inline-code">pending_delivery</code>：同一分钟内线程每秒轮询，第一次入队后如果 <code class="inline-code">pending_delivery</code> 没及时置位或已被清除，会重复入队。两个字段各防一个时间窗口，缺一不可。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么 <code class="inline-code">_enqueue_due_job()</code> 要先持久化状态、再加入内存队列？</summary>
+      <div class="answer"><p>为了让“已经入队”这件事在磁盘上先有记录。如果顺序反过来，持久化失败时内存队列里已经有了这个任务，但 <code class="inline-code">pending_delivery</code> / <code class="inline-code">last_fired</code> 没有正确落盘；此时若进程崩溃，重启后的状态与真实交付情况不一致，可能重复或丢失。先写状态再入队，失败时恢复旧状态，保证磁盘、内存、队列三者不会出现“队列里有、状态里没有”的中间态。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>调度线程每秒轮询一次，为什么不会让一个任务在 9:00 这一分钟触发 60 次？</summary>
+      <div class="answer"><p>因为 <code class="inline-code">poll_due_jobs()</code> 用 <code class="inline-code">moment.strftime("%Y-%m-%d %H:%M")</code> 生成分钟标记，匹配后把 <code class="inline-code">last_fired</code> 设成这个标记；同一分钟内后续轮询都会因为 <code class="inline-code">job.last_fired == minute_marker</code> 而跳过。<code class="inline-code">pending_delivery</code> 再兜住“跨分钟但还没交付”的情况。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>模型调用失败时，代码为什么要 <code class="inline-code">del messages[scheduled_start:]</code> 再 <code class="inline-code">restore_cron_jobs()</code>？</summary>
+      <div class="answer"><p>因为失败意味着模型没有收到这批定时任务，不能算交付成功。把追加的 <code class="inline-code">[Scheduled]</code> 消息从会话里删掉，恢复会话到交付前的状态；再把任务放回队列，等下一次空闲重试。如果不删消息就恢复任务，重试时会重复追加，同一批任务在会话里出现两份。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>一个 durable 的一次性任务在 8:59 触发并入队，但在模型接收前进程崩溃。重启后它会怎样？</summary>
+      <div class="answer"><p>取决于持久化是否已经写回。<code class="inline-code">_enqueue_due_job()</code> 在入队前把 <code class="inline-code">pending_delivery=True</code> 和 <code class="inline-code">last_fired</code> 写入磁盘，所以重启后 <code class="inline-code">load_durable_jobs()</code> 会看到 <code class="inline-code">pending_delivery</code> 并把任务重新放进 <code class="inline-code">cron_queue</code>——任务会被再次交付，而不是丢失。这就是“至少一次”：宁可重复，不可丢失。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>Cron Scheduler 把“时间”变成 harness 的一等公民：CronJob 记录表达式与任务、五段式匹配（日与星期取或）、调度线程每秒轮询、到期先把状态落盘再入队、Agent 空闲后把任务作为 <code class="inline-code">[Scheduled]</code> 用户消息交付、模型收到后才 ack。它保证的是“至少一次”，换来的是不丢任务、但可能重复。</p>
+      <p>判断一个调度器是否可信，就看四件事：表达式会不会错、到期会不会重复、交付会不会打断会话、崩溃会不会丢任务。s12 对这四件事各给了一个明确答案，也各自留了边界。</p>
+      <p>记住那张“先入队、后交付、再确认”的三段式：它是所有可靠定时系统的共同骨架。</p>
+    <p>在把它搬进真实系统之前，至少先回答：任务错过时应该补跑还是跳过、任务重复时是否幂等、以及调度器挂了谁来发现。</p>
+      <p class="next"><b>下一讲：</b>调度器能让一轮任务按时开始，但这一轮仍然只有一个 Agent 在干。下一讲的 Agent Teams 会把任务分给多个队友（teammate），让它们各自认领、并行执行、再通过收件箱把结果交回来。</p>
+    </div>
+  </div>
+</section>

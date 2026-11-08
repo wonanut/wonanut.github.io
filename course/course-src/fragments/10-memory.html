@@ -1,0 +1,350 @@
+<section id="ch10" class="chapter">
+  <p class="chapter-kicker">第 10 讲 · 阶段三 · 记忆、长跑与自动化</p>
+  <h2 class="chapter-title">Memory：上下文会被压掉，记忆负责跨会话活下去
+    <small>对应 s09_memory：786 行，一记忆一文件 + 索引 + 选择 / 提取 / 整理</small>
+  </h2>
+  <p class="chapter-lede">上一讲的上下文压缩（compact）只保证“这一场会话”不会撑爆窗口；可你关掉终端再打开，模型面前仍是一张白纸。Memory 要解决的是另一个问题：哪些东西值得带到下一次会话，又该在什么时候悄悄递回去。</p>
+  <p class="source-line">
+    <span>源码 <code>s09_memory/code.py</code></span>
+    <span>原章 <a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/s09_memory/README.zh.md">README.zh.md</a></span>
+  </p>
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>说清“压缩”和“记忆”的分工：一个管当前会话的预算，一个管会话之外的复用</li>
+    <li>读懂一条记忆从提取、去重、落盘、建索引到被召回注入 system prompt 的完整链路</li>
+    <li>判断什么时候该自己写索引 + 文件，什么时候才真的需要向量库</li>
+  </ul>
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>新会话的第一句话，总是“我上次说过”</h3>
+    <p>你上周让 Agent 帮你重构了一个模块，它记住了你喜欢用 tab 缩进、测试不许 mock 数据库、发布前必须跑 <code class="inline-code">make lint</code>。今天你新开一个终端，第一句话还是得从头交代：“用 tab，不要 mock，先跑 lint”。这不是模型笨，而是它的工作记忆只有 <code class="inline-code">messages[]</code> 这一个数组——进程退出，数组就没了。</p>
+    <p>直觉做法是把用户偏好和项目事实写进一个固定文件，启动时整个塞进 system prompt。这在记忆只有三五条时确实好用，但它有两个隐性成本。第一，每次调用模型都要重新发送全部内容，记忆越多，跟当前任务无关的噪声越大；第二，上下文窗口被长期占用，你等于用“压缩”辛苦省下来的预算，又拿固定知识填回去了。</p>
+    <p>所以 s09 真正要回答的不是“怎么存”，而是三个更细的问题：<b>怎么存</b>（一条记忆一个文件，方便单独增删改）、<b>存什么</b>（回合结束后由模型判断哪些信息以后还有用）、<b>取哪条</b>（当前任务只召回相关的几条正文）。存储、提取、召回、整理，四件事各有各的坑，这也是本章的骨架。</p>
+    <div class="callout warn"><span class="callout-title">注意</span><p>Memory 不是对话记录的备份。把整段 transcript 存下来适合归档，不适合每次喂给模型：它既长又过期，还混着大量“本次任务”的临时状态。s09 的代码从头到尾都在做减法，而不是做备份。</p></div>
+
+    <h3><span class="h3num">02</span>直觉：一张目录卡，四个子系统</h3>
+    <p>最省事的记忆方式，是模拟图书馆而不是仓库。图书馆不会把每本书的内容抄在目录卡上，目录卡只写书名和一句话简介；你要借哪本，才去书架取正文。Memory 用的是同一个套路：<code class="inline-code">.memory/MEMORY.md</code> 是索引，每行一条记忆的“名字 + 一句话描述 + 文件名”；正文放在 <code class="inline-code">.memory/*.md</code>，只有在被选中时才读取。</p>
+    <div class="analogy">
+      <span class="analogy-title">像图书馆的目录卡与书架</span>
+      <p>存书时，每本书单独上架，同时在目录卡上添一行；借书时，管理员先翻目录卡挑出相关的几本，再走到书架把正文取来。目录卡很薄，所以可以每次都摆在你桌上；正文很厚，所以只在需要时搬。</p>
+      <p><b>类比到哪为止：</b>图书馆员不会自己写新书，而这里的 Agent 会在每轮对话结束后，自己判断“刚才聊的内容里有没有值得上架的知识”，并把它写成一条新记忆。也就是说，藏书是自动增长的，目录卡也就必须能自动重建。</p>
+    </div>
+    <div class="flow">
+      <div class="flow-node"><b>对话结束</b>模型提取候选</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>should_store</b>去重 / 过滤临时</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>.memory/*.md</b>一记忆一文件</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>MEMORY.md</b>索引重建</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>下一轮</b>选择 → 读正文 → 注入</div>
+    </div>
+    <p>把这四步拆开看，每一步都在对抗一个具体的失败：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>子系统</th><th>入口函数</th><th>对抗的失败</th></tr></thead>
+        <tbody>
+          <tr><td>存储</td><td><code>write_memory_file()</code></td><td>记忆混在一起，改一条要动全部</td></tr>
+          <tr><td>召回</td><td><code>select_relevant_memories()</code>、<code>load_memories()</code></td><td>全量注入，噪声挤占上下文</td></tr>
+          <tr><td>提取</td><td><code>extract_memories()</code>、<code>should_store_memory()</code></td><td>把临时状态当成永久规则记住</td></tr>
+          <tr><td>整理</td><td><code>consolidate_memories()</code></td><td>重复、矛盾、过期越积越多</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3><span class="h3num">03</span>代码精读：一条记忆怎么变成文件</h3>
+    <p>存储的起点是 <code class="inline-code">memory_document()</code>：它把 <code class="inline-code">name</code>、<code class="inline-code">description</code>、<code class="inline-code">type</code> 序列化成 YAML frontmatter，正文跟在后面。有意思的不在生成格式，而在写完之后那一行 <code class="inline-code">rebuild_memory_index()</code>——索引永远从文件重新生成，而不是增量维护。</p>
+    <pre data-lang="python"><code>def memory_document(name: str, mem_type: str, description: str,
+                   body: str) -&gt; str:
+    metadata = yaml.safe_dump(
+        {"name": name, "description": description, "type": mem_type},
+        sort_keys=False, allow_unicode=True,
+    ).strip()
+    return f"---\n{metadata}\n---\n\n{body.strip()}\n"
+
+def write_memory_file(name: str, mem_type: str, description: str,
+                      body: str) -&gt; Path:
+    # ... 先校验 name / type / description / body 非空且 type 合法
+    MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+    path = memory_path(f"{memory_slug(name)}.md")
+    path.write_text(
+        memory_document(name, mem_type, description, body), encoding="utf-8"
+    )
+    rebuild_memory_index()
+    return path
+</code></pre>
+    <p>为什么索引要“重建”而不是“追加一行”？因为文件才是唯一事实来源。如果索引靠追加维护，某个文件被手动删掉、改名或按整理流程替换之后，索引就会留下指向空气的行。重建的代价是扫描一个目录，换来的是“索引与文件永远一致”这个强保证——这是本章最值得抄走的设计之一。</p>
+    <p>如果你只从本章带走一个工程习惯，就带走这句：派生数据永远从源头重建。</p>
+    <p>另一个细节是 <code class="inline-code">memory_path()</code>：它先校验文件名不带路径分隔符，再 <code class="inline-code">resolve()</code> 后检查是否仍在 <code class="inline-code">.memory/</code> 之内，并且整个目录不能逃出工作目录。这套路径校验看着啰嗦，但它挡的是模型最容易被诱导的一种操作：用一个 <code class="inline-code">../</code> 文件名把记忆写到仓库外。记忆是“以后还会被读进 prompt”的内容，越界写入等于给未来埋雷。完整实现就十来行，值得你逐行读完再抄走：</p>
+    <pre data-lang="python"><code>def memory_path(filename: str, allow_index: bool = False) -&gt; Path:
+    # 1. 文件名里不许带目录分隔符
+    if Path(filename).name != filename:
+        raise ValueError(f"Invalid memory filename: {filename}")
+    # 2. 索引文件不是一条记忆，只有少数入口能显式放行
+    if filename == MEMORY_INDEX.name and not allow_index:
+        raise ValueError("The memory index is not a memory record")
+    # 3. .memory/ 本身不能逃出工作目录
+    root = MEMORY_DIR.resolve()
+    if not root.is_relative_to(WORKDIR.resolve()):
+        raise ValueError("Memory directory escapes the workspace")
+    # 4. resolve 之后再确认一次，符号链接也绕不过去
+    path = (root / filename).resolve()
+    if not path.is_relative_to(root):
+        raise ValueError(f"Memory path escapes the store: {filename}")
+    return path
+</code></pre>
+    <h4>前门：坏掉的 frontmatter 也不该让整库失效</h4>
+    <p>反过来，读取侧对格式是宽容的。<code class="inline-code">parse_frontmatter()</code> 遇到没有 <code class="inline-code">---</code> 开头的文件、缺了结束分隔符的文件、YAML 语法错误、甚至 YAML 解析出来不是字典（比如一个字符串），都不会抛异常，而是统一返回 <code class="inline-code">{}, text</code>——把整个文件当成“没有元数据的正文”照常读出。只有真正影响语义的地方才拒绝，这是文件系统类存储的通用生存策略：用户的文件可能被手改、被别的工具写过，一次格式错误不应该让整库记忆消失。</p>
+    <pre data-lang="python"><code>def parse_frontmatter(text: str) -&gt; tuple[dict, str]:
+    if not text.startswith("---\n"):
+        return {}, text
+    parts = text.split("---", 2)
+    if len(parts) &lt; 3:
+        return {}, text
+    try:
+        metadata = yaml.safe_load(parts[1]) or {}
+    except yaml.YAMLError:
+        return {}, text
+    if not isinstance(metadata, dict):
+        return {}, text
+    return metadata, parts[2].lstrip()
+</code></pre>
+    <p>索引重建也沿用了这种“以文件为准、坏文件跳过”的思路：<code class="inline-code">rebuild_memory_index()</code> 遍历 <code class="inline-code">*.md</code>，用 <code class="inline-code">metadata.get("name") or path.stem</code> 兜底缺字段，用正文第一个非空行兜底缺描述。它不追求索引多漂亮，只追求“只要文件还在，索引就不会少一条”。</p>
+    <pre data-lang="python"><code>def rebuild_memory_index() -&gt; None:
+    MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+    lines = []
+    for path in sorted(MEMORY_DIR.glob("*.md")):
+        if path.name == MEMORY_INDEX.name:
+            continue
+        try:
+            path = memory_path(path.name)
+        except ValueError:
+            continue
+        metadata, body = parse_frontmatter(path.read_text(encoding="utf-8"))
+        name = " ".join(str(metadata.get("name") or path.stem).split())
+        first_line = next((line for line in body.splitlines() if line.strip()), "")
+        description = " ".join(
+            str(metadata.get("description") or first_line).split()
+        )
+        lines.append(f"- [{name}]({path.name}) - {description}")
+    memory_path(MEMORY_INDEX.name, allow_index=True).write_text(
+        "\n".join(lines) + ("\n" if lines else ""), encoding="utf-8"
+    )
+</code></pre>
+    <p>注意它输出的是 Markdown 链接列表，而不是 JSON：人来 <code class="inline-code">cat</code> 这个文件时，能直接点开某条记忆看正文。索引的读者有两个——选择记忆的模型，和维护记忆的人——一个好的索引格式应该同时服务这两者。另外 <code class="inline-code">sorted()</code> 让索引顺序稳定，避免每次重建都产生一份内容相同、顺序不同的 diff。</p>
+    <div class="callout tip"><span class="callout-title">小技巧</span><p>读 s09 源码时按这个顺序走最快：<code class="inline-code">parse_frontmatter()</code> → <code class="inline-code">memory_document()</code> / <code class="inline-code">write_memory_file()</code> → <code class="inline-code">rebuild_memory_index()</code> → <code class="inline-code">select_relevant_memories()</code> → <code class="inline-code">should_store_memory()</code> → <code class="inline-code">extract_memories()</code> → <code class="inline-code">consolidate_memories()</code>，最后回头看 <code class="inline-code">agent_loop()</code> 里那两个调用点。工具函数可以整段跳过。</p></div>
+
+    <h3><span class="h3num">04</span>提取：模型只提候选，落盘权在 harness 手里</h3>
+    <p>回合结束时，<code class="inline-code">agent_loop()</code> 在“没有工具调用、准备返回”的那个分支里触发提取和整理。注意条件是 <code class="inline-code">if not tool_calls</code>：只有在真正结束的回合才做，中间的工具往返不碰记忆，免得把半成品状态记下来。</p>
+    <pre data-lang="python"><code>def agent_loop(messages: list):
+    relevant_memories = load_memories(messages)
+    system = build_system(relevant_memories)
+    while True:
+        response = client.messages.create(
+            model=MODEL, system=system, messages=messages,
+            tools=TOOLS, max_tokens=8000,
+        )
+        messages.append({"role": "assistant", "content": response.content})
+        tool_calls = [b for b in response.content if b.type == "tool_use"]
+        if not tool_calls:
+            force = trigger_hooks("Stop", messages)
+            if force:
+                messages.append({"role": "user", "content": force})
+                continue
+            if extract_memories(messages):
+                consolidate_memories()
+            return
+        # ... 执行工具，把 tool_result 追加成 user 消息
+</code></pre>
+    <p><code class="inline-code">extract_memories()</code> 让模型输出一个 JSON 数组，每个候选带 <code class="inline-code">name / type / scope / description / body</code>。关键在 <code class="inline-code">scope</code>：模型必须自己声明这条信息是 <code class="inline-code">persistent</code>（以后还会用）还是 <code class="inline-code">current_task</code>（只属于当前任务）。然后 <code class="inline-code">should_store_memory()</code> 做第二道闸：scope 不是 persistent 的直接拒绝，字段不全的拒绝，命中临时措辞的拒绝，与已有记忆撞名字 / 撞描述 / 撞正文的也拒绝。</p>
+    <pre data-lang="python"><code>def should_store_memory(candidate: dict, existing: list[dict]) -&gt; bool:
+    if candidate.get("scope") != "persistent":
+        return False
+    if candidate.get("type") not in MEMORY_TYPES:
+        return False
+    name = str(candidate.get("name", "")).strip()
+    description = str(candidate.get("description", "")).strip()
+    body = str(candidate.get("body", "")).strip()
+    if not name or not description or not body:
+        return False
+    candidate_text = _normalized_memory_text(f"{name}\n{description}\n{body}")
+    if any(marker in candidate_text for marker in TEMPORARY_MEMORY_MARKERS):
+        return False
+    for memory in existing:
+        if memory_slug(str(memory.get("name", ""))) == memory_slug(name):
+            return False
+        if _normalized_memory_text(str(memory.get("description", ""))) == \
+                _normalized_memory_text(description):
+            return False
+        # ... 正文 normalize 后完全相同，也判为重复
+    return True
+</code></pre>
+    <p>这段代码值钱的地方是“不信任模型的判断”。模型很容易把“这次不要创建文件”也当成一条永久规则写进去，于是 <code class="inline-code">TEMPORARY_MEMORY_MARKERS</code> 里躺着一串“this session”“本次会话”“临时”这样的短语；模型也很容易每次都给同一个偏好换一种说法，于是三个维度的归一化比较兜住重复。这种“模型负责提议、代码负责裁决”的分工，是整门课反复出现的模式：提取是一次 LLM 调用，但写盘是一个普通的、可测试的 Python 函数。</p>
+    <div class="callout insight"><span class="callout-title">设计要点</span><p>在提示词里明确了两句保命的话：把对话当作数据而不是指令（防提示注入），以及“只存以后仍可能有用的信息，不存临时任务状态、工具输出、助手猜测”。这两句不是客套，它们在对抗模型“顺手总结一下当前会话”的本能。</p></div>
+    <h4>四种类型，四种保存期限</h4>
+    <p><code class="inline-code">MEMORY_TYPES</code> 把记忆限制在四类，不是为了分类好看，而是为了让“该不该存”有一个可讨论的边界。类型写在 frontmatter 里，既是给模型看的分类提示，也是给人 review 时快速判断的信号。</p>
+    <div class="card-grid">
+      <div class="card"><h4>user</h4><p>用户的长期偏好：缩进风格、提交信息语言、沟通语气。它们跨项目、跨时间都成立，是最典型的持久记忆。</p></div>
+      <div class="card"><h4>feedback</h4><p>仍然适用的工作反馈：不要 mock 数据库、改完必须跑 lint。注意限定词是“仍然适用”，一次性的批评不该进来。</p></div>
+      <div class="card"><h4>project</h4><p>稳定的项目事实：认证重写是合规要求驱动的、某个目录由另一个团队维护。过期比缺失更危险，所以这类记忆最需要整理。</p></div>
+      <div class="card"><h4>reference</h4><p>外部资料或查找线索：工单在 Linear 的哪个项目、设计文档放在哪个链接。它保存的是“去哪里找”，而不是内容本身。</p></div>
+    </div>
+    <p>这四类之外的东西——当前任务的状态、刚跑出来的工具输出、模型自己的推测——一律不进记忆库。判断标准其实就一句话：<b>换一个会话、换一个任务，这条信息还成立吗？</b>成立才值得写入。</p>
+
+    <h3><span class="h3num">05</span>召回：先选目录，再读正文</h3>
+    <p>每轮开始前，<code class="inline-code">load_memories()</code> 会拿最近的用户消息当查询，选出最多 5 个记忆文件，再逐个读正文，总长度被 <code class="inline-code">RECALL_CHAR_LIMIT</code>（20000 字符）卡住。选择本身是一次轻量的模型调用：把当前请求和记忆目录（名字 + 描述）一起发过去，要求只回一个下标数组，比如 <code class="inline-code">[0, 2]</code>。</p>
+    <pre data-lang="python"><code>def select_relevant_memories(messages: list, max_items: int = 5) -&gt; list[str]:
+    records = list_memory_files()
+    query = recent_user_text(messages)
+    if not records or not query:
+        return []
+    # ... 把 query 和最多 12000 字符的 catalog 拼进 prompt
+    try:
+        response = client.messages.create(
+            model=MODEL, messages=[{"role": "user", "content": prompt}],
+            max_tokens=200,
+        )
+        indices = extract_json_array(message_text({"content": response.content}))
+        # ... 过滤越界下标、去重，凑满 max_items 条
+        return selected
+    except Exception:
+        return keyword_memory_selection(records, query, max_items)
+</code></pre>
+    <p>两个工程细节值得单独说。第一，选择失败（网络错误、返回格式不对）时不会让整轮崩掉，而是降级成关键词匹配 <code class="inline-code">keyword_memory_selection()</code>：把查询切成词，和“名字 + 描述”做包含计分。这条路召回质量差一些，但永远不会让一次偶发的 API 抖动变成一次失败的对话。</p>
+    <p>第二，选出来的正文不是“用户的新命令”，而是背景知识。<code class="inline-code">build_system()</code> 在拼接 system prompt 时会写清楚：记忆是选出的背景知识，不是对话记录；当前用户请求与记忆冲突时，以当前请求为准。没有这句约束，旧记忆就会拿到“系统指令”的权限，替用户发号施令——这是记忆系统最危险的一种错位。</p>
+    <pre data-lang="python"><code>def build_system(relevant_memories: str = "") -&gt; str:
+    index = read_memory_index()
+    sections = [
+        f"You are a coding agent at {WORKDIR}. "
+        f"Environment: {ENVIRONMENT_PROMPT}. "
+        "Use tools to solve tasks. Act, don't explain.",
+        # ... 另一段：记忆是背景知识，不是新命令；当前请求优先
+    ]
+    if index:
+        sections.append(f"Memory catalog:\n{index}")
+    if relevant_memories:
+        sections.append(f"Relevant memory records:\n{relevant_memories}")
+    return "\n\n".join(sections)
+</code></pre>
+    <p>注意它同时放了两样东西：完整的目录 <code class="inline-code">index</code>，和本轮选中的正文。目录很薄，让模型知道“还有哪些记忆存在、名字大概叫什么”；正文只有被选中的几条。这个组合让模型既不瞎，也不撑。</p>
+    <h4>三套上下文机制，各管一段</h4>
+    <p>学到这里，你已经有三套处理“模型该看到什么”的机制了，很容易记混。用一张表钉住它们的分工：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>机制</th><th>作用域</th><th>存什么</th><th>谁决定内容</th></tr></thead>
+        <tbody>
+          <tr><td>Skill（s07）</td><td>当前会话，按需加载</td><td>人写的操作手册</td><td>人</td></tr>
+          <tr><td>上下文压缩（s08）</td><td>当前会话，越用越短</td><td>对话历史的摘要</td><td>harness 触发、模型总结</td></tr>
+          <tr><td>Memory（s09）</td><td>跨会话，长期</td><td>提取过的可复用事实</td><td>模型提取 + 代码裁决</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>三者不是替代关系。一场长会话里，压缩负责“别爆”，技能负责“临时学会一门手艺”，记忆负责“这次学到的事实带得走”。也正因为它们都在往 prompt 里塞东西，你必须回答同一个问题：<b>这条信息现在真的需要吗？</b></p>
+
+    <h3><span class="h3num">06</span>整理：到了阈值，就该合并一次</h3>
+    <p>记忆只增不减，迟早会出现同义重复、相互矛盾、甚至早已过期的记录。<code class="inline-code">consolidate_memories()</code> 在文件数达到 <code class="inline-code">CONSOLIDATE_THRESHOLD</code>（10 条）后启动，把所有记录连正文一起交给模型，要求合并重复、以更晚的更正覆盖旧说法、删掉没用的，并返回一份整理后的列表。</p>
+    <p>真正体现工程经验的是“怎么替换”。代码不会边删边写，而是先把所有旧文件的原文存进 <code class="inline-code">snapshot</code>，再删除、写入新记录、重建索引；这个过程中任何一步抛异常，就用 snapshot 把旧文件全部恢复并重建索引，然后重新抛出。换句话说，整理要么整体成功，要么回到整理前的状态，不会留下“删了一半、写了一半”的半残记忆库。</p>
+    <pre data-lang="python"><code>snapshot = {
+    record["filename"]: memory_path(record["filename"]).read_text(
+        encoding="utf-8"
+    )
+    for record in records
+}
+try:
+    for path in MEMORY_DIR.glob("*.md"):
+        if path.name != MEMORY_INDEX.name:
+            memory_path(path.name).unlink()
+    # ... 写入整理后的记录，再重建索引
+    rebuild_memory_index()
+except Exception:
+    # ... 删掉写了一半的新文件，用 snapshot 恢复旧文件
+    for filename, content in snapshot.items():
+        memory_path(filename).write_text(content, encoding="utf-8")
+    rebuild_memory_index()
+    raise
+</code></pre>
+    <p>整理还有两个防呆检查：整理结果不能为空、不能让两条记录共用同一个 slug。前者防止模型“一怒之下删光”，后者防止两个文件写到同一个路径互相覆盖。整理本身是危险操作，校验必须发生在真正动磁盘之前。</p>
+    <p>课程代码把触发条件简化成了数量阈值。真实生产里还要回答：谁来决定什么时候整理（定时、空闲、还是每次写入后）、多个进程同时改同一个记忆库怎么办、整理本身消耗的 token 值不值。这些问题 s09 没有假装解决，而是用注释和边界说明留给你。</p>
+    <p>一个实用的判据：如果两条记忆加起来还没有一条更准确的新记忆有用，就该合并；如果它们描述的是不同场景，宁可不合。</p>
+    <p>整理之后，索引文件要跟着重建——这也是为什么 <code class="inline-code">consolidate_memories()</code> 的最后一步永远是 <code class="inline-code">rebuild_memory_index()</code>。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：记忆系统真正的难点，不在存储而在“判断”</summary>
+      <div class="deep-body">
+        <h4>记忆和 RAG 到底差在哪</h4>
+        <p>RAG 通常检索的是“外部既有文档”：文档是人写的、相对稳定、事实密度高，检索错了一条只是少给一点上下文。Memory 检索的是“Agent 自己写下的判断”：内容可能是用户的临时要求、可能是模型的一次误判、也可能两条互相矛盾。所以 s09 在写入侧花的力气远大于读取侧——去重、临时标记、scope 校验、整理，全是在给“自动写入”上保险。</p>
+        <h4>错误记忆的污染怎么纠正</h4>
+        <p>一条错记忆最麻烦的地方是它会反复出现在系统提示里，像一条悄悄生效的旧规则。s09 的应对有两层：一是整理时明确要求“应用更新的更正”，让后写的记忆覆盖先写的；二是 <code class="inline-code">build_system()</code> 声明当前请求优先。更彻底的做法是给记忆加时间戳、来源会话和置信度，并在界面上允许用户直接编辑 <code class="inline-code">.memory/*.md</code>——记忆是文本文件，这个选择让“人工纠正”变得非常便宜。</p>
+        <h4>索引和文件会不会不一致</h4>
+        <p>会，而且无法完全避免：写文件成功、重建索引失败，就出现了“文件在、索引没更新”。s09 用“索引永远由文件重建”把这个窗口压到最小——最坏情况是索引暂时少一行，下次任何写入都会把它补回来，而不是索引指向不存在的文件。反过来的设计（先写索引、再延迟写文件）才是灾难。</p>
+        <h4>隐私与被遗忘权</h4>
+        <p>记忆库是纯本地 Markdown，好处是用户可以 <code class="inline-code">grep</code>、可以删、可以整个目录搬走；坏处是它会出现在备份、同步盘和截图里。生产系统至少要做到三点：记忆内容不写入日志、提供按来源清除的能力、在 prompt 里避免把敏感信息复述给模型之外的人。s09 的 <code class="inline-code">memory_path()</code> 校验和“临时标记过滤”只是起点。</p>
+        <h4>为什么不用向量库也能跑</h4>
+        <p>因为记忆规模通常很小：几十条到几百条，目录（名字 + 描述）本身就能塞进一次 200 token 的调用。向量检索解决的是“海量文档里模糊匹配”的问题，而记忆的核心难点是“这条信息值不值得记、是否已经过时”，跟相似度关系不大。等你的记忆库真的到了几千条、或者要跨项目共享时，再引入 embedding 也不迟——届时索引文件仍然是你的人读入口，向量库只是加速器。</p>
+        <h4>为什么不是 SQLite 或向量数据库</h4>
+        <p>一记忆一文件不是技术落后，而是刻意的可运维选择。用户可以 <code class="inline-code">cat</code> 一条记忆、用编辑器改一个字、用 git 看到“这条偏好是哪天加的”、把整个 <code class="inline-code">.memory/</code> 目录拷到另一台机器。换成数据库，这些能力全部要另写工具。代价也很明显：没有事务、没有并发控制、没有查询语言——所以 s09 的并发场景默认只有一个 Agent 进程在写，整理时用快照补上原子性。这是典型的“先选对数据形状，再按需要加锁”。</p>
+        <h4>被污染的长期记忆有多难缠</h4>
+        <p>想象一条记忆写着“用户要求所有提交都不跑测试”。它可能来自某次临时讨论，却被提取成了 permanent。之后每次会话它都会被召回，模型也许不会显式违反，但会在“要不要跑测试”上犹犹豫豫。更糟的是，错误记忆会通过整理被模型再次复述，于是错误被“洗”得更像事实。缓解手段是给每条记忆保留来源与时间，并在整理提示里要求“以更新、更具体的记录为准”；彻底的手段是让用户能一眼看到注入内容并手动删除——本章的文本文件格式让这件事变得只要几秒钟。</p>
+        <h4>记忆失效的三种方式</h4>
+        <p>评估一个记忆系统时，别只看“它记住了没有”，要看它坏在哪种方式上。三种失效需要完全不同的对策：</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>失效</th><th>表现</th><th>本章的对策</th></tr></thead>
+            <tbody>
+              <tr><td>该召回却没召回</td><td>用户明明说过偏好，模型又问一遍</td><td>目录给全量、选择失败降级关键词、正文限长保证不整段丢弃</td></tr>
+              <tr><td>召回了错的</td><td>旧规则盖过当前请求，答案跑偏</td><td><code>build_system()</code> 声明当前请求优先；整理时以更新的记录覆盖旧的</td></tr>
+              <tr><td>过期了还没删</td><td>项目事实早已变化，记忆仍在生效</td><td>定期整理 + 人工可编辑的 Markdown 文件</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <details class="deep deep-2">
+          <summary>再深一层：为什么整理失败要恢复，而不是重试？</summary>
+          <div class="deep-body"><p>因为整理会“删旧写新”。如果删完旧文件、写新文件时崩了，重试也无从下手：模型这一轮生成的合并结果是随机的，重试会生成另一份列表，和半残的磁盘状态对不上。快照 + 恢复把操作变成事务，代价只是把所有旧文件读进内存——几百条记忆的文本量，完全付得起。</p></div>
+        </details>
+      </div>
+    </details>
+
+    <h3><span class="h3num">07</span>动手实验</h3>
+    <ol class="steps">
+      <li><b>先看副作用</b>：运行 <code class="inline-code">python s09_memory/code.py</code>，输入 <code class="inline-code">I prefer using tabs for indentation. Remember that.</code>。结束后 <code class="inline-code">ls .memory/</code>，应能看到一个新 <code class="inline-code">.md</code> 文件和重建后的 <code class="inline-code">MEMORY.md</code>；对比两者，确认索引里那行是“名字 + 描述”而不是正文。</li>
+      <li><b>验证跨会话</b>：输入 <code class="inline-code">q</code> 退出并重新启动，问 <code class="inline-code">What indentation style do I prefer?</code>。观察启动后的请求是否召回该文件——可以在 <code class="inline-code">build_system()</code> 里加一行 <code class="inline-code">print(sections)</code>，直接看到注入了哪些记忆。</li>
+      <li><b>故意制造重复</b>：再输入一次同样的偏好，但换成 <code class="inline-code">Use tabs, not spaces.</code>，然后检查 <code class="inline-code">.memory/</code>。理解 <code class="inline-code">should_store_memory()</code> 在“名字不同、描述不同、正文不同”时其实拦不住——这就是整理子系统存在的理由。</li>
+      <li><b>调阈值观察整理</b>：把 <code class="inline-code">CONSOLIDATE_THRESHOLD</code> 从 10 改成 2，重启后保存第三条记忆，观察终端是否打印 <code class="inline-code">[Memory: consolidated ...]</code>，以及旧文件是否被合并后的版本替换。再把 <code class="inline-code">TEMPORARY_MEMORY_MARKERS</code> 里的 <code class="inline-code">"for now"</code> 删掉，试一句带 <code class="inline-code">for now</code> 的偏好，看它是否被误存。</li>
+      <li><b>手改一条记忆，看系统怎么反应</b>：直接用编辑器打开某个 <code class="inline-code">.memory/*.md</code>，把 frontmatter 的 <code class="inline-code">description</code> 改掉，再启动程序。因为索引是重建的、正文是实时读的，改动应该立刻生效；再故意把文件头改成非 YAML，观察 <code class="inline-code">parse_frontmatter()</code> 的降级是否让程序照常启动。</li>
+    </ol>
+
+    <h3><span class="h3num">08</span>常见误区</h3>
+    <p><b>很多人以为 Memory 就是“把对话存下来”。</b>其实 s09 存的结论是经过提取、过滤、去重后的碎片化知识；transcript 里的过程性内容（试错、工具输出、中间判断）恰恰是被刻意排除的。存储的是“以后还有用的事实”，不是“这次发生过什么”。</p>
+    <p><b>很多人以为记忆越多，Agent 越聪明。</b>恰恰相反：召回是按当前请求挑的，多出来的记忆只会在选择阶段增加干扰、在注入阶段增加噪声；整理阶段的目标甚至是“变少”。衡量记忆系统的指标不是条数，而是“召回的命中率”和“错误记忆的存活时间”。</p>
+    <p><b>很多人以为没有向量库就做不了记忆。</b>本章用“目录选择 + 关键词降级 + 正文长度上限”跑通了完整闭环。向量库是规模上来以后的优化项，不是这一层的必需品。</p>
+
+    <h3><span class="h3num">09</span>自测</h3>
+    <details class="quiz">
+      <summary>为什么索引要在每次写入后重建，而不是维护一个“只追加”的列表？</summary>
+      <div class="answer"><p>因为记忆文件会被删除、改名、整理时整体替换。只追加的索引会在这些操作后留下失效行，而索引又是选择阶段的唯一输入，失效行会让模型选中一个读不到的文件。重建的代价是扫一遍目录（几十个文件），换回的是“索引永远与文件一致”；而且在 <code class="inline-code">consolidate_memories()</code> 的恢复路径里，重建索引是最后一步必要的收尾。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>一条记忆带有 <code class="inline-code">scope: current_task</code>，为什么不能写进长期记忆？</summary>
+      <div class="answer"><p>因为 <code class="inline-code">current_task</code> 表示“只对当前任务生效”，典型例子是“这次不要创建文件”“用这个临时目录”。如果它变成持久规则，下次会话的模型会毫无理由地继续遵守一条早已过期的约束。所以 <code class="inline-code">should_store_memory()</code> 第一件事就是检查 <code class="inline-code">candidate.get("scope") != "persistent"</code> 并拒绝，这比任何提示词劝告都可靠。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>如果选择记忆的模型调用返回了非法 JSON，会发生什么？</summary>
+      <div class="answer"><p>不会抛到外层，也不会中断这一轮。代码在 <code class="inline-code">except Exception</code> 里退回 <code class="inline-code">keyword_memory_selection()</code>：把查询切词（英文按 3 字符以上、中文按 2 字以上），和每条记忆的“名字 + 描述”做包含计数，取分数最高的几条。召回质量下降，但对话继续。这是“优雅降级”的典型写法：辅助功能失败，绝不影响主流程。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么 <code class="inline-code">build_system()</code> 要强调“当前用户请求优先于记忆”？</summary>
+      <div class="answer"><p>因为记忆会被拼进 system prompt，而 system prompt 在模型眼里天然带有“规则”的权重。如果旧记忆写着“所有回答都用中文”，用户今天却要求“用英文写 commit message”，不加约束的话模型可能在两者间摇摆，甚至用旧记忆反驳用户。明确“记忆是背景知识、当前请求优先”，等于给记忆降权，把最终解释权还给用户。</p></div>
+    </details>
+
+    <details class="quiz">
+      <summary>为什么提取记忆放在“没有工具调用”的分支里，而不是每轮循环都做一次？</summary>
+      <div class="answer"><p>因为一轮对话可能包含很多次工具往返（读文件、跑命令、再读、再改），这些中间状态大多是过程性的、随时会变的。如果在每次工具调用后都提取，模型会把“正在调试的临时路径”“刚发现但不确认的猜测”也当成知识存下来，记忆库很快会被半成品污染。只有 <code class="inline-code">if not tool_calls</code> 意味着这一轮真的结束了、结论已经形成，此时提取才有意义，也顺手把整理检查挂在同一处。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>Memory 的本质是“带索引的选择性持久化”：一记忆一文件、索引由文件重建、召回先选目录再读正文、提取只信候选不信结论、整理用快照保证原子性。它和上下文压缩的分工是——压缩负责这场对话别爆，记忆负责下一场对话别失忆。</p>
+      <p class="next"><b>下一讲：</b>记忆能被跨会话取回了，但一个复杂任务的进度还只活在对话里。下一讲的 Task System 会把任务、状态和依赖关系写成磁盘上的一张图。</p>
+    </div>
+  </div>
+</section>

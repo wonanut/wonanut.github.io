@@ -1,0 +1,350 @@
+<section id="ch07" class="chapter">
+  <p class="chapter-kicker">第 7 讲 · 阶段二 · 做复杂任务</p>
+  <h2 class="chapter-title">Subagent：给子任务一间独立房间，只把结论带回来
+    <small>对应 s06_subagent：385 行 Python，一个嵌套循环，一条 final text 的归途</small>
+  </h2>
+  <p class="chapter-lede">有了 todo，Agent 知道要做哪几步了。但有些步骤天生就"脏"：为了查清一条调用链，得读几十个文件；读完之后，调用链清楚了，可那几十个文件的内容还赖在上下文里，把后面的工作空间挤得所剩无几。这一讲把这类活派到另一个房间去做。</p>
+  <p class="source-line">
+    <span>源码 <code>s06_subagent/code.py</code></span>
+    <span>原章 <a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/s06_subagent/README.zh.md">README.zh.md</a></span>
+  </p>
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>说清 <code class="inline-code">task</code> 工具背后那个"嵌套 Agent 循环"是怎么跑起来的</li>
+    <li>理解上下文隔离的本质：为什么只返回 final text，以及这个选择的代价</li>
+    <li>判断什么时候该派子代理、什么时候该自己干，并知道子代理失败会怎么表现</li>
+  </ul>
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>一个真实的麻烦：探路的成本全留在了账上</h3>
+    <p>Agent 在修一个 bug。
+    为了定位问题，它要追踪调用链：先 <code class="inline-code">grep</code> 找到入口，再读 handler，再顺着 import 读 service、读 model、读配置文件。
+    前后十几个工具调用，每个 <code class="inline-code">read_file</code> 都往 <code class="inline-code">messages[]</code> 里塞进几百行代码。</p>
+    <p>半小时后，调用链终于弄清楚了，结论其实只有一句话：<b>"问题出在 service 层把 None 当成了合法返回值。
+    "</b> 但那几十个文件的内容、那些已经无用的中间输出，还全部躺在上下文里。
+    它们不会自动消失，反而在接下来的每一轮里被重新发送、重新计费、重新稀释注意力。</p>
+    <p>这就是"探路成本"的不对称：<b>过程很贵，结论很轻。
+    </b>而 Agent 循环默认把过程全记在账上，因为它们都是 <code class="inline-code">messages[]</code> 的一部分。
+    上下文窗口就这么大，探一次路，后面的修改和验证就没地方了。</p>
+    <p>反过来想就通了：如果这部分工作发生在<b>另一个对话</b>里，它读了多少文件都不影响我这边的账本，我只要它最后交回来一张纸条，写清楚结论。
+    这就是子代理（subagent）的全部动机。</p>
+
+    <h3><span class="h3num">02</span>直觉：派一个人去档案室，只带回来一页纸</h3>
+    <div class="analogy">
+      <span class="analogy-title">像派实习生去档案室查资料</span>
+      <p>你要写一份报告，需要查清十年前某份合同的条款。
+      与其自己钻进档案室翻两百个文件夹，不如派一个实习生去。
+      他在里面翻多久、弄得多乱，你的办公桌都不受影响；他回来时只交给你一页纸的结论。</p>
+      <p><b>类比到哪为止：</b>实习生和你在<b>同一个公司、同一个文件柜</b>——他能改文件柜里的东西，你也能看见他的改动。
+      Subagent 隔离的是"对话记录"，不是进程、文件系统或权限。
+      它不是沙箱。</p>
+    </div>
+    <p>落到代码上，这个"另一个房间"不是进程、不是线程，而是一个<b>全新的 <code class="inline-code">messages[]</code> 列表</b>。
+    父循环照常把 <code class="inline-code">task</code> 当成一个普通工具来调用；<code class="inline-code">run_subagent</code> 收到 prompt，开一个属于子代理的循环，跑完把最终文本当作工具结果交回去。</p>
+    <div class="flow">
+      <div class="flow-node"><b>父 Agent</b>messages[] 很长</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>task</b> 工具调用，传入 prompt</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>run_subagent</b>新建 messages=[prompt]</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>子循环</b>用它自己的上下文跑工具</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>final text</b>作为一条 tool_result 回父循环</div>
+    </div>
+    <p>注意这整条路径里，父与子的"接口"只有两处：进去时一个 <code class="inline-code">prompt</code> 字符串，出来时一段 <code class="inline-code">final text</code>。
+    子代理中间调了多少工具、读了多少文件、错了多少次，父循环一概看不见——也不需要看见。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>决策</th><th>本实现的选择</th><th>原因</th></tr></thead>
+        <tbody>
+          <tr><td>对话</td><td>全新的 <code class="inline-code">messages[]</code></td><td>不把父对话复制给子代理</td></tr>
+          <tr><td>执行</td><td>同进程、同 <code class="inline-code">WORKDIR</code>、同 hooks</td><td>文件系统改动两边都看得见，权限策略一致</td></tr>
+          <tr><td>返回值</td><td>只返回最终文本</td><td>中间工具调用和结果不进入父消息列表</td></tr>
+          <tr><td>委派深度</td><td><code class="inline-code">SUB_TOOLS</code> 里没有 <code class="inline-code">task</code></td><td>只允许一层委派</td></tr>
+          <tr><td>终止条件</td><td>没有工具调用 / 最多 30 轮</td><td>防止子代理陷入死循环</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3><span class="h3num">03</span>代码精读：一个循环套一个循环</h3>
+    <p><b>先看子循环本身。
+    </b>它和父循环几乎是同一个形状，最大的不同是第一行：<code class="inline-code">messages</code> 是新建的，只装了 <code class="inline-code">prompt</code> 这一条。</p>
+    <pre data-lang="python"><code>def run_subagent(prompt: str) -&gt; str:
+    messages = [{"role": "user", "content": prompt}]   # 全新的 messages
+    for _ in range(30):
+        response = client.messages.create(
+            model=MODEL, system=SUB_SYSTEM,
+            messages=messages, tools=SUB_TOOLS, max_tokens=8000,
+        )
+        messages.append({"role": "assistant", "content": response.content})
+        tool_calls = [
+            block for block in response.content if block.type == "tool_use"
+        ]
+        if not tool_calls:                              # 子代理说完了
+            return extract_text(response.content) or "(no summary)"
+        results = []
+        for block in tool_calls:
+            output = execute_tool(block, SUB_HANDLERS)
+            results.append({"type": "tool_result", "tool_use_id": block.id,
+                            "content": output})
+        messages.append({"role": "user", "content": results})
+    return "Subagent stopped after 30 turns without a final answer."</code></pre>
+    <p>逐块解释："</p>
+    <ul>
+      <li><code class="inline-code">messages = [{"role": "user", "content": prompt}]</code> 是本讲的题眼。
+      它意味着子代理看不到父对话的任何一个字——它只知道这个任务。
+      这既是隔离，也是<b>失真</b>：父代理知道的背景（用户偏好、之前的决策、已经踩过的坑），子代理一概不知。</li>
+      <li><code class="inline-code">for _ in range(30)</code> 是一个硬上限。
+      父循环的 <code class="inline-code">while True</code> 靠"模型不再调工具"来终止，子代理可能因为任务表述模糊而一直转圈，所以额外加一个回合上限兜底。</li>
+      <li><code class="inline-code">if not tool_calls: return extract_text(...)</code> 是子循环唯一的正常出口。
+      注意它返回的不是 <code class="inline-code">response.content</code>（里面可能有多个 block），而是 <code class="inline-code">extract_text</code> 抽出来的纯文本——这是"只回传 final text"在代码里的具体落点。</li>
+      <li>最后一行 <code class="inline-code">return "Subagent stopped after 30 turns without a final answer."</code> 是一种<b>显式失败回报</b>：不抛异常，而是把失败也变成父代理能读到的一条文本。
+      父循环照常把它塞进 <code class="inline-code">tool_result</code>，模型看到后可以重派、换策略，或者放弃。</li>
+    </ul>
+    <p><b>最后一段文本是怎么被"抽"出来的？
+    </b><code class="inline-code">return extract_text(response.content)</code> 这一行把"只回传 final text"落成了具体的数据操作：</p>
+    <pre data-lang="python"><code>def extract_text(content) -&gt; str:
+    if not isinstance(content, list):
+        return str(content)
+    return "\n".join(
+        getattr(block, "text", "")
+        for block in content
+        if getattr(block, "type", None) == "text"
+    )</code></pre>
+    <p>子代理最后一条响应通常只包含 <code class="inline-code">text</code> block，但也可能有别的类型。
+    <code class="inline-code">extract_text</code> 只挑出 <code class="inline-code">type == "text"</code> 的块拼起来，其余全部丢弃——这就是"上下文隔离"在返回路径上的实现。
+    注意它返回的是字符串，不是消息对象：父循环拿到后只会生成一条 <code class="inline-code">tool_result</code>，子代理的消息结构在函数返回的那一刻就被彻底丢掉了。</p>
+    <p>还有一处容易漏看：子代理用的是 <code class="inline-code">SUB_SYSTEM</code>，不是父代理的 <code class="inline-code">SYSTEM</code>。
+    它多了一句 "Complete the given task, then return a concise final answer."。
+    这句话不是装饰——它在子代理的每一次系统调用里重复强调"你的产出是给别人的一段答案"，从而抑制它写长篇过程记录。
+    system prompt 的措辞会直接塑造返回值的形状，这在设计子代理时值得当成接口契约来对待。</p>
+    <p><b>再看工具池怎么裁。</b>子代理用哪套工具，是一行赋值的区别：</p>
+    <pre data-lang="python"><code>SUB_TOOLS = list(BASE_TOOLS)          # 五个基础工具，没有 task
+SUB_HANDLERS = dict(BASE_HANDLERS)
+
+TASK_TOOL = {
+    "name": "task",
+    "description": "Run a subagent with fresh conversation context and return its final text.",
+    "input_schema": {
+        "type": "object",
+        "properties": {"prompt": {"type": "string", "minLength": 1}},
+        "required": ["prompt"],
+    },
+}
+
+TOOLS = [*BASE_TOOLS, TASK_TOOL]      # 父代理：5 + task
+TOOL_HANDLERS = {**BASE_HANDLERS, "task": run_subagent}</code></pre>
+    <p>两个细节值得停一下。
+    第一，<code class="inline-code">list(BASE_TOOLS)</code> 是<b>浅拷贝</b>外层列表：工具定义 dict 本身还是共享的引用。
+    这里没关系，因为工具定义只读不改；但如果哪天你想给子代理的某个工具换描述，记得深拷贝，别偷偷改了父代理的 schema。</p>
+    <p>第二，也是更重要的一点：<code class="inline-code">SUB_TOOLS</code> 里<b>没有 <code class="inline-code">task</code></b>。
+    这不是疏漏，是刻意的边界——子代理不能再派子代理。
+    没有这条限制，一个"帮我查查"的任务可能退化成无限递归的委派树，每一层都烧 token、每一层都丢失上下文，最后谁也没在真正干活。
+    需要嵌套时再显式加上 <code class="inline-code">task</code> 并限制深度，那是另一个设计问题。</p>
+    <p><b>为什么 <code class="inline-code">execute_tool</code> 要接受 handler 参数？
+    </b>这是从 s05 到 s06 最不显眼、但最见功力的一处重构：</p>
+    <pre data-lang="python"><code>def execute_tool(block, handlers: dict) -&gt; str:
+    blocked = trigger_hooks("PreToolUse", block)
+    if blocked:
+        return str(blocked)
+    handler = handlers.get(block.name)
+    try:
+        output = handler(**block.input) if handler else f"Unknown: {block.name}"
+    except Exception as e:
+        output = f"Error: {e}"
+    trigger_hooks("PostToolUse", block, output)
+    return str(output)</code></pre>
+    <p>s05 里这段逻辑是直接内联在 <code class="inline-code">agent_loop</code> 里的，工具表写死为 <code class="inline-code">TOOL_HANDLERS</code>。
+    到了 s06，父循环要用 <code class="inline-code">TOOL_HANDLERS</code>（含 <code class="inline-code">task</code>），子循环要用 <code class="inline-code">SUB_HANDLERS</code>（不含 <code class="inline-code">task</code>），于是把"用哪张表"变成参数传进来。
+    这个泛化带来两个好处：</p>
+    <ol class="steps">
+      <li><b>权限和日志钩子天然共享</b>。
+      子代理的工具调用同样经过 <code class="inline-code">trigger_hooks("PreToolUse")</code>，也就是说子代理删文件一样要过 deny list、一样要向用户确认。
+      隔离的是上下文，不是权限。</li>
+      <li><b>错误处理只有一份</b>。
+      handler 抛异常、工具名不存在，都在同一个地方兜住，变成 <code class="inline-code">Error: ...</code> 文本返回给对应循环的模型。
+      父和子看到的是同一种错误格式。</li>
+    </ol>
+    <div class="callout insight">
+      <span class="callout-title">设计要点</span>
+      <p>子代理不是"更小的模型"，也不是"更安全的沙箱"。
+      它是<b>同一个模型、同一套工具、同一份权限，换了一个全新的 <code class="inline-code">messages[]</code></b>。
+      所有"隔离"都发生在消息层，不发生在执行层。</p>
+    </div>
+    <p>顺带一提，<code class="inline-code">task</code> 工具只接受一个 <code class="inline-code">prompt</code> 字符串，这让"怎么写 prompt"变成了使用子代理最重要的技能。
+    一条好的子任务 prompt 至少要说清三件事：<b>目标</b>（要产出什么结论）、<b>边界</b>（去哪里找、不要动哪些文件）、<b>回报格式</b>（结论 + 证据）。
+    因为子代理看不到父对话，任何"你也知道的那个问题"都必须重述一遍——这既是它的缺点，也逼着调用方把任务想清楚。</p>
+    <div class="callout tip">
+      <span class="callout-title">小技巧</span>
+      <p>派活时把"验收标准"写进 prompt，比如"回答里必须包含你读过的文件路径和证明结论的那一行代码"。子代理的 final text 是父代理唯一能看到的东西，验收标准写在哪，它就会往哪个方向总结。</p>
+    </div>
+
+    <h3><span class="h3num">04</span>上下文隔离的本质：出口只有一个</h3>
+    <p>把子代理想象成一块"上下文抽水机"：它把原本会灌进父窗口的东西（几十个文件内容、十几次工具往返）抽走，只在出口处留下一段文本。
+    父代理的 <code class="inline-code">messages[]</code> 里只多了一条 <code class="inline-code">tool_result</code>。</p>
+    <p>这带来两个常被混淆的收益，需要分开算账：</p>
+    <div class="card-grid">
+      <div class="card"><h4>省的是上下文空间</h4><p>父窗口不再被探路过程占满，后面的修改、验证、长任务还能继续。这是子代理最确定的收益，和模型价格无关。</p></div>
+      <div class="card"><h4>省不省 token 要看总账</h4><p>子代理自己也要调用模型、传输工具结果。总 token 往往比"父代理自己干"更多，只是分摊到了两个窗口。它买的是"父窗口的可用性"，不是"更便宜"。</p></div>
+    </div>
+    <p>再算一笔粗账。
+    父代理自己读 40 个文件，假设每个文件 3000 token，光文件内容就 12 万 token；改成子代理去读，父窗口只多一条可能几百 token 的结论。
+    子代理那边确实消耗了这 12 万 token，但那是<b>另一个窗口</b>里的消耗，而且那个窗口用完就丢——父代理后面的任务依然有充足空间。
+    如果子代理只用来做一次短查询，总 token 甚至可能更多；如果用来探索一个陌生仓库，父窗口能省下的空间是数量级的。
+    这就是为什么判断标准必须是"信息后续还需不需要"，而不是"总 token 会不会变少"。</p>
+    <p>所以"什么时候派子代理"有一条清晰的标准：<b>当这段工作产生的中间信息，对后续任务不再需要时。
+    </b>"帮我查一下这个项目用什么测试框架"是典型——过程很脏，结论很干净。
+    "帮我把这个文件里的函数重命名"通常不值得——工作本身很短，派一个子代理反而多一次上下文重建和一次结论转述。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>任务形状</th><th>建议</th><th>原因</th></tr></thead>
+        <tbody>
+          <tr><td>读几十个文件、定位一条调用链</td><td>派子代理</td><td>中间结果后续无用，结论可压缩成一段话</td></tr>
+          <tr><td>在陌生代码库里做一次可行性调研</td><td>派子代理</td><td>探索过程不确定，失败也不该污染父上下文</td></tr>
+          <tr><td>改一个文件、跑一次测试</td><td>自己做</td><td>过程短，子代理的上下文重建成本反而更高</td></tr>
+          <tr><td>需要连续多轮的状态调整（改—测—修）</td><td>自己做</td><td>状态强，跨窗口转述会丢细节</td></tr>
+          <tr><td>多个互不依赖的调研任务</td><td>可并行派发</td><td>天然隔离，但本章实现是串行同步的</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>还有一层：本章是<b>串行同步</b>的。
+    <code class="inline-code">run_subagent</code> 在父循环里被同步调用，父代理在它返回前完全停住。
+    如果一次响应里有多个 <code class="inline-code">task</code> 调用，它们会依次执行。
+    真正的并行子代理需要并发执行工具、按顺序回填结果，那是生产环境的话题；本章先建立"隔离"这个核心心智模型，并行是它之上的工程优化。</p>
+    <p>子代理和上一讲的 todo 正好互补：todo 管"接下来做哪几步"，子代理管"其中某一步在哪儿做"。
+    一个负责注意力，一个负责上下文空间，两者都不改变模型能力，只改变信息怎么摆放。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么不共享父历史？以及只回传一段文本的三个坑</summary>
+      <div class="deep-body">
+        <p><b>先回答"为什么不直接共享父历史"。</b>把父代理的 <code class="inline-code">messages[]</code> 复制一份给子代理，看起来省事，实际有三个坏处。
+        第一，父历史里的中间细节会全部进入子代理的窗口，子代理反而更容易在无关信息里迷路——它本来只需要知道任务本身。
+        第二，父子共享同一段历史后，"哪些是父代理说的、哪些是子代理做的"会混在一个消息流里，后续压缩和审计都失去边界。
+        第三，成本会翻倍：同一段历史在每个子代理里各传一遍，子代理越多、越贵。
+        所以最干净的做法是让接口只有两句话："给你这个任务"和"把结论给我"，其余一概不传。</p>
+        <p><b>坑一：final text 丢失结构化信息。
+        </b>父代理拿到的是一段自然语言。
+        它不知道子代理读了哪些文件、哪些结论是推测、哪些是实测。
+        如果子代理说"没找到测试框架"，父代理无法区分"确实没有"和"子代理没找对地方"。
+        改进方向：在 <code class="inline-code">task</code> 的 prompt 里明确要求返回格式（例如"列出你读过的文件路径 + 每条结论的依据"），或者在生产环境里用结构化输出、把关键文件路径写进 final text 便于复核。
+        代价是 final text 变长，隔离的收益被侵蚀一点——这是一个可以调的旋钮，不是非黑即白。</p>
+        <p><b>坑二：子代理悄悄失败。
+        </b><code class="inline-code">run_subagent</code> 的失败几乎都变成了"正常文本"：<code class="inline-code">(no summary)</code>、<code class="inline-code">Unknown: ...</code>、30 轮超时的提示。
+        父循环分不清"任务完成"和"任务放弃"，除非文本里写清楚了。
+        <b>给子代理的 prompt 里要求它显式报告失败原因</b>，比在父循环里猜更可靠。</p>
+        <p><b>坑三：共享文件系统的副作用。
+        </b>子代理和父代理在同一个 <code class="inline-code">WORKDIR</code> 里。
+        子代理写过的文件、删过的东西，父代理下次 <code class="inline-code">read_file</code> 就会看到。
+        这既是特性（子代理可以真的把活干完），也是风险（一个跑偏的子代理会污染工作区）。
+        所以权限钩子必须共享——这也是 <code class="inline-code">execute_tool</code> 泛化那一步的隐藏价值。</p>
+        <details class="deep deep-2">
+          <summary>再深一层：如果真要嵌套子代理，边界该怎么划？</summary>
+          <div class="deep-body">
+            <p>把 <code class="inline-code">task</code> 加进 <code class="inline-code">SUB_TOOLS</code> 很容易，难的是控制它的后果。
+            至少要加四个约束：</p>
+            <p>其一，<b>深度上限</b>。
+            给 <code class="inline-code">run_subagent</code> 加一个 <code class="inline-code">depth</code> 参数，超过 2 层就拒绝并返回错误。
+            其二，<b>预算上限</b>。
+            每层有独立的 turn 数和 token 预算，父层能看到子层的消耗。
+            其三，<b>回报协议</b>。
+            深度越深，final text 的信息损失越严重；要么每层都要求结构化摘要，要么限制嵌套只用于"读多写少"的探索任务。
+            其四，<b>写权限收窄</b>。
+            子代理的子代理通常只该有只读工具，否则一个误判会连着写坏三层。</p>
+            <p>还有一个反直觉的点：<b>嵌套并不总是更省上下文</b>。
+            中间层的 final text 会成为上一层的工具结果，如果中间层转述得啰嗦，父窗口反而更挤。
+            生产系统里，嵌套深度通常被压得很低（1–2 层），原因不是实现不了，而是收益随深度快速衰减、调试成本指数上升。</p>
+          </div>
+        </details>
+      </div>
+    </details>
+
+    <h3><span class="h3num">05</span>动手实验：看见那条"只回传一条消息"的边界</h3>
+    <ol class="steps">
+      <li><b>跑起来</b>：<code class="inline-code">python s06_subagent/code.py</code>，输入 <code class="inline-code">Use a subtask to find what testing framework this project uses</code>。</li>
+      <li><b>看前缀</b>：终端会先打印 <code class="inline-code">[Subagent started]</code>，子代理的每次工具调用带 <code class="inline-code">[sub]</code> 前缀，结束时打印 <code class="inline-code">[Subagent done]</code>。
+      确认父代理自己没有读任何文件——那些 <code class="inline-code">read_file</code> 全部发生在子循环里。</li>
+      <li><b>量一下隔离效果</b>：在 <code class="inline-code">run_subagent</code> 的 <code class="inline-code">return</code> 之前加一行 <code class="inline-code">print(f"[sub] local messages: {len(messages)}")</code>，再在父循环 <code class="inline-code">agent_loop</code> 收到 <code class="inline-code">task</code> 结果后打印 <code class="inline-code">len(messages)</code>。
+      预期现象：子循环内部消息可能有十几条，而父循环只增加了 2 条（assistant 的 tool_use + user 的 tool_result）。</li>
+      <li><b>观察失败回报</b>：给一个故意模糊的任务，比如 <code class="inline-code">Use a task to investigate something</code>。
+      看子代理是给出一段含糊的总结，还是触发 30 轮上限。
+      记下父代理收到这段文本后怎么反应——它是重新派了一次、自己动手，还是直接接受了模糊结论？</li>
+      <li><b>让子代理附上证据</b>：把 task 的 prompt 改成 "Use a task to find the testing framework. Require the subagent to list the files it read and quote the exact line that proves the answer."。
+      重跑后比较：父代理拿到的 final text 是否变长、结论是否更容易复核。
+      这个实验能让你直观感受到"隔离"和"可验证"之间的张力。</li>
+      <li><b>危险实验（可选）</b>：把 <code class="inline-code">SUB_TOOLS = [*BASE_TOOLS, TASK_TOOL]</code> 打开，输入一个会诱发递归委派的任务，观察它是否会陷入"派子代理去派子代理"。
+      这个实验不需要跑很久就能看到 token 消耗失控的趋势，动手前想清楚。</li>
+    </ol>
+
+    <h3><span class="h3num">06</span>常见误区</h3>
+    <div class="callout warn">
+      <span class="callout-title">误区一：以为子代理省钱</span>
+      <p>子代理省的是<b>父窗口的上下文空间</b>，不是账单。
+      它自己也要跑循环、发请求、传工具结果，总 token 常常比父代理单干更多。
+      正确的判断标准是"这段过程的中间信息后续还要不要"，而不是"能不能少花钱"。</p>
+    </div>
+    <div class="callout warn">
+      <span class="callout-title">误区二：把子代理当沙箱</span>
+      <p>它和父代理同进程、同工作目录、同一套权限钩子。
+      子代理的一条 <code class="inline-code">bash</code> 可以删掉父代理正在编辑的文件。
+      如果你需要真正隔离，那是容器、工作树（worktree）或权限系统的事，不是子代理。</p>
+    </div>
+    <div class="callout warn">
+      <span class="callout-title">误区三：以为 final text 是可信的结论</span>
+      <p>父代理拿到的是一段自然语言，无法区分"查证过的结论"和"子代理的猜测"。
+      生产系统里通常要求子代理在 final text 里附上证据（文件路径、命令输出片段），或者由父代理对关键结论做一次独立校验。
+      子代理是加速器，不是免检章。</p>
+    </div>
+
+    <h3><span class="h3num">07</span>自测</h3>
+    <details class="quiz">
+      <summary>父代理和子代理共享 <code class="inline-code">WORKDIR</code>，那"上下文隔离"到底隔离了什么？</summary>
+      <div class="answer">
+        <p>隔离的是<b>对话记录</b>：子代理拥有全新的 <code class="inline-code">messages[]</code>，父代理的历史不会传进去，子代理的中间工具调用也不会传回来。
+        文件系统、进程、环境变量、权限钩子都是共享的。
+        所以子代理能看到父代理刚写的文件，父代理也能看到子代理的环境改动；但子代理读过的 200 个文件内容不会出现在父代理的上下文里。
+        一句话：<b>隔离消息，不隔离世界。
+        </b></p>
+      </div>
+    </details>
+    <details class="quiz">
+      <summary>把 <code class="inline-code">SUB_TOOLS</code> 写成 <code class="inline-code">TOOLS</code>（含 <code class="inline-code">task</code>）会发生什么？为什么本章刻意不这么做？</summary>
+      <div class="answer">
+        <p>子代理就能再调用 <code class="inline-code">task</code>，形成递归委派：子代理派子代理，理论上可以无限深。
+        后果有三层：一是 token 消耗随深度爆炸且难以归因；二是每一层只传 final text，信息在每一层都被有损压缩一次，最底层的细节到顶层几乎不剩；三是调试极其困难，你很难知道某个错误结论是哪一层产生的。
+        本章刻意让 <code class="inline-code">SUB_TOOLS</code> 不含 <code class="inline-code">task</code>，把委派深度钉死在 1 层——先建立正确的心智模型，再谈扩展。</p>
+      </div>
+    </details>
+    <details class="quiz">
+      <summary>子代理任务失败（比如一直没找到答案），父代理为什么会"不知道它失败了"？</summary>
+      <div class="answer">
+        <p>因为失败在代码里被转成了普通文本：<code class="inline-code">(no summary)</code>、<code class="inline-code">Subagent stopped after 30 turns without a final answer.</code>，以及工具层的 <code class="inline-code">Error: ...</code>。
+        这些都会作为一条正常的 <code class="inline-code">tool_result</code> 回到父循环，父代理只能从文本内容里推断。
+        而且 <code class="inline-code">run_subagent</code> 的循环本身不抛异常，父循环拿不到任何"失败信号"。
+        解决办法是在 task 的 prompt 里要求子代理显式说明"我尝试了什么、卡在哪、结论是否可靠"。</p>
+      </div>
+    </details>
+    <details class="quiz">
+      <summary>一个任务需要读 40 个文件来定位 bug，然后修改 1 个文件并跑测试。你会怎么拆？</summary>
+      <div class="answer">
+        <p>把"读 40 个文件定位"派给子代理，让它只回传"根因 + 关键文件 + 证据"；父代理拿到结论后自己改那 1 个文件、自己跑测试。
+        理由：读文件的中间产物后续完全不需要，正好是上下文隔离的甜点区；而修改和验证需要连续的上下文（改了什么、测试报了什么），拆出去反而要在两个窗口之间来回转述，得不偿失。
+        判断口诀：<b>过程脏、结论轻 → 派出去；过程短、状态强 → 自己做。
+        </b></p>
+      </div>
+    </details>
+    <details class="quiz">
+      <summary><code class="inline-code">execute_tool</code> 把 handler map 作为参数传入，除了让子代理用不同的工具表，还有什么收益？</summary>
+      <div class="answer">
+        <p>它保证父与子走同一条工具执行路径，于是 <code class="inline-code">PreToolUse</code> / <code class="inline-code">PostToolUse</code> 钩子、异常兜底、<code class="inline-code">Unknown: ...</code> 处理全部共享。
+        子代理因此无法绕过权限检查——它删文件一样要过 deny list，越界访问一样要用户确认。
+        如果 s06 复制一份 execute_tool 给子循环，两条路径迟早会漂移，权限漏洞往往就出在这种"看起来差不多的复制"里。</p>
+      </div>
+    </details>
+  </div>
+  <div class="takeaway">
+    <span class="tk-label">这一讲带走</span>
+    <p>子代理的本质不是"更小的模型"，而是"换一个全新的 <code class="inline-code">messages[]</code> 跑同一个循环"：进去一个 prompt，出来一段 final text，中间的过程不进父窗口。
+    隔离消息，不隔离世界；省的是上下文，不一定省 token。</p>
+    <p class="next"><b>下一讲：</b>子代理解决了"过程太脏"，但还有一类东西会撑爆上下文——知识。React 规范、SQL 风格、PDF 处理流程，全塞进 system prompt 迟早要炸。下一讲让模型先看目录，用到时再加载正文：Skill Loading。</p>
+  </div>
+</section>

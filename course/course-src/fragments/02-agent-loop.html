@@ -1,0 +1,353 @@
+<section id="ch02" class="chapter">
+  <p class="chapter-kicker">第 2 讲 · 阶段一 · 让 Agent 动起来</p>
+  <h2 class="chapter-title">Agent Loop：一个 while 循环，就是 Agent 的全部秘密
+    <small>对应 s01_agent_loop：约 150 行 Python，一个工具，一个循环</small>
+  </h2>
+  <p class="chapter-lede">模型能“说”出要做的事，却不会“做”。这一讲把你手动复制粘贴的那一层，变成二十几行代码——从此它会自己动手，也会自己看结果。</p>
+  <p class="source-line">
+    <span>源码 <code>s01_agent_loop/code.py</code></span>
+    <span>原章 <a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/s01_agent_loop/README.zh.md">README.zh.md</a></span>
+  </p>
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>用 30 行代码写出一个能连续行动的 Agent 循环</li>
+    <li>说清“模型负责决策、harness 负责执行”到底怎么分工</li>
+    <li>明白 <code class="inline-code">tool_result</code> 为什么必须带 <code class="inline-code">tool_use_id</code></li>
+    <li>知道这个循环在什么情况下会失控，以及生产环境怎么兜底</li>
+  </ul>
+
+  <div class="chapter-body">
+
+    <h3><span class="h3num">01</span>从一个真实的麻烦说起</h3>
+    <p>你打开对话框，对一个 coding 模型说：帮我看看这个目录里有哪些文件，然后把其中的 demo.py 跑一遍。模型很配合，回你一条命令：<code class="inline-code">ls -la &amp;&amp; python demo.py</code>。然后，它停住了。</p>
+    <p>命令躺在对话里，没有人执行。你只好复制、粘到终端、回车，再把输出复制回来、贴进对话框。它看完输出，再给你下一条命令，你再跑一遍、再贴回去。任务越长，你贴得越频繁；贴错一次，它就会基于错误的现场继续推理。</p>
+    <p>每一轮，你都在扮演一个没有名字的角色：<b>中间层</b>。你做的事情高度重复，而且完全可以用代码描述——把模型给的命令交给 shell，把 shell 的输出还给模型，直到模型不再要命令为止。</p>
+    <p>这一讲就是把这三件事写成代码。整章没有新模型、没有新 API、没有复杂框架，只有一个 <code class="inline-code">while True</code>、一个工具、一份 <code class="inline-code">messages[]</code>。但它是 Claude Code 这类工具的心脏：后面十六讲做的一切，都是围绕这个循环往上加东西，循环本身的形状几乎不再改变。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>你手动做的事</th><th>代码里对应什么</th></tr></thead>
+        <tbody>
+          <tr><td>把模型的命令复制到终端</td><td><code>run_bash(block.input["command"])</code></td></tr>
+          <tr><td>把终端输出复制回对话框</td><td><code>tool_result</code> 追加进 <code>messages[]</code></td></tr>
+          <tr><td>判断还要不要再问一轮</td><td><code>if not tool_calls: return</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout insight">
+      <span class="callout-title">先记住这个分工</span>
+      <p><b>模型负责决策</b>：要不要动手、用哪个工具、参数填什么。<b>harness 负责执行</b>：真的去调，并且把世界的反馈原样带回来。两件事都由模型做，你会得到一堆无法执行的建议；两件事都由 harness 做，你就回到了写死流程的脚本。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>直觉：一个循环，两个角色</h3>
+    <p>先别急着写代码，把流程画出来：用户提一个问题，模型回一轮内容；如果内容里夹着工具调用请求，harness 就替它执行，把结果作为新消息塞回对话；然后再问一次模型。如此往复。</p>
+    <div class="flow">
+      <div class="flow-node"><b>User</b>提问</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>LLM</b>返回响应，可能含 <code>tool_use</code></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>Harness</b>执行工具</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>messages[]</b>追加 <code>tool_result</code></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>回到 LLM</b>再问一轮</div>
+    </div>
+    <p>循环的终止条件只有一个：<b>这一轮响应里没有 <code class="inline-code">tool_use</code> block</b>。注意，不是“模型说完成了”，也不是你去猜它有没有说完。模型不再请求工具，循环就退出。</p>
+    <p>为什么一个条件就够？因为“继续”的唯一信号，就是“它还想操作外部世界”。一旦它只想说话——把结论、把问题、把道歉说给你听——这一轮对话就该结束了。这个判断简单到有点粗暴，但正是这种简单让它稳定：不依赖模型的措辞，不依赖 <code class="inline-code">stop_reason</code> 的语义演变，只数一数响应里有没有要干的活。</p>
+    <p>你可以把每轮循环理解成三笔账：<b>输入</b>是当前全部 <code class="inline-code">messages</code>（越长越贵），<b>输出</b>是模型这一轮的决策（可能含工具请求），<b>记账</b>是把决策和结果写回 <code class="inline-code">messages</code>。循环本身不聪明，它只是忠实地把账记下去。</p>
+    <div class="analogy">
+      <span class="analogy-title">像给厨师配一个传菜口</span>
+      <p>把模型想成一位坐在厨房里的厨师：他能看懂订单、能决定先炒哪道菜、嗅觉极灵，但厨房门是锁着的，他走不出去，也没法自己按开关。<code class="inline-code">tool_use</code> 是他从窗口递出来的订单——“取三个鸡蛋”“把火开大”。harness 是传菜口：接单、执行、把做好的菜和现场情况一起送回窗口。厨师看到结果，决定下一单；看到“盐没了”，就改做别的。</p>
+      <p><b>类比到哪为止：</b>真实厨房不会把成品再当成新订单送回去；而循环会把 <code class="inline-code">tool_result</code> 追加进 <code class="inline-code">messages[]</code>，模型下一轮读到的，是包括自己刚才那条订单在内的完整上下文。它不是“收到一盘菜”，而是“想起自己点过这道菜，又看到菜已经放在桌上”。这一点，是 Agent 能连续推理的关键。</p>
+    </div>
+    <div class="callout key">
+      <span class="callout-title">关键结论</span>
+      <p>整个 harness 的工作可以压缩成一句话：<b>让模型每一轮都能看到“上一轮自己做了什么、世界变成了什么样”</b>。循环、工具、权限、钩子，都是在为这句话服务。</p>
+    </div>
+
+    <h3><span class="h3num">03</span>代码精读：把中间层写成循环</h3>
+    <p>先从入口看。用户输入被包成第一条消息，然后 <code class="inline-code">messages</code> 被交给 <code class="inline-code">agent_loop</code>。注意这个 list 是在函数外面创建的，传进去会被原地修改——这也是为什么 <code class="inline-code">agent_loop(history)</code> 返回之后，<code class="inline-code">history</code> 里已经多了好几轮对话。</p>
+    <pre data-lang="python"><code>messages = [{"role": "user", "content": query}]
+
+response = client.messages.create(
+    model=MODEL, system=SYSTEM, messages=messages,
+    tools=TOOLS, max_tokens=8000,
+)
+</code></pre>
+    <p><code class="inline-code">tools=TOOLS</code> 这一步很关键：它不只是告诉模型“有哪些工具”，还等于声明“你可以调用它们”。消息历史、工具清单、系统提示，每次请求都原样发过去——因为 Anthropic 的 Messages API 是<b>无状态</b>的，服务端不替你记任何东西。所谓“对话”，在协议层面就是“每次都把全部历史重发一遍”。</p>
+    <p>接下来是循环的前半段，也是整个机制里最容易写错的地方：</p>
+    <pre data-lang="python"><code>def agent_loop(messages: list):
+    while True:
+        response = client.messages.create(
+            model=MODEL, system=SYSTEM, messages=messages,
+            tools=TOOLS, max_tokens=8000,
+        )
+        messages.append({"role": "assistant", "content": response.content})
+
+        tool_calls = [
+            block for block in response.content if block.type == "tool_use"
+        ]
+        if not tool_calls:
+            return
+</code></pre>
+    <p>第一行 <code class="inline-code">messages.append</code>，把 <code class="inline-code">response.content</code> <b>整个</b>追加进去，而不是只追加其中那段文字。这个细节是后面一切能成立的前提：模型下一轮必须“看到自己刚才发过 <code class="inline-code">tool_use</code>”，否则它不知道自己点过单，轻则重复调用，重则让 <code class="inline-code">tool_result</code> 变成没有归属的孤儿。</p>
+    <p>第二行 <code class="inline-code">tool_calls</code> 用列表推导筛出所有 <code class="inline-code">tool_use</code> block。为什么不直接判断 <code class="inline-code">response.stop_reason</code>？因为 <code class="inline-code">stop_reason</code> 回答的是“模型为什么停”，而这里真正要问的是“有没有要执行的活”。一次响应可能同时包含文字和多个工具请求，也可能因为 <code class="inline-code">max_tokens</code> 被截断——直接数 block 更贴近你要做的决策，也更不依赖 API 版本的措辞。</p>
+    <p>然后是后半段：执行、收集、回填。</p>
+    <pre data-lang="python"><code>        results = []
+        for block in tool_calls:
+            # ...
+            output = run_bash(block.input["command"])
+            results.append({
+                "type": "tool_result",
+                "tool_use_id": block.id,
+                "content": output,
+            })
+
+        messages.append({"role": "user", "content": results})
+</code></pre>
+    <p>这里有三件事值得逐个盯住：</p>
+    <ul>
+      <li><b><code class="inline-code">block.input["command"]</code></b>：<code class="inline-code">input</code> 是模型按工具 schema 填好的参数字典。schema 里只有 <code class="inline-code">command</code> 一个必填字段，所以这里直接取。真实 harness 里要防着模型给错键、给错类型。</li>
+      <li><b><code class="inline-code">"tool_use_id": block.id</code></b>：借条编号。模型一次可能开好几张借条，harness 还回来时必须一张对一张。少了它，API 无法把结果配对给调用，请求会直接失败。</li>
+      <li><b><code class="inline-code">messages.append({"role": "user", ...})</code></b>：工具结果装在 user 消息里，不是 assistant 消息里。原因见下面的深入区。</li>
+    </ul>
+    <p>还有一点容易忽略：<code class="inline-code">results</code> 是<b>先收集、最后一次性 append</b> 的，而不是每执行一个就 append 一条。因为一次 assistant 响应可能带多个 <code class="inline-code">tool_use</code>，协议要求这些调用的结果跟在同一条 user 消息里、按 id 一一对应。把一批结果打包送回，形状最稳。</p>
+
+    <h4>顺序能不能换？</h4>
+    <p>不能，而且这里有一个很隐蔽的坑：<b>追加 assistant 消息必须发生在执行工具之前</b>。如果你先跑完工具、再回头 append assistant，中间那个函数一旦抛异常（或者你手滑 <code class="inline-code">return</code> 早了），历史里就会出现一个没有请求方、只有结果的 <code class="inline-code">tool_result</code>，整段对话从此不自洽。</p>
+    <p>同理，<b>判断“要不要退出”必须发生在 append 之后</b>。因为即使这一轮没有工具调用，模型最后那段文字也需要留在历史里——用户下一句追问时，模型得记得自己刚说过什么。先判断再 append，等于每轮丢一句模型的话。</p>
+    <p>把这两条合起来，正确的顺序只有一种：<b>追加 assistant → 判断有没有工具 → 执行 → 收结果 → 追加结果</b>。这正是代码从上到下的行序。写循环时，让代码顺序和协议顺序重合，bug 会少一半。</p>
+
+    <h4>把入口也读完：多轮对话是怎么接上的</h4>
+    <p>循环写对了，但很多人会忽略入口处的 <code class="inline-code">history</code>。它不是每轮新建的，而是整个会话共用一份：</p>
+    <pre data-lang="python"><code>history = []
+while True:
+    # ... 读取 query，q / exit 退出 ...
+    history.append({"role": "user", "content": query})
+    agent_loop(history)
+    response_content = history[-1]["content"]
+    if isinstance(response_content, list):
+        for block in response_content:
+            if getattr(block, "type", None) == "text":
+                print(block.text)
+</code></pre>
+    <p>这段代码解释了两件事。第一，<b>循环结束后 <code class="inline-code">history</code> 不会被清空</b>，所以你可以接着追问“刚才那个文件里写了什么”，模型仍然看得到之前的工具结果——多轮对话的连续性，靠的就是这份不断变长的 list。第二，最终给用户看的只是 text block：工具调用、工具结果都留在 history 里当上下文，不直接打印给用户。</p>
+    <p>为什么最后要 <code class="inline-code">isinstance(response_content, list)</code> 再遍历？因为 <code class="inline-code">history[-1]["content"]</code> 是最后一条 assistant 消息的内容，正常是 block 列表；但如果你手动塞过字符串消息，这里就会炸。加一层判断，是给“未来的自己”留余地。</p>
+
+    <h4>一次循环之后，messages 长什么样</h4>
+    <p>光看 append 的代码容易抽象，把一轮之后的 <code class="inline-code">messages</code> 摊开来看就清楚了：</p>
+    <pre data-lang="text"><code>messages[0]  user       "列出当前目录，然后跑 demo.py"
+messages[1]  assistant  [ text: "我先看看目录。" ,
+                          tool_use(id="toolu_01...", name="bash",
+                                   input={"command": "ls -la"}) ]
+messages[2]  user       [ tool_result(tool_use_id="toolu_01...",
+                                     content="README.md  code.py") ]
+</code></pre>
+    <p>三个位置，三种内容，各司其职。第一个 user 消息是人的原话；assistant 消息里既有给用户看的文字，也有给 harness 看的 <code class="inline-code">tool_use</code>；第二个 user 消息里没有一句“人话”，只有机器可读的 <code class="inline-code">tool_result</code>。这就是为什么前面反复强调“user role 不代表一定是人说的”——它代表的是“模型之外的输入”。</p>
+    <p><code class="inline-code">id</code> 长什么样、怎么生成，harness 完全不需要关心。它是一个不透明字符串，你唯一的责任是<b>原样搬运</b>：从 <code class="inline-code">block.id</code> 搬到 <code class="inline-code">tool_use_id</code>。不要解析它、不要拼它、不要为了“好看”重写它。把它当成数据库主键来对待，配对就不会出错。</p>
+    <p>再看一眼那三个 key：<code class="inline-code">type</code>、<code class="inline-code">tool_use_id</code>、<code class="inline-code">content</code>。前两个决定“这是什么、属于谁”，第三个是载荷。少任何一个，API 都拼不出完整的一轮对话。很多刚写 harness 的人会漏掉 <code class="inline-code">type</code>，结果得到一个长得像结果、但协议不认识的字典。</p>
+
+    <h3><span class="h3num">04</span>三个不能省的设计决定</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>决定</th><th>代码里的样子</th><th>省掉会怎样</th></tr></thead>
+        <tbody>
+          <tr><td>assistant 内容原样追加</td><td><code>content: response.content</code></td><td>模型下一轮不知道自己发过 <code>tool_use</code>，可能重复调用；<code>tool_result</code> 失去归属</td></tr>
+          <tr><td>结果携带 <code>tool_use_id</code></td><td><code>"tool_use_id": block.id</code></td><td>API 无法把结果配对给调用，请求报错</td></tr>
+          <tr><td>结果放在 user 消息里</td><td><code>{"role": "user", ...}</code></td><td>协议里没有第三种角色，assistant 消息不能塞工具结果</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>这三条不是风格偏好，而是协议约束。你可以把 <code class="inline-code">messages[]</code> 想成一份必须自洽的聊天记录：每一句 assistant 的工具请求，后面都要紧跟着对应的结果；每个结果都要能指回它的请求。任何一条缺失，下一轮请求要么被 API 拒绝，要么让模型的理解出现裂缝。</p>
+    <p>也正因为如此，后面所有机制——权限、钩子、计划、子代理——都尽量不改这三条，而是改“循环外面”或“工具内部”。<b>核心不变，能力外挂</b>，是从这一讲开始贯穿全课的设计原则。</p>
+    <div class="card-grid">
+      <div class="card"><h4>只存模型的文字</h4><p>下一轮看不到自己发过 <code>tool_use</code>，容易重复调用；<code>tool_result</code> 也失去归属，成为孤儿。</p></div>
+      <div class="card"><h4>把结果塞进 assistant</h4><p>让模型“替世界发言”，既不合协议语义，也容易把它自己的输出当成事实引用。</p></div>
+      <div class="card"><h4>失败时干脆不返回结果</h4><p>少一个 <code>tool_result</code> 就少一张配对。正确做法是把错误信息也作为字符串回填。</p></div>
+    </div>
+    <div class="callout warn">
+      <span class="callout-title">注意 max_tokens 的含义</span>
+      <p><code class="inline-code">max_tokens=8000</code> 限制的是<b>单次回复</b>的长度，不是上下文总量。多轮对话里 <code class="inline-code">messages</code> 只增不减，每一轮都把全部历史重发一次。这就是为什么长任务迟早会碰到上下文上限——第 9 讲 <code class="inline-code">s08_context_compact</code> 专门解决它。</p>
+    </div>
+
+    <h3><span class="h3num">05</span>run_bash：最小防护，不是安全边界</h3>
+    <p>工具执行函数本身只有十几行，但每一行都在防一个具体的坑：</p>
+    <pre data-lang="python"><code>def run_bash(command: str) -&gt; str:
+    dangerous = ["rm -rf /", "sudo", "shutdown", "reboot", "&gt; /dev/"]
+    if any(d in command for d in dangerous):
+        return "Error: Dangerous command blocked"
+    try:
+        r = subprocess.run(command, shell=True, cwd=os.getcwd(),
+                           capture_output=True, text=True, errors="replace",
+                           timeout=120)
+        out = (r.stdout + r.stderr).strip()
+        return out[:50000] if out else "(no output)"
+    except subprocess.TimeoutExpired:
+        return "Error: Timeout (120s)"
+    # ... 其余异常分支略 ...
+</code></pre>
+    <ul>
+      <li><b>返回字符串，不抛异常</b>：<code class="inline-code">tool_result</code> 的内容会原样发给模型，错误信息本身是有用的上下文。如果直接抛异常，一次失败就会炸掉整个循环，模型连“刚才那条命令失败了”都看不到。</li>
+      <li><b><code class="inline-code">timeout=120</code></b>：没有超时，一条挂着 <code class="inline-code">vim</code> 或 <code class="inline-code">yes</code> 的命令就能让 agent 永远卡死。超时被捕获后变成一句可读的错误，循环继续。</li>
+      <li><b><code class="inline-code">out[:50000]</code></b>：把输出截断在五万字符。不截，一次 <code class="inline-code">cat</code> 大文件就可能把上下文和 token 预算一起烧光。</li>
+      <li><b><code class="inline-code">errors="replace"</code></b>：命令输出可能是非法 UTF-8，解码失败不该让工具崩掉。</li>
+      <li><b><code class="inline-code">dangerous</code> 黑名单</b>：字符串子串匹配，写死的几条。它能拦住手滑的 <code class="inline-code">rm -rf /</code>，但绕过方式多得很——加引号、拼变量、用 <code class="inline-code">find -delete</code> 都行。</li>
+    </ul>
+    <div class="callout warn">
+      <span class="callout-title">别把黑名单当安全</span>
+      <p>这段代码的定位是“最小防护”：防止演示时把机器弄坏，不是安全边界。真正的权限判断发生在第 4 讲：执行之前先过拒绝列表、规则匹配和用户审批三道闸门。这里先有印象就好。</p>
+    </div>
+
+    <h4>工具该返回多长的字符串？</h4>
+    <p>这是一个很容易被忽略的取舍。返回太短，模型看不到关键信息，只能再跑一次命令，白白多烧一轮；返回太长，一次 <code class="inline-code">ls -R</code> 的输出就能吃掉几千 token，还会把真正有用的那几行挤到注意力边缘。</p>
+    <p>s01 用了一个极简策略：截到 50000 字符，空输出统一替换成 <code class="inline-code">"(no output)"</code>。前者防爆，后者防“空字符串让模型以为工具没执行”。这两个处理都不精细，但方向是对的——<b>工具返回的是给模型看的摘要，不是给机器存档的完整日志</b>。</p>
+    <p>成熟的工具会做得更细：读文件带 <code class="inline-code">limit</code> 并提示剩余行数，搜索只返回命中的路径，命令输出过长时截断中段并保留头尾。但无论怎么优化，原则不变：让模型用最少的 token 拿到“够做下一步判断”的信息。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么 assistant content 必须原样 append？</summary>
+      <div class="deep-body">
+        <p>因为 API 无状态。你每轮把 <code class="inline-code">messages</code> 完整发过去，服务端看到的是一份“剧本”：用户说了什么、assistant 回了什么、哪些 <code class="inline-code">tool_use</code> 被发出、哪些 <code class="inline-code">tool_result</code> 被回填。这份剧本必须自洽，模型才能接着往下演。</p>
+        <p>如果你图省事，只 append 模型回复里的文字（<code class="inline-code">block.text</code>），那下一轮的剧本里就出现了一句“我这就去读文件”，却没有对应的 <code class="inline-code">tool_use</code>，后面又跟着一个 <code class="inline-code">tool_result</code>。模型看到的是：一个没头没尾的工具结果。轻则困惑、重复调用，重则被 API 直接拒绝。</p>
+        <p>反过来，原样 append 还有个工程上的好处：<code class="inline-code">response.content</code> 里的 block 对象本身就是 SDK 定义的可序列化结构，下轮直接塞回请求即可，不需要你手工重组。少一次手工转换，就少一类 bug。</p>
+        <details class="deep deep-2">
+          <summary>再深一层：为什么 tool_result 用 user role？</summary>
+          <div class="deep-body">
+            <p>Anthropic 的 Messages API 只有两种角色：<code class="inline-code">user</code> 和 <code class="inline-code">assistant</code>。<code class="inline-code">assistant</code> 消息代表“模型说的话”，<code class="inline-code">user</code> 消息代表“模型之外的一切输入”：人的提问、系统注入的上下文、以及工具执行的结果。</p>
+            <p>工具结果不是模型生成的，是 harness 从外部世界拿回来的。把它放进 assistant 消息，等于让模型替世界发言，既不符合语义，也会破坏协议。放进 user 消息，模型读起来就是“环境给了我这些反馈”，和人类用户补充信息的地位一致——这也解释了为什么多轮里 <code class="inline-code">user</code> 和 <code class="inline-code">assistant</code> 会交替出现，哪怕中间没有人真的说话。</p>
+          </div>
+        </details>
+      </div>
+    </details>
+
+    <details class="deep">
+      <summary>🔬 深入：这个循环什么时候会失控？</summary>
+      <div class="deep-body">
+        <p>当前实现是裸的 <code class="inline-code">while True</code>：没有最大轮数、没有成本预算、没有 wall-clock 限制、没有“连续失败就停”的判断。它能正常结束，完全依赖一个经验事实——模型通常会在任务完成后停止请求工具。<b>“通常”不是保证。</b></p>
+        <p>失控一般从三个地方开始：模型反复试错（同一命令换着花样跑）、工具持续失败但模型不放弃、任务本身没有明确终点（“帮我优化这个项目”）。典型信号很好认：同一工具同样参数被调用两次以上、每轮消息长度持续增长、错误信息在几轮里重复出现。</p>
+        <p>生产 harness 通常会在循环外面再套几层保险：最大迭代次数、总 token 预算、连续失败计数、可中断信号。这个仓库把“什么时候停”当成一个独立问题，放到第 18 讲的 goal loop 里认真讨论。现在你只需要意识到：<b>循环能跑起来，和循环能安全停下来，是两件事。</b></p>
+      </div>
+    </details>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么不用递归、也不用事件回调？</summary>
+      <div class="deep-body">
+        <p>三种写法都能表达“模型与工具反复交互”：递归（工具结果回来后调用自己）、事件回调（工具完成触发下一轮）、循环。仓库的 s01 选了最土的循环，原因是<b>可观测性和可中断性</b>。</p>
+        <p>递归会把每一轮的调用栈叠起来，长任务跑到几十轮，栈越来越深，想中途插一个“检查预算、决定是否继续”的动作就很别扭；事件回调则把控制流打散到多个函数里，读代码时你得在注册表、回调、主流程之间来回跳。</p>
+        <p>循环把所有决策点摆在同一屏里：想加预算检查，就在 <code class="inline-code">while</code> 开头加；想加退出判断，就在 <code class="inline-code">return</code> 前面加。后面十几讲加钩子、加压缩、加子代理，本质上都是“在循环的固定位置插逻辑”，而不是重构控制流。可读性就是可维护性，这在 Agent 这种“行为不完全可预测”的系统里尤其值钱。</p>
+      </div>
+    </details>
+
+    <details class="deep">
+      <summary>🔬 深入：一个响应里同时有文字和 tool_use，怎么处理？</summary>
+      <div class="deep-body">
+        <p>真实对话里，模型很少“只吐工具调用”。它更常见的样子是：先说一句“我先看看目录结构”，再发一个 <code class="inline-code">tool_use</code>。这是同一条 assistant 消息里的两个 block，顺序有意义。</p>
+        <p>s01 的处理方式非常干脆：整条 <code class="inline-code">response.content</code> 原样 append，文字和工具请求一起进历史；给用户展示时，只打印最后那条 assistant 消息里的 text block。这样模型下一轮既能看到自己说过的话，也能看到自己发过的请求，叙述和行动不会脱节。</p>
+        <p>产品化的 harness 会做得更细：每一轮的 text 实时展示给用户（让用户知道 agent 正在想什么），<code class="inline-code">tool_use</code> 展示成“正在执行 bash …”的状态条，<code class="inline-code">tool_result</code> 折叠起来按需展开。但注意，这些全是<b>展示层</b>的加工，底层 <code class="inline-code">messages[]</code> 依然保持原样，不能为了 UI 好看而裁剪历史。</p>
+        <p>至于流式（streaming）：它改善的是首字延迟和交互观感，不改变循环的判断逻辑。因为只有等响应完整结束，你才能确定这一轮到底有几个 <code class="inline-code">tool_use</code>、参数是否完整。所以“流式输出”和“循环怎么转”是两层；先把这个非流式循环写对，再谈流式不迟。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">06</span>循环的不变量：后面十六讲在改什么</h3>
+    <p>这一讲之后，你会看到课程不断给 Agent 加能力。提前把地图摊开，你就不容易迷失：<b>循环的形状始终是这四步——调用模型、判断要不要工具、执行、回填</b>，变化的是工具、是工具外面的闸门、是循环前后的钩子。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>阶段</th><th>讲</th><th>往哪加</th></tr></thead>
+        <tbody>
+          <tr><td>让 Agent 动起来</td><td>s02–s04（第 3–5 讲）</td><td>工具表、权限闸门、钩子，都加在“执行工具”这一步周围</td></tr>
+          <tr><td>做复杂任务</td><td>s05–s08（第 6–9 讲）</td><td>计划、子代理、按需加载知识、压缩历史，改变的是上下文</td></tr>
+          <tr><td>记忆与长跑</td><td>s09–s12（第 10–13 讲）</td><td>持久化记忆、磁盘任务图、后台任务、定时触发</td></tr>
+          <tr><td>多 Agent 协作</td><td>s13（第 14 讲）</td><td>团队运行时，循环实例变多</td></tr>
+          <tr><td>开放与组装</td><td>s14–s15（第 15–16 讲）</td><td>外部工具接入、把已有机制组装进一个循环</td></tr>
+          <tr><td>编排与收敛</td><td>s16–s17（第 17–18 讲）</td><td>代码级编排、目标驱动的停止条件</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>如果你只记一件事，记这个：<b>后面每一讲都在回答“这个机制该放在循环的哪个位置”</b>。放错位置，代码就会越写越乱；放对位置，循环可以一直保持二十行。第 5 讲的钩子，就是专门为“放对位置”设计的基础设施。</p>
+    <p>换个说法：把循环想成一栋房子的承重墙，后面每一讲都在加隔断、装门窗、通水电，但没人会去砸承重墙。判断一个 Agent 框架好不好，先看它的循环是否干净；循环一乱，说明抽象没做对，功能再多也只是堆砌。</p>
+<p>所以这一讲不是“入门热身”，而是整门课的地基。后面看到再花哨的机制，都建议你回到这张图，问一句：它凭什么可以不改循环？</p>
+    <div class="flow down">
+      <div class="flow-node accent"><b>① 读取消息</b>把完整 <code>messages[]</code> 和工具清单发给模型</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>② 记录决策</b>assistant 的 <code>content</code> 原样追加</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>③ 过滤</b>筛出所有 <code>tool_use</code> block</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>④ 判断</b>一个都没有？退出循环</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>⑤ 执行并回填</b>结果带 <code>tool_use_id</code>，装进 user 消息</div>
+      <div class="flow-arrow">↺</div>
+      <div class="flow-node accent"><b>回到 ①</b>世界已经变了，再问一轮</div>
+    </div>
+    <p>这张图你可以存下来。后面每一讲介绍新机制时，先问自己一句：它插在①②③④⑤的哪一步？插对了，机制就是增强；插错了，机制就是补丁。</p>
+
+    <h3><span class="h3num">07</span>从零重写时的五个检查点</h3>
+    <p>合上这一讲之前，别背代码，背检查点。下次你自己写循环时，按顺序问这五个问题，基本不会写错：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>检查点</th><th>写错的典型症状</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>调用模型时，<code>messages</code>、<code>tools</code>、<code>system</code> 都传了吗？</td><td>模型答非所问，或完全不知道自己有工具</td></tr>
+          <tr><td>2</td><td>assistant 的 <code>content</code> 原样追加了吗？</td><td>模型重复调用同一工具，或 API 报配对错误</td></tr>
+          <tr><td>3</td><td>是否用 <code>block.type == "tool_use"</code> 判断，而不是猜文字？</td><td>模型说“完成”但工具仍在请求，循环提前退出</td></tr>
+          <tr><td>4</td><td>每个结果都带上了对应的 <code>tool_use_id</code> 吗？</td><td>下一轮请求 400，提示 id 不匹配</td></tr>
+          <tr><td>5</td><td>工具函数返回字符串，而不是把异常抛出去吗？</td><td>一次失败整个进程崩掉，模型看不到错误现场</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout tip">
+      <span class="callout-title">调试顺序</span>
+      <p>循环不按预期工作时，先在第 2 个检查点附近打日志：把每轮 <code class="inline-code">len(messages)</code>、<code class="inline-code">len(tool_calls)</code>、<code class="inline-code">block.name</code> 打出来。九成的“Agent 卡住了”，真相是某一轮 append 的形状不对，而不是模型变笨了。</p>
+    </div>
+    <p>这五个检查点也解释了为什么这一讲值得慢读：它们不是“最佳实践”，而是协议层面的硬约束。你现在多花十分钟把形状记对，后面十几讲就不用反复回头 debug 消息结构。</p>
+    <p>最后给自己一个判断标准：如果你能在白板上画出 <code class="inline-code">messages</code> 的三个消息、并说清每个 block 属于谁，这一讲就真的过关了。画不出来，就回到“一次循环之后，messages 长什么样”那一节再看一遍。</p>
+
+    <h3><span class="h3num">08</span>动手实验</h3>
+    <ol class="steps">
+      <li><b>先看它真的在循环。</b>打开 <code class="inline-code">s01_agent_loop/code.py</code>，在 <code class="inline-code">if not tool_calls:</code> 前面加一行 <code class="inline-code">print("第", len(messages), "轮，工具数", len(tool_calls))</code>。运行 <code class="inline-code">python s01_agent_loop/code.py</code>，输入“列出当前目录的 Python 文件，然后新建 notes.md 把结果写进去”。预期：你看到 2 轮以上、每轮工具数不同，最后模型回一段纯文本，循环退出。</li>
+      <li><b>破坏配对，看协议怎么拒绝你。</b>把 <code class="inline-code">"tool_use_id": block.id</code> 改成 <code class="inline-code">"tool_use_id": "fake-id"</code>，再跑一次同样的任务。预期：下一次请求被 API 拒绝，错误大意是 <code class="inline-code">tool_use</code> 与 <code class="inline-code">tool_result</code> 的 id 对不上。改回来，确认恢复正常——这一步比读十遍文档更能记住“id 是协议硬要求”。</li>
+      <li><b>给循环加一个硬上限。</b>把 <code class="inline-code">while True</code> 改成 <code class="inline-code">for step in range(5):</code>，并在循环末尾加 <code class="inline-code">return</code> 兜底。输入一个需要很多步的任务（比如“把目录里所有 .py 文件逐个读一遍并总结”）。预期：第 5 轮后循环被强行掐断，模型甚至没机会说“我做完了”。这时你就亲眼看到：<b>“谁来保证停”是一个必须显式设计的问题</b>，而不是免费的。</li>
+      <li><b>把对话轨迹落盘。</b>在每轮 <code class="inline-code">messages.append({"role": "user", "content": results})</code> 之后加一行 <code class="inline-code">open("/tmp/trace.txt", "w").write(repr(messages))</code>，跑一个多步任务后打开文件。预期：你能肉眼看到 user / assistant / user 的交替、<code class="inline-code">tool_use</code> 与 <code class="inline-code">tool_result</code> 的 id 一一对应。把这段轨迹和下面“深入”里画的形状对上，你对协议的理解就落地了。</li>
+    </ol>
+    <div class="callout tip">
+      <span class="callout-title">没有 API Key 也能做</span>
+      <p>把 <code class="inline-code">client.messages.create(...)</code> 换成一个返回假 <code class="inline-code">response</code> 的函数（用 <code class="inline-code">types.SimpleNamespace</code> 拼出 <code class="inline-code">content</code> 和 <code class="inline-code">type</code> 字段即可），你就能离线观察循环怎么判断 <code class="inline-code">tool_use</code>、怎么追加消息。实验 2 和 3 尤其适合离线做，因为你要验证的是 harness 的行为，不是模型的能力。</p>
+    </div>
+
+    <p>到这里，这一讲的主干就讲完了。接下来先自己动手，再对答案——看代码和写代码之间，差的从来不是理解，而是那几次亲手改错。</p>
+
+    <h3><span class="h3num">09</span>常见误区</h3>
+    <ul>
+      <li><b>很多人以为循环靠模型输出“完成”来判断结束。</b>其实代码里根本没有读模型说了什么。判断只看响应里有没有 <code class="inline-code">tool_use</code> block。模型哪怕写“我完成了”，只要同一个响应里还带了工具调用，循环就继续；反过来，它只说了一句“好的”，循环就结束。</li>
+      <li><b>很多人以为工具结果该 append 成 assistant 消息。</b>结果不是模型生成的，是 harness 执行出来的。用 assistant role 既不符合协议，也会让模型误以为那些输出是自己说的。正确做法是 user role，和“环境反馈”的语义对齐。</li>
+      <li><b>很多人以为 <code class="inline-code">run_bash</code> 的黑名单就是安全机制。</b>它只是防止演示时手滑的最小护栏。绕过它不需要什么黑客技巧，换个写法就行。真正的权限判断在执行<b>之前</b>，由专门的闸门负责，下一讲之后你就会看到。</li>
+    </ul>
+
+    <h3><span class="h3num">10</span>自测</h3>
+    <details class="quiz">
+      <summary>模型返回了一段纯文本，循环会怎么走？</summary>
+      <div class="answer"><p>直接 <code class="inline-code">return</code>。因为 <code class="inline-code">tool_calls</code> 是空列表，<code class="inline-code">if not tool_calls</code> 成立。注意此时 assistant 消息已经被 append 了，所以这段总结文字会留在 <code class="inline-code">messages[]</code> 里，下次用户追问时模型还记得自己说过什么。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>一次响应里有两个 <code class="inline-code">tool_use</code>，只回填一个 <code class="inline-code">tool_result</code> 会怎样？</summary>
+      <div class="answer"><p>不行。协议要求每个 <code class="inline-code">tool_use</code> 都有对应的 <code class="inline-code">tool_result</code>，下一轮请求会因为配对不完整而失败。就算侥幸没报错，模型也会缺一条结果，无法判断该继续还是该修正。正确做法是像代码里那样遍历 <code class="inline-code">tool_calls</code>，一个不落地收集。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>把 <code class="inline-code">tools</code> 参数传成空列表，循环还会转吗？</summary>
+      <div class="answer"><p>不会转起来。循环本身不检查 <code class="inline-code">tools</code>，它的退出条件始终是“没有 <code class="inline-code">tool_use</code>”。但没有工具可调，模型第一轮只能回纯文本，于是第一次判断就退出。这也说明工具清单和循环控制是解耦的两件事：工具决定“能做什么”，循环只负责“做不做、做几轮”。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>把 <code class="inline-code">messages.append({"role": "assistant", ...})</code> 这行删掉，会发生什么？</summary>
+      <div class="answer"><p>下一轮请求的剧本里出现连续两条 user 消息，而且第二条里带着 <code class="inline-code">tool_result</code>，却找不到它对应的 <code class="inline-code">tool_use</code>。模型会失去“我请求过什么”的记忆，可能重复调用同一个工具；API 也大概率直接拒绝。这说明 assistant 原样追加不是可选的记录行为，而是维持对话自洽的必要条件。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>把 <code class="inline-code">max_tokens</code> 调到 100，可能出什么问题？</summary>
+      <div class="answer"><p>回复会被截断。如果截断发生在 <code class="inline-code">tool_use</code> 的 JSON 参数中间，你拿到的是一个不完整的 block，<code class="inline-code">block.input["command"]</code> 可能取不到，甚至 <code class="inline-code">input</code> 本身就不合法。所以 <code class="inline-code">max_tokens</code> 不是越小越省，它要给“一次完整的工具调用”留够空间。真实 harness 还会检查 <code class="inline-code">stop_reason</code> 是不是 <code class="inline-code">max_tokens</code>，据此决定重试还是报错。</p></div>
+    </details>
+
+  </div>
+
+  <div class="takeaway">
+    <span class="tk-label">这一讲带走</span>
+    <p>Agent 的全部秘密不是模型多强，而是那个 <code class="inline-code">while True</code>：把模型的决策变成真实动作，再把动作的结果变成模型下一轮的上下文。三十行代码、一个工具、一个终止条件。以后所有机制，都是往这个循环的四周加东西。</p>
+    <p class="next"><b>下一讲：</b>现在模型手里只有 bash 一把锤子，读文件要拼 <code class="inline-code">cat</code>，写文件要拼 <code class="inline-code">echo &gt;</code>。我们给它五个专用工具，而且只改循环里的一行——一个字典，怎么撑起一整层能力？</p>
+  </div>
+</section>

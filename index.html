@@ -1,91 +1,295 @@
-<html>
-	<head>
-		<meta charset="UTF-8" />
-		<meta http-equiv="X-UA-Compatible" content="IE=edge">
-		<meta name="viewport" content="width=device-width, initial-scale=1">
-		<title>多拉的小窝</title>
-		<meta name="description" content="Demo of the game: The Making of 'The Aviator': Animating a Basic 3D Scene with Three.js" />
-		<meta name="keywords" content="three.js, webgl, tutorial, game, 3d, animation, airplane, web development, javascript" />
-		<meta name="author" content="Karim Maaloul for Codrops" />
-		<link rel="shortcut icon" href="img/favico.ico">
-		
-		<link rel="stylesheet" type="text/css" href="css/demo.css" />
-		<link rel="stylesheet" type="text/css" href="css/game.css" />
-		<link rel="stylesheet" type="text/css" href="css/wonanut.css" />
-		<script type="text/javascript" src="js/TweenMax.min.js"></script>
-		<script type="text/javascript" src="js/three.min.js"></script>
-		<script type="text/javascript" src="js/game.js" /></script>
-		<!--[if IE]>
-		  <script src="http://html5shiv.googlecode.com/svn/trunk/html5.js"></script>
-		<![endif]-->
-	</head>
-	<body>
-		<div class="game-holder" id="gameHolder">
-			<div class="header">
-				<h1>Howard Wonanut</h1>
-				<h2>PERSONAL SPACE</h2>
-			</div>
-			<div class="score" id="score">
-					<div class="score__content" id="level">
-						<div class="score__label">level</div>
-						<div class="score__value score__value--level" id="levelValue">1</div>
-						<svg class="level-circle" id="levelCircle" viewbox="0 0 200 200">
-							<circle id="levelCircleBgr" r="80" cx="100" cy="100" fill="none" stroke="#d1b790" stroke-width="24px" />
-							<circle id="levelCircleStroke" r="80" cx="100" cy="100" fill="none" #f25346 stroke="#68c3c0" stroke-width="14px" stroke-dasharray="502" />
-						</svg>
-					</div>
-					<div class="score__content" id="dist">
-						<div class="score__label">distance</div>
-						<div class="score__value score__value--dist" id="distValue">000</div>
-					</div>
-					<div class="score__content" id="energy">
-						<div class="score__label">energy</div>
-						<div class="score__value score__value--energy" id="energyValue">
-							<div class="energy-bar" id="energyBar"></div>
-						</div>
-					</div>
-				</div>
-			<div class="world" id="world"></div>
-			<div class="message message--replay" id="replayMessage">Click to Replay</div>
-				
-		</div>
-		
-		<div class="card_list">
-			<div class="card" onclick="window.open('archives/Personal/index.html')">
-				<div class="card_head">
-					<div class="img">  
-						<img src="img/favico.ico" width="20" height="20" />  
-					</div>
-					<div class="title">个人主页</div>
-				</div>
-				<div class="description">作为一名专业的科研人员，不能没有自己的酷酷的个人页面，所以我建了一个个人空间</div>
-			</div>
-			<div class="card" onclick="window.open('archives/Life/index.html')">
-				<div class="card_head">
-					<div class="img">  
-						<img src="img/favico.ico" width="20" height="20" />  
-					</div>
-					<div class="title">杂七杂八</div>
-				</div>
-				<div class="description">生活一二事，学习心得，人生阅历，五花八门</div>
-			</div>
-			<!--
-			<div class="card" onclick="window.open('archives/Christmas/index.html')">
-				<div class="card_head">
-					<div class="img">  
-						<img src="img/favico.ico" width="25" height="25" />  
-					</div>
-					<div class="title">圣诞祝福</div>
-				</div>
-				<div class="description">Merry Christmas 2018</div>
-			</div>
-			-->
-			
-			<div class="card" onclick="alert('妄想改我的网页？不存在的')">
-				<div class="add_card">[+] 添加卡片</div>
-			</div>
-		</div>
-		
+<!DOCTYPE html>
+<html lang="zh-CN" class="no-js">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Doran · 童瑶 — Agent Harness 工程 / 独立游戏</title>
+<meta name="description" content="Doran（wonanut），西安交通大学研究生。关注 Agent Harness 工程、全栈开发与独立游戏。作品：中文课程《Claude Code 内功课》。">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="canonical" href="https://wonanut.github.io/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Doran · 童瑶 — Agent Harness 工程 / 独立游戏">
+<meta property="og:description" content="在模型与真实世界之间，造好那层工程。">
+<meta property="og:url" content="https://wonanut.github.io/">
+<meta name="twitter:card" content="summary">
+<link rel="stylesheet" href="assets/style.css">
+<script>document.documentElement.classList.remove("no-js");document.documentElement.classList.add("js");</script>
+</head>
+<body>
+<a class="skip" href="#main">跳到主要内容</a>
+<div class="bg" aria-hidden="true"></div>
 
-	</body>
+<header class="site-header" id="header">
+  <nav class="nav" aria-label="主导航">
+    <a class="logo" href="#" aria-label="Doran 首页">
+      <span class="logo-mark" aria-hidden="true">D.</span>
+      <span>Doran<small>Harness · Games</small></span>
+    </a>
+    <button class="nav-toggle" id="nav-toggle" aria-label="打开菜单" aria-expanded="false" aria-controls="nav-links">☰</button>
+    <div class="nav-links" id="nav-links">
+      <a href="#featured">课程</a>
+      <a href="#projects">项目</a>
+      <a href="#about">关于</a>
+      <a href="#contact">联系</a>
+      <a class="nav-cta" href="https://github.com/wonanut" target="_blank" rel="noopener">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </nav>
+</header>
+
+<main id="main">
+  <!-- ================= HERO ================= -->
+  <section class="hero">
+    <div class="wrap">
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow">XJTU · Agent Harness Engineering</p>
+          <h1>在模型与产品之间，<br><span class="grad">造好那层工程。</span></h1>
+          <p class="hero-sub">
+            我是 Doran（wonanut），西安交通大学研究生。关注 <b>Agent Harness 工程</b>、全栈开发与独立游戏。
+            相信智能来自模型训练，而工程的价值，是让智能安全、稳定地落在真实工作里。
+          </p>
+          <div class="chips" aria-label="关键词">
+            <span class="chip"><b>01</b> Agent Harness</span>
+            <span class="chip"><b>02</b> TypeScript · Python</span>
+            <span class="chip"><b>03</b> 独立游戏</span>
+            <span class="chip"><b>04</b> 西安</span>
+          </div>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="course/">
+              阅读《Claude Code 内功课》<span class="arrow" aria-hidden="true">→</span>
+            </a>
+            <a class="btn btn-ghost" href="https://github.com/wonanut" target="_blank" rel="noopener">
+              GitHub
+            </a>
+          </div>
+        </div>
+
+        <div class="hero-visual" aria-hidden="true">
+          <div class="orbit two"></div>
+          <div class="orbit one"></div>
+          <div class="avatar-ring">
+            <img src="assets/avatar.jpg" width="212" height="212" alt="" loading="eager">
+          </div>
+          <div class="float-card fc-1">
+            <span class="fc-label">agent loop</span>
+            <span class="fc-value"><code>while True:</code></span>
+          </div>
+          <div class="float-card fc-2">
+            <span class="fc-label">course</span>
+            <span class="fc-value">21 章 · 17 个机制</span>
+          </div>
+          <div class="float-card fc-3">
+            <span class="fc-label">focus</span>
+            <span class="fc-value">harness engineering</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stats" role="list">
+        <div class="stat" role="listitem"><b>21<i>章</i></b><span>已发布的完整课程</span></div>
+        <div class="stat" role="listitem"><b>17<i>个</i></b><span>拆解到源码的 Harness 机制</span></div>
+        <div class="stat" role="listitem"><b>139<i>段</i></b><span>逐块精读的真实源码</span></div>
+        <div class="stat" role="listitem"><b>92<i>个</i></b><span>GitHub 公开仓库</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= FEATURED ================= -->
+  <section class="section" id="featured">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <div>
+          <span class="kicker">Featured · 精选作品</span>
+          <h2>把 Claude Code 拆开看</h2>
+        </div>
+        <p>一门写给开发者的中文工程课：沿 17 个机制，从 30 行的 agent 循环一路搭到多代理协作与工作流编排。</p>
+      </div>
+
+      <article class="featured reveal">
+        <div class="featured-body">
+          <div class="featured-tags">
+            <span class="tag">NEW · 2026</span>
+            <span class="tag purple">课程 / 21 章</span>
+            <span class="tag purple">Agent Harness</span>
+          </div>
+          <h3>Claude Code <em>内功课</em></h3>
+          <p class="featured-desc">
+            不只是会用 Claude Code，而是弄清它为什么这样设计：循环怎么收敛、工具怎么分发、权限与钩子立在哪里、
+            上下文满了怎么腾地方、任务如何跨会话存活、多个 Agent 如何不互相踩。主干通俗，难点折叠进源码区；每章配动手实验与自测。
+          </p>
+          <div class="featured-meta">
+            <span>21 章</span><span>约 12.9 万字</span><span>102 道自测</span><span>离线可读</span>
+          </div>
+          <div class="featured-actions">
+            <a class="btn btn-primary" href="course/">开始阅读 <span class="arrow" aria-hidden="true">→</span></a>
+            <a class="btn btn-ghost" href="https://github.com/shareAI-lab/learn-claude-code" target="_blank" rel="noopener">上游开源仓库</a>
+          </div>
+        </div>
+        <div class="featured-visual" aria-hidden="true">
+          <div class="mini-course">
+            <div class="mini-bar"><i></i><i></i><i></i><span>COURSE</span></div>
+            <div class="mini-list">
+              <div class="mini-item"><b>00</b><span class="dot"></span>课程导览：怎么学最有效</div>
+              <div class="mini-item"><b>01</b><span class="dot"></span>心智模型：模型 + Harness</div>
+              <div class="mini-item active"><b>02</b><span class="dot"></span>Agent Loop：一个 while 循环</div>
+              <div class="mini-item"><b>03</b><span class="dot"></span>Tool Use：从 1 个到 5 个</div>
+              <div class="mini-item"><b>04</b><span class="dot"></span>Permission：执行前先问一句</div>
+              <div class="mini-item"><b>…</b><span class="dot"></span>… 直到工作流与目标循环</div>
+            </div>
+            <div class="mini-foot"><span>7 个阶段</span><span>21 / 21</span></div>
+          </div>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <!-- ================= PROJECTS ================= -->
+  <section class="section" id="projects">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <div>
+          <span class="kicker">Projects · 更多项目</span>
+          <h2>写过的一些东西</h2>
+        </div>
+        <a class="see-all" href="https://github.com/wonanut?tab=repositories" target="_blank" rel="noopener">全部 92 个仓库 →</a>
+      </div>
+
+      <div class="projects">
+        <a class="project reveal" href="https://github.com/wonanut/travel-vue" target="_blank" rel="noopener">
+          <div class="project-top"><span class="project-icon" aria-hidden="true">🧭</span><span class="project-arrow" aria-hidden="true">↗</span></div>
+          <h4>travel-vue</h4>
+          <p>旅游网站前端，含用户端主页与管理员后台，完整的预约与内容管理流程。</p>
+          <div class="project-meta"><span class="lang vue"><i></i>Vue</span><span>★ 76</span></div>
+        </a>
+
+        <a class="project reveal" href="https://github.com/wonanut/travel" target="_blank" rel="noopener">
+          <div class="project-top"><span class="project-icon" aria-hidden="true">🧱</span><span class="project-arrow" aria-hidden="true">↗</span></div>
+          <h4>travel</h4>
+          <p>旅游网站后端：Spring Boot 分层架构、REST API 与数据库设计，配套前端 travel-vue。</p>
+          <div class="project-meta"><span class="lang java"><i></i>Java</span><span>★ 32</span></div>
+        </a>
+
+        <a class="project reveal" href="https://github.com/wonanut/Maze-Game" target="_blank" rel="noopener">
+          <div class="project-top"><span class="project-icon" aria-hidden="true">🎮</span><span class="project-arrow" aria-hidden="true">↗</span></div>
+          <h4>Maze-Game</h4>
+          <p>用 Python 写的迷宫小游戏：随机生成、寻路与可玩的交互循环，早期的游戏原型练习。</p>
+          <div class="project-meta"><span class="lang python"><i></i>Python</span><span>★ 12</span></div>
+        </a>
+
+        <a class="project reveal" href="https://github.com/wonanut/SETE" target="_blank" rel="noopener">
+          <div class="project-top"><span class="project-icon" aria-hidden="true">🧬</span><span class="project-arrow" aria-hidden="true">↗</span></div>
+          <h4>SETE</h4>
+          <p>基于序列的集成学习方法，用于 TCR–表位结合预测；实验室课题，含完整实验 notebook。</p>
+          <div class="project-meta"><span class="lang jupyter"><i></i>Jupyter</span><span>★ 5</span></div>
+        </a>
+
+        <a class="project reveal" href="https://github.com/wonanut/Dynamic-Magnetic-Post" target="_blank" rel="noopener">
+          <div class="project-top"><span class="project-icon" aria-hidden="true">🧩</span><span class="project-arrow" aria-hidden="true">↗</span></div>
+          <h4>Dynamic-Magnetic-Post</h4>
+          <p>用 Canvas 复刻 Windows 10 动态磁贴：可拖拽、可缩放，所有内容均由 Canvas 绘制。</p>
+          <div class="project-meta"><span class="lang js"><i></i>JavaScript</span><span>★ 4</span></div>
+        </a>
+
+        <a class="project reveal" href="https://github.com/wonanut/dsh-plugins" target="_blank" rel="noopener">
+          <div class="project-top"><span class="project-icon" aria-hidden="true">🔌</span><span class="project-arrow" aria-hidden="true">↗</span></div>
+          <h4>dsh-plugins</h4>
+          <p>为 DeepSeek Harness 写的个人插件集，把日常重复的工程动作做成可复用扩展。</p>
+          <div class="project-meta"><span class="lang js"><i></i>JavaScript</span><span>★ 1</span></div>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= ABOUT ================= -->
+  <section class="section" id="about">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <div>
+          <span class="kicker">About · 关于</span>
+          <h2>一个想把东西做扎实的人</h2>
+        </div>
+      </div>
+
+      <div class="about-grid">
+        <div class="about-copy reveal">
+          <p>我是 <b>Doran</b>（网名 wonanut），西安交通大学研究生。对「模型能把事情做到什么程度」和「工程如何让这件事稳定发生」同样着迷。</p>
+          <p>这些年写过后端、前端、数据可视化，也做过游戏原型：从 Spring Boot 的旅游网站，到 Canvas 复刻的动态磁贴，再到实验室里的 TCR–表位结合预测。跨度看起来大，底层兴趣其实是一个——<b>把复杂系统拆开，再重新拼成好用的东西</b>。</p>
+          <p>现在把主要精力放在 <b>Agent Harness 工程</b>：工具怎么写、权限怎么划、上下文怎么管、任务怎么跨会话存活、多个 Agent 怎么协作。这门《Claude Code 内功课》，就是我整理这套理解的方式——先自己讲明白，再讲给别人听。</p>
+          <p>长期想做的事：做一款自己的独立游戏。在那之前，先把工程底子打厚。</p>
+          <p class="sig">— Doran · 西安</p>
+        </div>
+
+        <aside class="facts reveal" aria-label="更多信息">
+          <div class="fact">
+            <dt>坐标</dt>
+            <dd><b>西安</b><span class="sep">/</span>西安交通大学</dd>
+          </div>
+          <div class="fact">
+            <dt>正在做</dt>
+            <dd>
+              <ul class="now-list">
+                <li>Agent Harness 工程与工具链</li>
+                <li>《Claude Code 内功课》持续维护</li>
+                <li>独立游戏原型与玩法实验</li>
+              </ul>
+            </dd>
+          </div>
+          <div class="fact">
+            <dt>关注</dt>
+            <dd>LLM Agents · Developer Tools · Game Design</dd>
+          </div>
+          <div class="fact">
+            <dt>写作</dt>
+            <dd>课程、源码笔记与踩坑记录 · <a href="https://blog.csdn.net/qq_26822029" target="_blank" rel="noopener" style="color:var(--accent-2)">CSDN 博客</a></dd>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= CONTACT ================= -->
+  <section class="section" id="contact">
+    <div class="wrap">
+      <div class="contact reveal">
+        <div class="contact-inner">
+          <div>
+            <span class="kicker">Contact · 联系</span>
+            <h2>一起做点东西。</h2>
+            <p>不论是 Agent 工程、游戏原型，还是单纯想聊聊技术，都欢迎来找我。也欢迎给课程提 issue 或建议。</p>
+          </div>
+          <div class="contact-links">
+            <a class="contact-link" href="https://github.com/wonanut" target="_blank" rel="noopener">
+              <span aria-hidden="true">◈</span><span><span class="k">GitHub</span>@wonanut</span>
+            </a>
+            <a class="contact-link" href="https://blog.csdn.net/qq_26822029" target="_blank" rel="noopener">
+              <span aria-hidden="true">✎</span><span><span class="k">Blog</span>CSDN</span>
+            </a>
+            <a class="contact-link" href="course/">
+              <span aria-hidden="true">▣</span><span><span class="k">Course</span>读课程</span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <p>© <span id="year">2026</span> Doran · 用 HTML / CSS / JS 手写 · 托管于 GitHub Pages</p>
+      <div class="foot-links">
+        <a href="course/">课程</a>
+        <a href="https://github.com/wonanut/wonanut.github.io" target="_blank" rel="noopener">本站源码</a>
+        <a href="#main" class="top-link">回到顶部 ↑</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/main.js" defer></script>
+</body>
 </html>

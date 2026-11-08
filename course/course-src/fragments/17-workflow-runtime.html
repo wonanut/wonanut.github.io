@@ -1,0 +1,352 @@
+<section id="ch17" class="chapter">
+  <p class="chapter-kicker">第 17 讲 · 阶段六 · 编排与收敛</p>
+  <h2 class="chapter-title">Workflow Runtime：把固定编排写进代码
+    <small>对应 s16_workflow_runtime：一次 tool_use 启动一整套可续跑的编排</small>
+  </h2>
+  <p class="chapter-lede">s15 的循环每一轮都由模型临时决定下一步，这对探索型任务是对的；但有些流程的步骤和先后关系在开工前就定死了。让它再靠聊天一轮轮“凑”出来，既慢又不可复现，断了还得从头再来。</p>
+  <p class="source-line">
+    <span>源码 <code>s16_workflow_runtime/code.py</code></span>
+    <span>原章 <a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/s16_workflow_runtime/README.zh.md">README.zh.md</a></span>
+  </p>
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>说清“脚本编排”和“模型编排”各自适合什么形状的任务</li>
+    <li>用 <code class="inline-code">agent() / parallel() / pipeline() / phase()</code> 读懂一个真实的 workflow 脚本</li>
+    <li>理解 journal、稳定调用键和 <code class="inline-code">resume_from_run_id</code> 是怎样让断点续跑成立的</li>
+    <li>知道 budget、并发上限和失败策略在防什么</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>一次代码审查，暴露了“每一步都让模型想”的天花板</h3>
+    <p>设想你要让 agent 审查一段改动。流程其实很固定：从正确性、安全、性能、风格四个维度各审一遍；每条发现再派一个子 agent 做对抗性验证；最后合并去重、按严重程度排序。你完全知道步骤的先后关系，甚至知道哪些步骤可以并行。</p>
+    <p>如果把这套流程交给 s15 的主循环，会发生什么？模型每一轮都要重新“想”下一步该调什么工具：先调<code class="inline-code">Subagent</code>审正确性，拿到结果后再想“现在该审安全了”，审完再想“现在该验证了”。这带来三个具体问题：</p>
+    <ul>
+      <li><b>慢</b>：四个维度本可以同时审，但模型必须一轮一轮地派，每派一次都要一次完整的模型往返。</li>
+      <li><b>结构不稳</b>：子 agent 有时返回三段散文，有时返回一个列表；下游代码要在自然语言里“抠”字段，今天能跑明天就崩。</li>
+      <li><b>不可恢复</b>：跑到一半进程被杀，已经完成的七八次调用只存在于对话历史里；重启后模型只能从头再来。</li>
+    </ul>
+    <p>s16 的答案不是再给模型加一个更聪明的提示词，而是做一个很工程化的决定：<b>把固定编排从对话里搬进代码</b>。代码负责“先做什么、后做什么、哪些并行”，模型只负责每个具体步骤里的判断。这就像把现场工头的口头指挥，换成一张画好的施工图。</p>
+
+    <div class="analogy">
+      <span class="analogy-title">像装修从“工头现场拍脑袋”换成“施工图 + 工序单”</span>
+      <p>工头经验再丰富，每天到现场再决定“今天水电、明天木工”，也没法让两拨工人同时进场，更没法在停工三天后准确知道哪面墙已经刷完。施工图把工序和依赖写死，工序单记下每道工序的验收结果；复工时对着单子接着干就行。</p>
+      <p><b>类比到哪为止：</b>装修的工序是死的，人却可以灵活处理意外；workflow 脚本里也允许写 <code class="inline-code">if</code> 和分支，但它能拿到的输入只有两类——启动参数、以及前一步 agent 返回的结构化结果。脚本不能自己读文件、跑 shell，真正的“现场情况”必须由某个 <code class="inline-code">agent()</code> 带回来。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>入口只有一个工具：Workflow</h3>
+    <p>s16 没有改主循环，只是在 s15 的工具池里追加了一个 <code class="inline-code">Workflow</code> 工具。模型看到的需求若匹配某个已保存的 workflow，就发起一次 <code class="inline-code">tool_use</code>；这次调用背后，宿主启动一个本地运行时，按脚本协调 N 次子 agent 调用。对主循环来说，它仍然只是“调了一个工具、等一个结果”，和调用 bash 没有结构上的区别。</p>
+    <div class="flow">
+      <div class="flow-node"><b>主循环</b>发起 <code>Workflow</code> tool_use</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>适配器</b>按 name 查 registry</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>校验</b>meta + 权限</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>ExecutionState</b>跑脚本</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>journal</b>逐条落盘</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>结果</b>回到 <code>messages[]</code></div>
+    </div>
+    <p>注意中间那条竖线的含义：脚本里的中间结果存在 Python 变量和 journal 里，<b>不会</b>全部塞进主对话。主模型最后只看到这次调用的返回：启动了哪个 run、结果对象、以及任务状态。上下文省下来了，结构也保住了。</p>
+    <p>这也顺带解释了为什么 Workflow 工具对模型来说“看起来很简单”：它不需要理解 parallel 和 pipeline，不需要记住每个子 agent 说过什么，只要在需要时调用一次、读一次结果。真正的复杂度被移到了脚本和运行时里，而它们由写代码的人维护，不由每次的模型输出维护。</p>
+
+    <h3><span class="h3num">03</span>模型只交“名字 + 参数 + 可选 run ID”</h3>
+    <p>这是整个机制的安全边界，值得逐字读一遍 schema。模型<b>不能</b>提交可执行代码，也不能提交 meta；它能给的只有三样东西：</p>
+    <pre data-lang="python"><code>WORKFLOW_TOOL = {
+    "name": "Workflow",
+    "description": "Run a saved workflow by name. Pass input in args.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "args": {"type": "object"},
+            "resume_from_run_id": {"type": "string"},
+        },
+        "required": ["name"],
+        "additionalProperties": False,
+    },
+}
+</code></pre>
+    <p><code class="inline-code">additionalProperties: False</code> 不是装饰。它把“模型能不能夹带私货”变成一个由 schema 回答的问题：不行。真正的脚本和元数据来自宿主管理的 <code class="inline-code">WORKFLOWS</code> registry——在示例里就是 <code class="inline-code">SAMPLE_META</code> 和 <code class="inline-code">sample_workflow</code> 这一对。适配器 <code class="inline-code">run_workflow()</code> 按名字取回可信的 <code class="inline-code">meta, script_fn</code>，再交给 <code class="inline-code">WorkflowTool().call()</code>；名字不认识、参数不是对象，都只返回一个错误工具结果，主循环继续转，不会因此退出。</p>
+    <div class="callout key">
+      <span class="callout-title">关键结论</span>
+      <p>“模型可以调用工作流”和“模型可以定义工作流”是两件事。前者是能力，后者是代码执行权限。s16 只开放前者：模型是调度者，不是程序员。</p>
+    </div>
+    <p>这条边界也决定了出错时的行为：名字写错、参数不是对象、想续跑一个不存在的 runId，适配器都只返回一个错误 <code class="inline-code">tool_result</code>，主循环拿到错误后还能换个名字重试。权限错误被限制在“一次工具调用”的粒度里，而不是让整个会话崩掉。</p>
+
+    <h3><span class="h3num">04</span>启动前校验：坏掉的 workflow 不该等到跑起来才发现</h3>
+    <p>每个保存的 workflow 都注册一份可信元数据：<code class="inline-code">name</code>、<code class="inline-code">description</code>，以及可选的 <code class="inline-code">phases</code>。运行时在真正执行脚本前调用 <code class="inline-code">validate_meta()</code>。名字和描述用来标识任务，<code class="inline-code">phases</code> 给进度显示分组命名。校验失败就抛 <code class="inline-code">WorkflowInputError</code>，一次 agent 都不会跑。</p>
+    <pre data-lang="python"><code>def validate_meta(meta):
+    """Validate name, description, and optional phases before launch."""
+    if not isinstance(meta, dict):
+        raise WorkflowInputError("meta must be an object literal")
+    if not meta.get("name") or not meta.get("description"):
+        raise WorkflowInputError("meta requires `name` and `description`")
+    if not isinstance(meta["name"], str) or not WORKFLOW_NAME_RE.fullmatch(meta["name"]):
+        raise WorkflowInputError(
+            "meta.name must be a 1-64 character slug using letters, numbers, '.', '_', or '-'"
+        )
+    # ...
+    if "phases" in meta:
+        if not isinstance(meta["phases"], list) or not all(
+            isinstance(phase, str) and phase for phase in meta["phases"]
+        ):
+            raise WorkflowInputError("meta.phases must be a list of non-empty strings")
+    return meta
+</code></pre>
+    <p>为什么对 <code class="inline-code">name</code> 这么苛刻？因为它会被拼进本地产物文件名，例如 <code class="inline-code">&lt;runId&gt;.json</code> 的 runId 里就带着 workflow 名。如果允许斜杠、空格、<code class="inline-code">..</code>，一个“名字”就能变成一次目录穿越。正则 <code class="inline-code">^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$</code> 把可用字符收窄到安全集合。这和 s12 校验 cron 表达式是同一个思路：配置错误在启动前暴露，成本最低。</p>
+
+    <h3><span class="h3num">05</span>四个编排原语：agent、parallel、pipeline、phase</h3>
+    <p>脚本拿到的 <code class="inline-code">ExecutionState</code> 只暴露少量原语，刻意不给文件系统和 shell 权限。理解这张表，就理解了 workflow 能表达的形状：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>原语</th><th>语义</th><th>什么时候用</th></tr></thead>
+        <tbody>
+          <tr><td><code class="inline-code">agent(prompt, schema, label, phase)</code></td><td>派一个子 agent 干一步</td><td>每个具体判断步骤</td></tr>
+          <tr><td><code class="inline-code">parallel(thunks)</code></td><td>等齐屏障：全部并发跑完一起收</td><td>下一步要用到全部结果时</td></tr>
+          <tr><td><code class="inline-code">pipeline(items, *stages)</code></td><td>每个 item 独立走完各阶段，不等齐</td><td>同构任务，谁先跑完谁往下走</td></tr>
+          <tr><td><code class="inline-code">phase(title)</code></td><td>标记进度阶段，供 UI 分组</td><td>脚本里划分 Review / Verify</td></tr>
+          <tr><td><code class="inline-code">log(message)</code></td><td>打一行进度日志</td><td>汇报中间结论</td></tr>
+          <tr><td><code class="inline-code">workflow(name, args)</code></td><td>嵌套调用另一个保存的 workflow，只允许一层</td><td>复用公共子流程</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><code class="inline-code">pipeline</code> 的实现只有十几行，但它把“不要等齐”表达得很干净：每个 item 被包成一个独立协程，阶段依次 <code class="inline-code">await</code>，item 之间互不等待；最后复用 <code class="inline-code">parallel</code> 的 <code class="inline-code">asyncio.gather</code> 统一收口。</p>
+    <pre data-lang="python"><code>async def pipeline(self, items, *stages):
+    async def run_item(item, idx):
+        value = item
+        for stage in stages:
+            value = await stage(value, item, idx)
+        return value
+    return await self.parallel([
+        lambda it=it, i=i: run_item(it, i) for i, it in enumerate(items)
+    ])
+</code></pre>
+    <p>对比一下：<code class="inline-code">parallel</code> 是“大家一起到终点”，<code class="inline-code">pipeline</code> 是“各跑各的流水线”。当 item A 进入验证阶段时，item B 可能还在审计阶段——这正是代码审查想要的：四个维度不必互相等待，每条发现也不必排队验证。</p>
+    <pre data-lang="python"><code>async def parallel(self, thunks):
+    """BARRIER: run all thunks concurrently and fail if any thunk fails."""
+    # Keep the journal open until every started branch has settled.
+    results = await asyncio.gather(
+        *[thunk() for thunk in thunks], return_exceptions=True
+    )
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
+    return results
+</code></pre>
+    <p>这两个原语共享同一个失败语义：先让已经启动的分支跑完，再抛出第一个异常。差别只在“什么时候需要全部结果都到齐”。把这条记成一句话：<b>pipeline 是数据流，parallel 是同步点</b>。如果你发现自己的脚本里大量用 <code class="inline-code">parallel</code> 把一堆本来独立的任务强行凑在一处，多半是编排形状还没想清楚。</p>
+
+    <h3><span class="h3num">06</span>结构化输出：不让子 agent 回来写散文</h3>
+    <p>s05 说过“工具参数不能全信”；到了 workflow 里，这条原则要反过来用一次：<b>子 agent 的输出也不能全信</b>。所以 <code class="inline-code">agent()</code> 支持传 <code class="inline-code">schema</code>：给了 schema，就要求子 agent 只返回匹配它的 JSON 对象；运行时用 <code class="inline-code">SimpleJsonSchema</code> 校验，不合法就追加一句“返回合法的 JSON”重试一次，再不行才抛错。</p>
+    <pre data-lang="python"><code>if schema is not None:
+    ok, err = SimpleJsonSchema(schema).validate(result)
+    if not ok:
+        retry = await asyncio.to_thread(
+            self.runner.run,
+            prompt + "\n\nReturn valid JSON.",
+            schema,
+            label,
+        )
+        result = retry.value
+        tokens += retry.tokens
+        ok, err = SimpleJsonSchema(schema).validate(result)
+        if not ok:
+            raise WorkflowInputError(f"agent({{schema}}) invalid output: {err}")
+</code></pre>
+    <p>为什么只重试一次？因为这里的校验是“挡在编排层外面”的最后一道闸，不是让模型无限自我修正。再失败就说明这个步骤确实不稳定，与其烧 token 赌运气，不如让整个 workflow 失败、把错误交给上层。示例里的 <code class="inline-code">FINDINGS_SCHEMA</code> 和 <code class="inline-code">VERDICT_SCHEMA</code> 就是两张很小的合同：前者要求 <code class="inline-code">findings</code> 数组，后者要求 <code class="inline-code">isReal</code> 布尔值和 <code class="inline-code">reason</code>。下游代码只认对象，不再做字符串解析。</p>
+    <div class="callout insight">
+      <span class="callout-title">设计要点</span>
+      <p>结构化输出的价值不在“好看”，而在让<b>编排逻辑可以写 if</b>。<code class="inline-code">if v and v.get("isReal")</code> 能成立，前提是 <code class="inline-code">v</code> 真是一个对象；如果子 agent 返回的是“我认为这个问题是真实的”，代码就只能猜。</p>
+    </div>
+
+    <h3><span class="h3num">07</span>任务状态与进度事件：让“在跑”可见</h3>
+    <p><code class="inline-code">LocalWorkflowTask</code> 维护状态、token 用量和一条 SDK 风格的事件流：<code class="inline-code">task_started</code> → 一串 <code class="inline-code">task_progress</code>（阶段切换、子 agent 启动、日志）→ 最后一个 <code class="inline-code">task_notification</code>。启动前会先发 <code class="inline-code">async_launched</code>，把 taskId、runId、workflowName 定下来，再写第一份快照。这样即使脚本在第二个 agent 上崩了，磁盘上也已经有可读的任务记录。</p>
+    <p>事件流不是给模型看的，是给宿主和用户看的。进度条、任务面板、日志都从它来；而模型最后只收到一个汇总。这个“内外分流”是长任务能长跑的前提：内部再吵，主对话也只吸收结果。</p>
+    <pre data-lang="python"><code>class LocalWorkflowTask:
+    def progress_event(self, ptype, **data):
+        self.progress.append({"type": ptype, **data})
+        line = " ".join(f"{k}={v}" for k, v in data.items())
+        print(f"  progress   {ptype:&lt;16} {line}")
+</code></pre>
+    <p>注意 <code class="inline-code">self.progress.append(...)</code> 和 <code class="inline-code">print(...)</code> 是两条通道：一条给程序读，一条给人看。很多 agent 框架把日志直接塞进对话历史，结果模型被自己的进度信息淹没；让进度事件留在任务对象里，最后只把 <code class="inline-code">task</code> 的快照交给主模型，才是把“可观测”和“上下文”分开。</p>
+
+    <h3><span class="h3num">08</span>快照 + journal：断了为什么能续</h3>
+    <p>运行时把每次运行的数据放在 <code class="inline-code">.runtime/</code> 下：快照 <code class="inline-code">&lt;runId&gt;.json</code>、输出 <code class="inline-code">&lt;runId&gt;.output.json</code>、journal <code class="inline-code">&lt;runId&gt;.journal.jsonl</code>，外加一把运行锁。快照记录 workflow 名、参数和任务状态；journal 则是断点续跑真正的核心——每完成一个 <code class="inline-code">agent()</code>，就追加一行 <code class="inline-code">{"key": ..., "value": ...}</code> 并 <code class="inline-code">flush()</code>。</p>
+    <pre data-lang="python"><code>class WorkflowJournal:
+    def key(self, kind, label, prompt, schema):
+        # Deterministic semantic key, independent of concurrency order, so a
+        # parallel/pipeline call gets the same key on resume.
+        basis = f"{kind}|{label}|{prompt}|{json.dumps(schema, sort_keys=True)}"
+        return f"{kind}-{_stable_hash(basis) % 10**10:010d}"
+
+    def cached(self, key):
+        return self.cache.get(key, MISS)
+
+    def record(self, key, value):
+        self._f.write(json.dumps({"key": key, "value": value}) + "\n")
+        self._f.flush()
+        self.cache[key] = value
+</code></pre>
+    <p>带 <code class="inline-code">resume_from_run_id</code> 再次调用时，脚本会从头重新执行，但每个 <code class="inline-code">agent()</code> 都会先算 key、查 journal：命中就直接返回缓存值，并发出 <code class="inline-code">status="cached"</code> 的进度事件；只有改过的调用和依赖它的后续步骤才真的烧 token。续跑全部命中时，示例输出会显示 <code class="inline-code">agents=0 tokens=0</code>。</p>
+    <pre data-lang="text"><code>s16_workflow_runtime/.runtime/
+├── wf_review-changes_&lt;16 位十六进制&gt;.json          # 快照：workflowName / args / task
+├── wf_review-changes_&lt;16 位十六进制&gt;.output.json   # 最终结果
+├── wf_review-changes_&lt;16 位十六进制&gt;.journal.jsonl # 逐条 key/value，一行一个 agent()
+├── wf_review-changes_&lt;16 位十六进制&gt;.lock          # 运行锁，防止并发 resume
+└── last_run.txt                                     # demo / resume 使用的最近 runId
+</code></pre>
+    <p>这套文件布局不只为了调试方便，它把“运行身份”固定成了 <code class="inline-code">runId</code>。新运行会先用排他式文件创建（<code class="inline-code">O_CREAT | O_EXCL</code>）抢占一个 <code class="inline-code">runId</code>，再打开 journal；即使两个请求同时想复用同一个 ID，也只有一个能拿到。resume 时同样先校验快照，再动 journal。换句话说，<b>先有身份，再有记录，最后才有执行</b>——顺序反了，续跑就会变成猜谜。</p>
+    <div class="callout warn">
+      <span class="callout-title">注意</span>
+      <p>key 绝不能依赖并发顺序。如果拿“第几个完成”当 key，resume 时并行完成的顺序一变，缓存就会错位到别的调用上。所以 <code class="inline-code">key()</code> 用调用内容（类型、label、prompt、schema）算稳定哈希，而且 <code class="inline-code">_stable_hash()</code> 用 SHA-256，不用 Python 内置的 <code class="inline-code">hash()</code>——后者每个进程加盐，跨进程续跑必然失效。</p>
+    </div>
+
+    <details class="deep">
+      <summary>🔬 深入：脚本编排 vs 模型编排，边界到底在哪</summary>
+      <div class="deep-body">
+        <p>把这句话记住：<b>形状固定用脚本，路径未知用模型</b>。判断标准不是任务大小，而是“下一步依赖什么”。如果下一步依赖上一步的具体内容、而且依赖方式无法预先枚举，那模型临场决定更合适；如果步骤和依赖在开工前就能画出来，只剩每一步内部的判断交给模型，脚本更稳。</p>
+        <p>混合用法通常是两层：外层脚本固定住关键阶段（审计 → 验证 → 汇总），每个阶段内部让 agent 自由发挥；或者模型先跑一轮探索，把结论写进 args，再调用一个固定 workflow 做收尾。别忘了 <code class="inline-code">workflow()</code> 只允许一层嵌套——这是刻意的限制，避免脚本变成一套图灵完备的“第二语言”，最后没人读得懂。</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>维度</th><th>模型编排（s01–s15）</th><th>脚本编排（s16）</th></tr></thead>
+            <tbody>
+              <tr><td>控制流在哪</td><td>对话历史里</td><td>代码里</td></tr>
+              <tr><td>可复现性</td><td>每次路径可能不同</td><td>同样输入走同样路径</td></tr>
+              <tr><td>断点续跑</td><td>基本没有</td><td>journal + runId</td></tr>
+              <tr><td>灵活度</td><td>高</td><td>只在你写下的形状内</td></tr>
+              <tr><td>适用</td><td>探索、排障、需求不清</td><td>评审、批处理、固定流水线</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <details class="deep deep-2">
+          <summary>再深一层：journal 重放与幂等，谁在保证“不会做两遍”？</summary>
+          <div class="deep-body">
+            <p>journal 保证的是“<b>同一个调用</b>不重复执行”——key 相同就直接返回缓存。它不保证副作用幂等：如果某个 agent 在真实世界里发了邮件，而 journal 那一行还没来得及 flush 进程就死了，resume 时它会再发一次。所以带副作用的步骤要么放在 workflow 之外，要么让工具本身幂等（例如带 request id 的创建接口）。另外，运行时在整次执行和最终持久化期间都持有 run lock（线程锁 + <code class="inline-code">fcntl.flock</code>），另一个进程不能同时 resume 同一个 run；resume 前还会校验快照里的 <code class="inline-code">workflowName</code> 和 <code class="inline-code">args</code> 与本次调用一致，不一致直接报错，而不是“带着新参数复用旧缓存”。</p>
+            <p>还有两个防失控的闸门：<code class="inline-code">AGENT_CAP = 1000</code> 限制单次运行的 agent 调用总数（嵌套 workflow 共享同一个 <code class="inline-code">ExecutionLimits</code>），<code class="inline-code">CONCURRENCY = 8</code> 用信号量限制并行度；<code class="inline-code">Budget</code> 则按 token 计费，<code class="inline-code">add()</code> 一旦超限就抛错，而不是悄悄多花。失败策略也是故意的：某个分支抛异常时，<code class="inline-code">parallel</code> 用 <code class="inline-code">return_exceptions=True</code> 先等所有已启动分支结束，再抛出第一个异常——这样成功调用的结果都写进了 journal，下一次 resume 仍能复用，而不是把已经跑完的工作一起丢掉。</p>
+          </div>
+        </details>
+        <details class="deep deep-2">
+          <summary>再深一层：并行度、限流和 token 预算，为什么要三道闸</summary>
+          <div class="deep-body">
+            <p>三个限制管的是三件不同的事。信号量（<code class="inline-code">CONCURRENCY = 8</code>）管“同时在飞的请求数”，防的是 API 限流和宿主资源被打满；<code class="inline-code">AGENT_CAP</code> 管“整次运行一共能派多少个子 agent”，防的是脚本写错导致的无限递归或死循环；<code class="inline-code">Budget</code> 管“整次运行能烧多少 token”，防的是预算失控。少任何一道，另外两道都会被绕过。</p>
+            <p>还有一个容易忽略的细节：<code class="inline-code">claim_agent()</code> 在进入信号量<b>之前</b>就加计数，所以即使请求还在排队，也已经计入上限。这意味着 cap 防的是“已提出”的调用，不是“已执行”的调用——对失控脚本来说，这才是更早、更稳的刹车。至于预算，<code class="inline-code">Budget(args.get("budget"))</code> 从 workflow 参数里取总预算，传 <code class="inline-code">None</code> 表示不设上限；生产环境里更稳妥的做法是给宿主级默认值，而不是信任每次调用都自觉传。</p>
+          </div>
+        </details>
+      </div>
+    </details>
+
+    <h3><span class="h3num">09</span>走读一个真实脚本：review-changes</h3>
+    <p>看懂原语之后，把示例 workflow 完整走一遍，机制就会从“名词”变成“手感”。这段脚本只做一件事：四个维度并行审计，每条发现再由一个独立的子 agent 做对抗性验证，最后只留下被确认的发现。</p>
+    <pre data-lang="python"><code>async def sample_workflow(ctx, args):
+    ctx.phase("Review")
+    changes = args.get("changes", "")
+    # ... 参数校验与 review_input 组装（略）
+    # 两段提示词的中间部分用 ... 省略，完整文本见 code.py
+
+    async def audit(_value, dimension, _idx):
+        out = await ctx.agent(
+            f"Review this change context for {dimension} issues. ...",
+            schema=FINDINGS_SCHEMA, label=f"audit:{dimension}", phase="Review")
+        return {"dimension": dimension, "findings": out["findings"]}
+
+    async def verify(audited, dimension, _idx):
+        ctx.phase("Verify")
+        verdicts = await ctx.parallel([
+            (lambda f=f: ctx.agent(
+                f"Adversarially verify this {dimension} finding ...",
+                schema=VERDICT_SCHEMA, label=f"verify:{dimension}:{f['title']}", phase="Verify"))
+            for f in audited["findings"]])
+        confirmed = [f for f, v in zip(audited["findings"], verdicts)
+                     if v and v.get("isReal")]
+        return {"dimension": dimension, "confirmed": confirmed}
+
+    results = await ctx.pipeline(DIMENSIONS, audit, verify)
+    # ...
+</code></pre>
+    <p>第一层的并行发生在维度之间：<code class="inline-code">pipeline(DIMENSIONS, audit, verify)</code> 把四个维度各起一条流水线，谁先审完谁先进入验证，彼此不等待。第二层并行发生在同一条维度的发现之间：<code class="inline-code">ctx.parallel([...])</code> 把每条发现各自派给一个验证 agent。两层并行叠加，才有了相对串行版本的成倍提速。</p>
+    <p>注意 <code class="inline-code">audit</code> 和 <code class="inline-code">verify</code> 的签名：<code class="inline-code">(value, item, idx)</code>。stage 拿到的是上一个 stage 的返回值、原始 item 和下标。这个约定让 pipeline 能串任意多阶段，也让“审计 → 验证”之间不必共享全局变量。所有中间数据都活在 Python 变量里，不进主对话。</p>
+    <p>最后那句 <code class="inline-code">confirmed.sort(...)</code> 是纯本地逻辑：按 high/medium/low 排序。这正是“编排写进代码”的日常收益——排序、去重、过滤这些确定性操作，交给 Python 比让模型“记得按严重程度排”可靠一万倍。</p>
+    <div class="callout tip">
+      <span class="callout-title">小技巧</span>
+      <p>给自己的 workflow 起 label 时，把“阶段 + 对象”拼进去，例如 <code class="inline-code">audit:security</code>、<code class="inline-code">verify:security:SQL 注入</code>。label 会参与稳定 key，也会出现在进度事件里；一个含糊的 label 会让日志难读，还会让两个语义不同的调用撞出同一个 key。</p>
+    </div>
+
+    <h3><span class="h3num">10</span>三种断法，三种兜法</h3>
+    <p>“可恢复”听起来像一句口号，落到工程上其实要分别回答三种故障：单个步骤失败、整次运行崩溃、外部环境变化。s16 对它们的态度并不相同。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>故障</th><th>运行时怎么反应</th><th>还剩什么可用</th></tr></thead>
+        <tbody>
+          <tr><td>某个 <code class="inline-code">agent()</code> 抛错</td><td>等已启动分支结束，脚本以异常收尾，task 置为 <code class="inline-code">failed</code></td><td>此前成功的调用都在 journal 里，可用同一 runId 续跑</td></tr>
+          <tr><td>进程被杀 / 断电</td><td>锁文件随进程释放，快照和 journal 留在磁盘</td><td>已 flush 的记录可重放；最后一条没写完的调用会重跑</td></tr>
+          <tr><td>预算或 agent 数超限</td><td><code class="inline-code">Budget.add()</code> / <code class="inline-code">claim_agent()</code> 直接抛 <code class="inline-code">WorkflowInputError</code></td><td>阻止继续烧钱；目标不会假装完成</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>这里最容易被忽略的是第二行：journal 是 <b>append-only</b> 的，每条记录写完立即 <code class="inline-code">flush()</code>，但没有 fsync。多数“进程被杀”场景够用，真正的断电仍可能丢掉最后一行。代价是那一行对应的调用重跑一次，而不是整次 workflow 重来——这个取舍对大多数编排是划算的。若你的步骤有不可逆副作用，就必须按上一节说的，把幂等责任放到工具侧。</p>
+    <p>还有一类“断”不来自故障，而来自<b>你改了脚本</b>。resume 不会检测代码版本，它只按 key 匹配调用：改了 prompt 的调用自然换 key、重新执行；没改的调用继续命中缓存。这正是“改一半、续一半”能成立的原因，也是它的边界——如果改动影响了某个调用的语义却没能体现在 key 的四个字段（kind、label、prompt、schema）里，缓存就会给你一个旧答案。想清楚哪些东西该进 key，比想清楚怎么重试更重要。</p>
+
+    <h3><span class="h3num">11</span>为什么不用另一种设计</h3>
+    <div class="card-grid">
+      <div class="card"><h4>为什么不让模型生成 DAG JSON？</h4><p>DAG 能表达并行，但表达不了“拿到审计结果后再决定验证哪些发现”这类依赖内容的控制流。硬塞进 DAG 会变成一门没人会读的 DSL，最后还是要写代码。</p></div>
+      <div class="card"><h4>为什么不直接开子进程跑脚本？</h4><p>主循环需要同步拿到 tool_result，子进程要序列化回传；而且 journal、预算、并发限制都活在宿主进程里。同进程协程 + 线程池是更小的接缝。</p></div>
+    </div>
+    <p>这两条其实指向同一个判断：<b>编排的表达力和可运维性要一起考虑</b>。一旦脚本能随便起进程、读文件、发网络请求，它就从“编排描述”变成了“第二个不受管的 agent”，权限、审计、限流全部要重做一遍。s16 选择把脚本关进一个只有原语的小盒子里，换取的是：宿主知道它最多能调多少次 agent、最多花多少 token、每个结果存在哪一行 journal 里。</p>
+    <p>反过来也要承认它的代价：workflow 不解决“流程还没想清楚”的问题。如果你连要审哪几个维度都还在试，先把它写死只会把错误的流程固化下来。更自然的路径是先用 s01–s15 的普通循环跑两三遍，观察模型实际走了哪些步骤、哪些步骤反复出现，等形状稳定了再沉淀成 workflow。先探索、后固化，这个顺序反了，就会得到一堆没人用的脚本。</p>
+    <div class="callout insight">
+      <span class="callout-title">设计要点</span>
+      <p>判断一个任务该不该 workflow 化，有个很实用的信号：<b>你是否已经能给它画出验收标准</b>。能画出“输入什么、产出什么、哪些步骤必须发生”，就适合；只能说出“帮我把它弄好”，就还不适合。</p>
+    </div>
+
+    <h3><span class="h3num">12</span>动手实验</h3>
+    <p>下面四个实验都不需要 API Key：<code class="inline-code">demo</code> 模式用 <code class="inline-code">MockAgentRunner</code> 返回确定性数据，正好适合观察事件流和缓存行为。想真正感受“哪一步在烧 token”，再把默认模式接上真实模型跑一遍。</p>
+    <ol class="steps">
+      <li><b>先看确定性事件流</b>：运行 <code class="inline-code">python s16_workflow_runtime/code.py demo</code>。观察 <code class="inline-code">async_launched → task_started → workflow_phase → workflow_agent → task_notification</code> 的顺序，记住最后那行的 <code class="inline-code">agents=</code> 和 <code class="inline-code">tokens=</code>。</li>
+      <li><b>验证缓存真的生效</b>：紧接着运行 <code class="inline-code">python s16_workflow_runtime/code.py resume</code>。预期每个 <code class="inline-code">agent()</code> 都显示 <code class="inline-code">status=cached</code>，结尾是 <code class="inline-code">agents=0 tokens=0</code>。如果没有这个现象，先检查两次是否用了同一个 <code class="inline-code">.runtime/last_run.txt</code>。</li>
+      <li><b>制造一次“改了一半”的续跑</b>：把 <code class="inline-code">DIMENSIONS</code> 里的 <code class="inline-code">"style"</code> 改成 <code class="inline-code">"accessibility"</code>，再跑一次 demo、再跑 resume。你应该只看到 accessibility 相关的调用真正执行，其余三个维度命中缓存——这就是稳定调用键在起作用。</li>
+      <li><b>把预算掐死</b>：给 demo 的 args 传一个很小的 <code class="inline-code">budget</code>（例如 100），观察 <code class="inline-code">Budget.add()</code> 抛出的 <code class="inline-code">token budget exceeded</code>，以及 task 状态变成 <code class="inline-code">failed</code>。想一想：此时 journal 里已经写了哪些结果？这些结果对下一次 resume 意味着什么？</li>
+    </ol>
+
+    <h3><span class="h3num">13</span>常见误区</h3>
+    <ul>
+      <li><b>很多人以为 workflow 是“让模型生成一段脚本再执行”。</b>其实 s16 明确禁止模型提交可执行代码：模型只给 workflow 名和参数，脚本来自宿主 registry。gen 代码再执行是另一套机制，安全模型完全不同。</li>
+      <li><b>很多人以为 resume 是把没跑完的协程“接着跑”。</b>其实 resume 是重新执行整个脚本，靠 journal 把已完成的 agent 调用短路成缓存命中。它不是进程级快照，而是调用级重放。</li>
+      <li><b>很多人以为并行度越高越快。</b>并发受 <code class="inline-code">CONCURRENCY</code> 信号量限制，背后还有 API 限流和 <code class="inline-code">AGENT_CAP</code>。把 50 个验证一次性丢出去，只会更快撞上 429 或预算上限。</li>
+    </ul>
+
+    <h3><span class="h3num">14</span>自测</h3>
+    <details class="quiz">
+      <summary>如果把 <code>WORKFLOW_TOOL</code> 的 <code>additionalProperties</code> 改成 <code>True</code>，会有什么风险？</summary>
+      <div class="answer"><p>模型可以往参数里夹带任意字段。虽然当前适配器只读取 <code>name/args/resume_from_run_id</code>，多出来的字段暂时不会执行，但它破坏了“schema 即合同”的边界：将来适配器开始透传参数时，这些字段可能变成意料之外的输入。更稳妥的做法是像现在这样关死，需要什么字段就显式加。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么 <code>journal.key()</code> 不能把“第几个 agent”放进 basis？</summary>
+      <div class="answer"><p>因为 <code>parallel</code> 和 <code>pipeline</code> 里调用完成的顺序不确定。如果 key 依赖完成序号，第一次运行中“第 2 个完成”的调用，在 resume 时可能对应到另一次调用，缓存就会串味。用调用内容算稳定哈希，才能保证“同样的调用 → 同样的 key → 同样的结果”。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>一个 workflow 在第二个 agent 上报错，<code>parallel</code> 会立刻取消其他分支吗？</summary>
+      <div class="answer"><p>不会。它用 <code>asyncio.gather(..., return_exceptions=True)</code> 先等所有已启动分支结束，再检查结果并抛第一个异常。这是为了把成功调用的结果完整写进 journal；如果立刻取消，已完成的调用可能来不及记录，resume 时就得重跑。注意“等齐再抛”不等于“无限等”：模型请求通过 <code>asyncio.to_thread()</code> 发出，取消协程并不会让线程停掉，所以只能等它自然结束。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么 <code>WorkflowTool.call()</code> 在启动前就要先写一份快照？</summary>
+      <div class="answer"><p>因为快照定义了这次运行的“身份”：runId、workflowName、args 和初始 task 状态。先写身份，journal 才有归属，resume 时才能校验“你续的是不是同一次运行”；如果等脚本跑起来再写，进程在第一个 agent 之前崩溃就什么线索都没了。这也解释了为什么新 run 要用 <code>O_EXCL</code> 抢占 runId：身份必须先于记录，记录必须先于执行。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>workflow 脚本里能不能直接 <code>open("file").read()</code> 读仓库文件？</summary>
+      <div class="answer"><p>不能（也不应该依赖）。脚本只拿到 <code>ExecutionState</code>，没有文件系统和 shell 能力；它能读的“世界”只有 <code>args</code> 和之前 <code>agent()</code> 的返回值。要读文件，就派一个 agent 去读、让它把内容带回来。这不是能力缺失，而是刻意的隔离：脚本越纯，越适合重放和缓存。</p></div>
+    </details>
+
+    <div class="callout tip">
+      <span class="callout-title">小技巧</span>
+      <p>写自己的 workflow 时，先问三个问题：哪些步骤可以并行？每步的返回能不能用一个很小的 schema 描述？哪些调用在重跑时希望直接命中缓存？这三问分别对应 <code class="inline-code">parallel/pipeline</code>、<code class="inline-code">schema</code>、<code class="inline-code">label</code> 的设计——label 会进 key，给每个调用起一个稳定、可读的名字，续跑时才不会意外失配。</p>
+    </div>
+    <p>最后提醒一句：不必等“完全想清楚”才动手。先写一个只有两层 <code class="inline-code">agent()</code> 的小 workflow，跑两次 resume，再慢慢把并行和 schema 加进去。机制是长在手感上的，不是读会的。</p>
+  </div>
+
+  <div class="takeaway">
+    <span class="tk-label">这一讲带走</span>
+    <p>当编排形状固定时，把它写进代码：模型只交名字和参数，脚本用四个原语组织调用，journal 用稳定键记住每个结果，于是并行、结构稳定和断点续跑可以同时成立。</p>
+    <p class="next"><b>下一讲：</b>workflow 能保证“这一批工作跑完”，但它不知道“整件事算不算完成”。下一讲把停不停止的决定权，交给一个独立的判断器。</p>
+  </div>
+</section>

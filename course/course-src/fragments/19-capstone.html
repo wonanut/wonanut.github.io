@@ -1,0 +1,307 @@
+<section id="ch19" class="chapter">
+  <p class="chapter-kicker">第 19 讲 · 结课 · 从读代码到造东西</p>
+  <h2 class="chapter-title">结课项目：造一台自己的 Harness
+    <small>把 s01–s17 的 17 个机制，装进一台能验收、能演示、能继续长大的运行时</small>
+  </h2>
+  <p class="chapter-lede">前 18 讲你一直在拆零件：循环、工具、权限、钩子、计划、子代理、技能、压缩、记忆、任务图、后台、定时、团队、MCP、集成运行时、workflow、goal。现在只剩一件事——把它们按“能跑起来”的顺序装回去，而不是按“学过”的顺序堆起来。</p>
+  <p class="source-line">
+    <span>综合 <code>s01_agent_loop/</code> … <code>s17_goal_loop/</code></span>
+    <span>课程 <a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/README.md">README.md</a></span>
+  </p>
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>用 5 个里程碑把 17 个机制组织成一个可验收的项目</li>
+    <li>知道每个里程碑“看什么现象”才算真的通过</li>
+    <li>从三个选题里挑一个，按 30 天计划做出可演示的版本</li>
+    <li>用一套明确的评分标准审视自己的 harness，而不是自我感觉良好</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>你手里已经有 17 块积木</h3>
+    <p>先别急着写新代码。把这 17 个机制摊开看一遍，你会发现它们不是 17 个独立功能，而是围绕同一条循环长出来的六层能力。结课项目要做的，是按层装配，而不是按章复制。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>层</th><th>章节</th><th>机制</th><th>一句话职责</th></tr></thead>
+        <tbody>
+          <tr><td>循环</td><td>s01–s02</td><td>Agent Loop / Tool Use</td><td>让模型能连续行动，工具注册进分发表</td></tr>
+          <tr><td>边界</td><td>s03–s04</td><td>Permission / Hooks</td><td>什么能跑、什么要问；扩展点不重写循环</td></tr>
+          <tr><td>复杂任务</td><td>s05–s08</td><td>TodoWrite / Subagent / Skill / Compact</td><td>先规划、隔离上下文、按需加载知识、给上下文腾地方</td></tr>
+          <tr><td>长跑</td><td>s09–s12</td><td>Memory / Task System / Background / Cron</td><td>跨会话记住、任务落盘、慢活后台、按时间触发</td></tr>
+          <tr><td>协作与开放</td><td>s13–s15</td><td>Agent Teams / MCP / Integrated Harness</td><td>多队友分工、外部工具入池、机制共用一个循环</td></tr>
+          <tr><td>编排与收敛</td><td>s16–s17</td><td>Workflow / Goal Loop</td><td>固定编排写成脚本、目标决定何时停</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>这张表的读法是“纵向可运行，横向可扩展”。每一层都能单独跑起来，也都能在下一层继续加东西；但如果你从六个层里各挑一个最难的先做，最后大概率得到一个能演示、不能调试的半成品。</p>
+
+    <div class="analogy">
+      <span class="analogy-title">像学厨艺从背菜谱到办一桌家宴</span>
+      <p>刀工、火候、调味、摆盘是分开练的，但办家宴不是把四项各表演一遍。你要先定菜单，再排上菜顺序，最后保证热菜上桌时还是热的。哪道菜失手，整桌的节奏都会乱。</p>
+      <p><b>类比到哪为止：</b>家宴失手可以重做一道菜，harness 的权限边界和自动继续却不能“重来一次”——一次误删、一次虚报完成，代价可能不可逆。所以结课项目里，安全边界和验收标准的优先级高于功能数量。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>五个里程碑：每一层都要“能跑、能看、能验收”</h3>
+    <p>里程碑的划分标准不是章节顺序，而是<b>可独立演示的纵切面</b>。完成 Mi 时，你应该能关掉后面的机制，只靠前 i 层跑一个真实任务。每个里程碑都按四件事验收：标准、现象、坑、对应章节。</p>
+    <div class="flow">
+      <div class="flow-node accent"><b>M1</b>单循环 + 工具 + 权限 + 钩子</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>M2</b>计划 + 子代理 + 技能 + 压缩</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>M3</b>记忆 + 任务图 + 后台 + 定时</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>M4</b>团队 + MCP</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>M5</b>工作流 + 目标循环</div>
+    </div>
+
+    <h3><span class="h3num">03</span>M1：让循环真正转起来</h3>
+    <p>M1 的目标不是“支持很多工具”，而是<b>一个闭环</b>：模型发 <code class="inline-code">tool_use</code>，harness 执行，把带 <code class="inline-code">tool_use_id</code> 的 <code class="inline-code">tool_result</code> 塞回 <code class="inline-code">messages[]</code>，再继续。外加两个边界：权限在工具执行前拦截，钩子在工具前后观察。</p>
+    <div class="table-wrap">
+      <table>
+        <tbody>
+          <tr><td><b>验收标准</b></td><td>一个 <code class="inline-code">while</code> 循环；≥3 个工具；权限命中时返回可读的拒绝原因而不是崩溃；≥1 个钩子不修改循环代码</td></tr>
+          <tr><td><b>可观察现象</b></td><td>同一会话连续多轮工具调用；被拒绝的命令以 <code class="inline-code">tool_result</code> 形式回填；钩子日志出现在执行前后</td></tr>
+          <tr><td><b>常见坑</b></td><td>忘了 <code class="inline-code">tool_use_id</code> 导致 API 报错；权限只写在 prompt 里；钩子抛异常直接打断整个循环</td></tr>
+          <tr><td><b>对应章节</b></td><td>s01–s04 · <a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/s01_agent_loop/README.zh.md">ch02</a>–<a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/s04_hooks/README.zh.md">ch05</a></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3><span class="h3num">04</span>M2：把“复杂任务”拆开</h3>
+    <p>这一层第一次让上下文变成稀缺资源。计划把任务显式化，子代理把噪声隔离，技能把知识变成按需加载，压缩在上下文快满时腾地方。四者共同回答一个问题：<b>任务变长时，怎么不失控</b>。</p>
+    <div class="table-wrap">
+      <table>
+        <tbody>
+          <tr><td><b>验收标准</b></td><td>todo 状态在一次会话内可更新；子代理拿到全新的 <code class="inline-code">messages[]</code>，只把最终文本返回主对话；技能先列目录再按需展开；压缩在阈值处触发且保留最近消息</td></tr>
+          <tr><td><b>可观察现象</b></td><td>主对话里看不到子代理的中间探索；技能内容只在被调用时出现；长会话的 token 曲线出现“下降后再继续”</td></tr>
+          <tr><td><b>常见坑</b></td><td>把子代理的全部过程拼回主对话；技能目录也全文注入；压缩把 <code class="inline-code">tool_use</code> 和 <code class="inline-code">tool_result</code> 拆散</td></tr>
+          <tr><td><b>对应章节</b></td><td>s05–s08 · <a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/s05_todo_write/README.zh.md">ch06</a>–<a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/s08_context_compact/README.zh.md">ch09</a></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3><span class="h3num">05</span>M3：从“一次会话”到“一直在线”</h3>
+    <p>M3 是很多项目真正的分水岭：状态开始离开进程，落到磁盘和消息队列上。记忆跨会话、任务图落盘、后台命令异步完成、cron 按时间触发。从这里开始，你的 harness 不再是一次性工具。</p>
+    <div class="table-wrap">
+      <table>
+        <tbody>
+          <tr><td><b>验收标准</b></td><td>重启后仍能读回用户偏好或项目约定；任务图支持 <code class="inline-code">blockedBy</code> 与原子 claim；后台命令完成时通知进入会话；定时任务按表达式触发</td></tr>
+          <tr><td><b>可观察现象</b></td><td>关掉终端再打开，agent 还记得上次的约定；两个并发请求只有一个能领到同一任务；后台任务完成消息自动出现；cron 在预期时间点执行</td></tr>
+          <tr><td><b>常见坑</b></td><td>状态文件写一半损坏且无恢复；后台输出没人收；cron 重复触发或时区错位</td></tr>
+          <tr><td><b>对应章节</b></td><td>s09–s12 · <a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/s09_memory/README.zh.md">ch10</a>–<a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/s12_cron_scheduler/README.zh.md">ch13</a></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3><span class="h3num">06</span>M4：多一个队友，多一组工具</h3>
+    <p>团队和 MCP 都指向“扩展”：前者扩展执行者，后者扩展工具池。它们共同的压力测试是<b>命名与归属</b>——任务归谁、工作目录归谁、外部工具在池子里叫什么。</p>
+    <div class="table-wrap">
+      <table>
+        <tbody>
+          <tr><td><b>验收标准</b></td><td>≥2 个队友能并发 claim 任务且不重复；每个任务有独立工作树或工作目录；MCP server 的外部工具与内置工具进入同一 schema 池</td></tr>
+          <tr><td><b>可观察现象</b></td><td>两个队友同时开工而任务不会被领两次；外部工具与内置工具在模型眼里长得一样；断开 MCP 时返回错误而不是静默消失</td></tr>
+          <tr><td><b>常见坑</b></td><td>claim 不是原子操作；工作树互相踩文件；MCP 工具名与内置名冲突</td></tr>
+          <tr><td><b>对应章节</b></td><td>s13–s15 · <a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/s13_agent_teams/README.zh.md">ch14</a>–<a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/s15_integrated_harness/README.zh.md">ch16</a></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3><span class="h3num">07</span>M5：编排与收尾，让系统自己说完“完成”</h3>
+    <p>最后一层不增加新能力，只改变两件事：谁来编排（脚本），以及谁来决定停（独立判断器）。M5 做对了，你的 harness 才从“能干活”变成“能交付”。</p>
+    <div class="table-wrap">
+      <table>
+        <tbody>
+          <tr><td><b>验收标准</b></td><td>至少一个保存好的 workflow，支持 journal 续跑；<code class="inline-code">resume</code> 时未改调用命中缓存；<code class="inline-code">/goal</code> 条件可检查；有 <code class="inline-code">max_turns</code>、<code class="inline-code">block_cap</code>、<code class="inline-code">impossible</code> 三类出口</td></tr>
+          <tr><td><b>可观察现象</b></td><td>续跑显示 <code class="inline-code">agents=0 tokens=0</code>；goal 未满足时自动进入下一轮；达到上限时控制权交还用户且目标仍在</td></tr>
+          <tr><td><b>常见坑</b></td><td>调用 key 依赖并发顺序；判断器没看到证据也点头；自动继续没有出口</td></tr>
+          <tr><td><b>对应章节</b></td><td>s16–s17 · <a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/s16_workflow_runtime/README.zh.md">ch17</a>–<a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/s17_goal_loop/README.zh.md">ch18</a></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3><span class="h3num">08</span>能力自检清单</h3>
+    <p>下面 17 个问题，每个都对应一个机制。能不看笔记答上来、并在代码里指出实现位置，才算真的拥有这项能力。建议打印出来，每完成一个里程碑勾掉对应行。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>☐</th><th>机制</th><th>自检问题</th></tr></thead>
+        <tbody>
+          <tr><td>☐</td><td>Agent Loop</td><td>模型不调工具时循环为什么退出？还有哪些退出条件？</td></tr>
+          <tr><td>☐</td><td>Tool Use</td><td>新增一个工具，需要改循环还是只改分发表？</td></tr>
+          <tr><td>☐</td><td>Permission</td><td>拒绝一个命令后，模型收到的是什么？循环会停吗？</td></tr>
+          <tr><td>☐</td><td>Hooks</td><td>PreToolUse 和 PostToolUse 分别能拿到什么？能阻止执行吗？</td></tr>
+          <tr><td>☐</td><td>TodoWrite</td><td>计划存在哪里？跨轮次还在吗？</td></tr>
+          <tr><td>☐</td><td>Subagent</td><td>子代理的中间过程会回到主对话吗？为什么？</td></tr>
+          <tr><td>☐</td><td>Skill Loading</td><td>技能是启动时全量加载，还是按需展开？</td></tr>
+          <tr><td>☐</td><td>Context Compact</td><td>压缩会先动工具结果还是先动历史？为什么？</td></tr>
+          <tr><td>☐</td><td>Memory</td><td>哪些信息值得跨会话保留？写入和读取分别由谁触发？</td></tr>
+          <tr><td>☐</td><td>Task System</td><td>任务依赖怎么表达？claim 是原子的吗？</td></tr>
+          <tr><td>☐</td><td>Background Tasks</td><td>后台完成后，结果怎么回到会话？</td></tr>
+          <tr><td>☐</td><td>Cron Scheduler</td><td>定时任务存在哪？重启后还会触发吗？</td></tr>
+          <tr><td>☐</td><td>Agent Teams</td><td>队友之间怎么分工？工作目录怎么隔离？</td></tr>
+          <tr><td>☐</td><td>MCP Plugin</td><td>外部工具怎么进入工具池？命名冲突怎么处理？</td></tr>
+          <tr><td>☐</td><td>Integrated Harness</td><td>这些机制共用几个循环？扩展点在哪？</td></tr>
+          <tr><td>☐</td><td>Workflow Runtime</td><td>resume 为什么是重放而不是接着跑？key 怎么算？</td></tr>
+          <tr><td>☐</td><td>Goal Loop</td><td>判断器能看到什么？看不到什么？出口有哪些？</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3><span class="h3num">09</span>三个项目选题</h3>
+    <p>选题的原则是“真实、可验收、能在 30 天内做出演示”。下面三个方向分别偏个人生产力、信息处理和安全敏感场景，选一个你最想每天用的。</p>
+    <div class="card-grid">
+      <div class="card"><h4>个人编码助手</h4><p>面向单个仓库：读代码、改文件、跑测试、解释 diff。最贴近本课主线，M1–M5 都能自然用上。</p></div>
+      <div class="card"><h4>自动化研究助手</h4><p>给定问题，检索多个来源、做结构化笔记、生成带引用的报告。重点在子代理、技能与 workflow。</p></div>
+      <div class="card"><h4>运维值班助手</h4><p>接收告警、查日志、按 runbook 处置、必要时升级给人。重点在权限边界、后台任务与目标判断。</p></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>选题</th><th>范围（只做这些）</th><th>必须用到的机制</th><th>评分维度</th></tr></thead>
+        <tbody>
+          <tr><td>个人编码助手</td><td>单仓库读改跑；测试优先；不碰网络部署</td><td>M1 全部、子代理、压缩、记忆、Goal</td><td>任务完成度、diff 最小性、测试通过率、可恢复性</td></tr>
+          <tr><td>研究助手</td><td>固定 3–5 个来源；输出 Markdown 报告；不自动发布</td><td>子代理、技能、后台、Workflow、MCP</td><td>来源质量、结构化程度、可复现性、单次成本</td></tr>
+          <tr><td>运维值班助手</td><td>只读日志 + 白名单命令；高风险动作必须人工确认</td><td>权限、钩子、后台、定时、团队、Goal</td><td>安全边界、MTTR、可观测性、误操作率</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3><span class="h3num">10</span>30 天学习计划</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>时间</th><th>目标</th><th>交付物</th><th>验收方式</th></tr></thead>
+        <tbody>
+          <tr><td>第 1–7 天</td><td>M1：loop + 工具 + 权限 + 钩子</td><td>能跑一个真实小任务的 CLI</td><td>连续 3 轮工具调用；拒绝命令不崩溃</td></tr>
+          <tr><td>第 8–14 天</td><td>M2：计划 + 子代理 + 技能 + 压缩</td><td>一个 10 步以上的长任务演示</td><td>主对话不被子代理污染；token 曲线可解释</td></tr>
+          <tr><td>第 15–21 天</td><td>M3：记忆 + 任务图 + 后台 + 定时</td><td>重启后仍在的会话与任务面板</td><td>重启恢复；后台通知回填；cron 触发</td></tr>
+          <tr><td>第 22–26 天</td><td>M4：团队 + MCP</td><td>两个队友并行 + 一个外部工具</td><td>并发 claim 不重复；MCP 工具可调用</td></tr>
+          <tr><td>第 27–30 天</td><td>M5：workflow + goal，打磨演示</td><td>可续跑 workflow + 自动收尾演示</td><td>resume 命中缓存；goal 有出口；录 3 分钟演示</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>计划的关键不是“每天写多少行”，而是<b>每个阶段都留下可观察的产物</b>。如果第 14 天你还只能演示 M1，不要慌，把 M2 做扎实比把五层都糊一遍更有价值。评分标准也是按这个取向设计的。</p>
+
+    <h3><span class="h3num">11</span>评分标准：功能只占 40 分</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>维度</th><th>分值</th><th>看什么</th><th>不合格信号</th></tr></thead>
+        <tbody>
+          <tr><td>功能完整</td><td>40</td><td>里程碑是否真的能跑通；边界情况是否处理</td><td>只有 happy path；换个输入就崩</td></tr>
+          <tr><td>健壮性</td><td>25</td><td>权限、失败恢复、并发、超时、预算</td><td>无重试、无上限、无拒绝理由</td></tr>
+          <tr><td>可观测性</td><td>20</td><td>事件流、日志、任务状态、可复现的 demo</td><td>出问题只能靠猜；没有 selftest</td></tr>
+          <tr><td>代码质量</td><td>15</td><td>模块边界、命名、测试、README</td><td>单文件 3000 行；没有一行测试</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>注意这个配比传递的信号：一个“功能齐全但一碰就崩”的项目，最多拿 40 多分；而一个“只做到 M3，但权限、恢复、日志都扎实”的项目，反而可能拿到 70 分以上。这不是降低要求，而是把要求放到了 harness 工程真正难的地方。</p>
+
+    <h3><span class="h3num">12</span>目录与验收脚本</h3>
+    <p>推荐按“机制一个模块”组织，而不是按章节建 17 个文件。入口只负责装配，每个机制只依赖自己需要的邻居。</p>
+    <pre data-lang="text"><code>my-harness/
+├── harness.py              # 入口：CLI + 主循环装配
+├── core/
+│   ├── loop.py             # s01：while 循环 + tool_result 回填
+│   ├── tools.py            # s02：工具 schema 与分发表
+│   ├── permissions.py      # s03：allow / ask / deny
+│   ├── hooks.py            # s04：四类钩子总线
+│   ├── compact.py          # s08：压缩策略
+│   └── goal.py             # s17：GoalController + evaluator
+├── runtime/
+│   ├── tasks.py            # s10：磁盘任务图
+│   ├── background.py       # s11：后台任务与通知
+│   └── scheduler.py        # s12：cron
+├── workflows/
+│   └── review.py           # s16：保存好的 workflow 脚本
+├── mcp/                    # s14：外部 server 适配
+├── tests/
+│   ├── test_loop.py
+│   └── test_goal.py
+└── README.md               # 如何跑、如何验收、演示脚本
+</code></pre>
+    <p>验收不要靠肉眼。给自己写一个 <code class="inline-code">selftest.py</code>，把每个里程碑的“可观察现象”变成断言；再用一个脚本把它们串起来。下面是最小版本：</p>
+    <pre data-lang="bash"><code>#!/usr/bin/env bash
+set -euo pipefail
+
+python -m pytest -q                       # 单元测试
+python harness.py selftest --milestone M1 # 循环、工具、权限、钩子
+python harness.py selftest --milestone M2 # 计划、子代理、技能、压缩
+python harness.py selftest --milestone M3 # 记忆、任务图、后台、定时
+
+# M5：真实 goal 验收，刻意把出口调紧
+MAX_TURNS=6 CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=2 \
+  python harness.py "/goal python -m pytest 退出码为 0"
+
+# 续跑必须命中缓存，否则说明调用 key 不稳定
+python harness.py workflow resume | grep -q "agents=0 tokens=0"
+</code></pre>
+    <p>这个脚本本身就是项目的一部分。它把“我觉得做完了”变成“CI 认为做完了”，也是评分里“可观测性”那 20 分最直接的证据。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么按里程碑，而不是按章节组织项目</summary>
+      <div class="deep-body">
+        <p>17 个章节是<b>横向切片</b>：每一讲只隔离一个机制，方便理解。但工程交付需要<b>纵向切片</b>：每一层都能独立运行、独立验收。按章节拼装，你会得到 17 个“半成品接口”；按里程碑装配，你得到 5 个“能演示的系统”。前者适合学习，后者适合交付。</p>
+        <p>里程碑的边界也不是随便画的。M1 结束在“循环可信”，M2 结束在“上下文可控”，M3 结束在“状态可持久”，M4 结束在“执行者可扩展”，M5 结束在“结束条件可信”。每一条都是可以在演示里被观察到的性质，而不是代码量。</p>
+        <details class="deep deep-2">
+          <summary>再深一层：从课程 demo 到真实产品，还差什么</summary>
+          <div class="deep-body">
+            <p>课程代码是“机制示例”，不是产品。真实产品至少还要补五块：持久化（会话、事件、任务都要能恢复）、并发与隔离（多用户、多进程、工作树）、安全（密钥管理、路径沙箱、审计日志）、成本（预算、限流、缓存）、以及可观测性（指标、追踪、回放）。这五块没有一块能靠“再加一个工具”解决，它们都属于 harness 工程。</p>
+            <p>所以结课不是终点，而是把你的关注点从“机制怎么实现”切换到“系统怎么被信任”。下一站的路线已经很清楚了：读官方文档补齐 API 细节，读 sister repo claw0 看 always-on 的 harness 怎么加 heartbeat 与 IM 通道，再去 Kode 这样的真实产品里看这些机制怎么在工程约束下取舍。</p>
+          </div>
+        </details>
+      </div>
+    </details>
+
+    <h3><span class="h3num">13</span>动手：今天就开始的三个任务</h3>
+    <ol class="steps">
+      <li><b>做一个 M1 最小版</b>：只保留 loop + 3 个工具 + 一条权限规则 + 一个 PreToolUse 钩子。跑一个真实小任务（例如“找出仓库里所有 TODO 并汇总”），录下对话。</li>
+      <li><b>写第一个 selftest</b>：把“拒绝的命令不崩溃”“连续 3 轮工具调用”“tool_result 带 tool_use_id”写成三个断言。先让它们失败，再让它们通过——这比读十遍代码有用。</li>
+      <li><b>为你的选题写验收清单</b>：从第 09 节的评分维度里各挑一条，写成三行“如果我做到了，应该看到什么现象”。如果写不出“现象”，说明这个维度你还没想清楚。</li>
+    </ol>
+
+    <h3><span class="h3num">14</span>常见误区</h3>
+    <ul>
+      <li><b>很多人以为结课项目是把 17 章代码拼接起来。</b>其实每章代码是独立示例，接口并不统一；正确做法是重新设计一套模块边界，让每个机制只暴露最少的东西。拼接只会得到一座无法维护的代码博物馆。</li>
+      <li><b>很多人以为功能越多分越高。</b>功能只占 40 分，健壮性、可观测性、代码质量合计 60 分。一个能自动开 20 个工具但没有任何失败恢复的系统，评分会低于一个只有 5 个工具但每步可观测的系统。</li>
+      <li><b>很多人以为有了 Goal Loop 就不需要测试。</b>判断器只读对话，不跑命令；它能判断“证据是否出现”，不能替代证据本身。真正的验证仍然由测试和工具完成。</li>
+    </ul>
+
+    <h3><span class="h3num">15</span>项目自检问题</h3>
+    <details class="quiz">
+      <summary>关掉终端再打开，你的 agent 还记得什么？哪些是“记忆”，哪些只是“日志”？</summary>
+      <div class="answer"><p>记忆是下次会被主动读回、影响决策的信息（用户偏好、项目约定、任务状态）；日志只是留档，不会被自动加载。答不上来，说明你的持久化边界还没设计；答得上来但两者混在一起，说明记忆会被日志噪声淹没。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>如果模型连续 5 轮都说“已经完成”，你的系统凭什么不相信它？</summary>
+      <div class="answer"><p>凭一个独立的判断器和可检查的完成条件。判断器没有工具，只看对话里有没有命令、退出码、测试结果这些证据；连续宣称但没有证据时，它应该判“未完成”并给出缺少什么。如果你的系统只能相信模型的自述，那它还没有 M5。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>两个队友同时 claim 同一个任务，会发生什么？你怎么证明不会重复执行？</summary>
+      <div class="answer"><p>如果 claim 不是原子操作，两个队友会同时以为自己领到了任务，然后各自改同一批文件。证明方式不是“看代码觉得对”，而是写一个并发测试：同时发起 N 个 claim，断言只有一个成功、任务 owner 唯一。这也是 M3/M4 验收里“原子 claim”的真正含义。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>你的 workflow resume 命中缓存时，如何证明没有重复副作用？</summary>
+      <div class="answer"><p>先区分“重复调用”和“重复副作用”：journal 只保证同一个调用不重复执行，副作用是否重复取决于工具本身是否幂等。证明方法是给有副作用的工具加幂等键（例如 request id），并在 resume 测试里断言外部状态只变化一次。如果工具做不到幂等，就把副作用移出 workflow。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>如果只能保留一个机制到线上，你保留哪个？为什么？</summary>
+      <div class="answer"><p>没有标准答案，但好的回答会给理由。常见选择是权限：没有权限边界，其他机制越强，破坏半径越大。也有人选可观测性：没有日志和事件，出了问题连“哪个机制坏了”都不知道。关键是你能说清取舍，而不是列举功能。</p></div>
+    </details>
+
+    <h3><span class="h3num">16</span>进阶路线</h3>
+    <ul>
+      <li><b>读官方文档补齐细节</b>：<a href="https://docs.anthropic.com/en/docs/build-with-claude/tool-use">Tool use</a>、<a href="https://docs.anthropic.com/en/docs/build-with-claude/context-windows">Context windows</a>，把课程里“够用就好”的简化实现换成真实 API 的约束。</li>
+      <li><b>读 sister repo claw0</b>：<a href="https://github.com/shareAI-lab/claw0">shareAI-lab/claw0</a> 讲的是 always-on harness——heartbeat、cron、IM 多通道、持久记忆、Soul 人格，正好接上本课的 s12 与 s09。</li>
+      <li><b>看真实产品 Kode</b>：<a href="https://github.com/shareAI-lab/Kode-CLI">Kode-CLI</a> 与 <a href="https://github.com/shareAI-lab/kode-agent-sdk">kode-agent-sdk</a>，观察一个可安装、可嵌入的 agent 产品如何在真实约束下组织工具、技能与权限。</li>
+      <li><b>回到本仓库</b>：重读 <a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/README.md">README.md</a> 的 17 讲主旨，对照你项目里每一层的实现，把“我学过”变成“我做过”。</li>
+    </ul>
+
+    <div class="callout key">
+      <span class="callout-title">关键结论</span>
+      <p>课程结束时，真正带走的不是 17 段代码，而是一种判断力：知道一个 agent 系统的能力从哪来、边界在哪、该在什么时候加一层机制，以及——最重要——怎么证明它真的做完了。</p>
+    </div>
+  </div>
+
+  <div class="takeaway">
+    <span class="tk-label">这一讲带走</span>
+    <p>从今天开始，不要再问“我学完了吗”，只问“我的 harness 能演示哪一层、能验收哪一条”。五个里程碑、一份自检清单、一个能跑通的 selftest，就是你从读者变成作者的全部证据。</p>
+    <p class="next"><b>课程到此结束，工程才刚刚开始。</b>选一个真实任务，把它交给你的 harness；它第一次自己跑完并给出可检查的证据时，你会知道这 17 讲没有白读。</p>
+  </div>
+</section>

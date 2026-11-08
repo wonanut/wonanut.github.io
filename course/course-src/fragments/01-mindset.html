@@ -1,0 +1,201 @@
+<section id="ch01" class="chapter">
+  <p class="chapter-kicker">第 1 讲 · 出发之前 · 心智模型</p>
+  <h2 class="chapter-title">Agent = 模型 + Harness，别再给 prompt 编 if-else
+    <small>先想清楚智能从哪来，再决定代码该写在哪</small>
+  </h2>
+  <p class="chapter-lede">如果你以为"做 Agent"就是把大模型 API 串起来、加几个 if-else 分支，那你造出来的会是一台加了 LLM 的 shell 脚本。这一讲要把一个反直觉但极其重要的事实钉进你脑子里：<b>智能来自模型训练，代码只提供它能施展的环境。</b></p>
+
+  <p class="source-line">
+    <span>概念来源 <a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/README.md">仓库 README 的 Harness 章节</a></span>
+    <span>循环实现 <code>s01_agent_loop/code.py</code></span>
+    <span>本讲无新代码，负责建立坐标系</span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>用一句话向别人解释 Agent 产品由什么构成，以及为什么"拖拽式工作流"不是 Agent</li>
+    <li>区分模型决策与 harness 执行的分界线，并据此判断一段代码该不该写</li>
+    <li>掌握读后续 17 讲源码的固定方法：先找循环，再找分发，再找状态</li>
+    <li>知道 harness 工程师的四项日常工作，以及为什么轨迹数据是隐藏的第四项</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>先破一个问题：智能到底从哪来</h3>
+    <p>假设你要做一个"能自己改代码的助手"。你手上有两样东西：一个会说人话的大模型，和一堆 Python。你自然会想：模型会写代码，但不会跑代码、不会看文件。那我写个程序，让模型输出"READ file.py"，程序去读，再把内容塞回给模型，如此往复。</p>
+    <p>这段程序就是 harness 的雏形。注意它做了什么、没做什么：它<b>没有</b>决定"什么时候要读文件"，也<b>没有</b>决定"读哪个文件"，更<b>没有</b>决定"读完之后该改还是该测"。这些判断全部来自模型。程序只做三件事：把动作变成真实的操作、把操作结果变成模型能读的文本、让这个过程能一轮轮持续下去。</p>
+    <p>很多人第一次写 Agent 时，会本能地想把"判断"也搬进代码：如果模型说了"测试"就进入测试分支，如果失败次数大于 3 就换策略。这就是 prompt 编排（prompt plumbing）。它看起来更"可控"，实际上是在用脆弱的规则树模拟模型的判断力 —— 而模型的判断力恰恰是你唯一值得依赖的东西。</p>
+
+    <div class="analogy">
+      <span class="analogy-title">像给 F1 车手造车，而不是替车手开车</span>
+      <p>车手（模型）决定什么时候刹车、走哪条线；车队（harness 工程师）负责造一台能让他发挥的车：引擎、刹车、方向盘、遥测、维修区、安全规则。车造得差，车手再强也跑不快；但车队不能替车手打方向盘。</p>
+      <p><b>类比到哪为止：</b>真实车队会通过无线电给车手策略建议，而 harness 一般不给模型"建议下一步做什么"，只提供信息与边界 —— 一旦开始建议，你就又滑回编排了。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>Agent 产品的唯一公式</h3>
+    <p>把这层关系写成公式，就是整门课的坐标系：</p>
+    <div class="flow">
+      <div class="flow-node accent"><b>模型</b>训练出来的判断力<br/>感知 · 推理 · 决策</div>
+      <div class="flow-arrow">+</div>
+      <div class="flow-node"><b>Harness</b>运行环境<br/>工具 · 知识 · 观测 · 权限</div>
+      <div class="flow-arrow">=</div>
+      <div class="flow-node"><b>Agent 产品</b>能在一个领域里干活</div>
+    </div>
+    <p>模型部分你通常动不了（除非你在做训练）。你能做的是 harness，而 harness 可以拆成五个具体职责：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>职责</th><th>回答的问题</th><th>本课对应章节</th></tr></thead>
+        <tbody>
+          <tr><td><b>工具（Tools）</b></td><td>模型能对世界做哪些动作？</td><td>ch02 工具分发、ch03 权限、ch05 钩子</td></tr>
+          <tr><td><b>知识（Knowledge）</b></td><td>模型需要哪些领域资料才能做对？</td><td>ch08 技能加载、ch10 记忆</td></tr>
+          <tr><td><b>观测（Observation）</b></td><td>动作的结果怎样变成模型能理解的信息？</td><td>ch02 结果回填、ch09 上下文压缩</td></tr>
+          <tr><td><b>动作（Action）</b></td><td>动作如何真正执行、如何并发、如何失败？</td><td>ch12 后台任务、ch17 工作流编排</td></tr>
+          <tr><td><b>权限（Permissions）</b></td><td>哪些动作必须拦、哪些要人批准？</td><td>ch04 权限、ch05 钩子、ch14 团队协议</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>后面 16 讲，本质上就是把这五件事一件件做扎实。你现在不需要记住映射，只需要记住一条判据：<b>当你写下一段代码时，问自己"我是在替模型做判断，还是在给模型提供做判断的条件"。</b>前者要删，后者要加。</p>
+
+    <h3><span class="h3num">03</span>为什么"智能是训练出来的"这件事重要</h3>
+    <p>你可能会说：这不就是常识吗？不完全是。它有一个非常实际的推论：<b>如果智能来自训练，那么你无法用代码"补"出智能。</b>规则树写得再细，也覆盖不了真实世界的长尾；相反，一个足够好的模型 + 一套干净的 harness，往往能处理你从没写过的场景。</p>
+    <p>历史反复验证这一点。2013 年 DeepMind 的 DQN 只接收原始像素和分数，就学会了 7 个 Atari 游戏；2019 年 OpenAI Five 在 10 个月里自对弈了 45000 年 Dota 2 经验，击败了 TI8 冠军 OG；同一年 AlphaStar 在星际争霸 II 上打到欧洲服宗师段位。这些系统里<b>没有</b>"如果敌方出叉兵就走 A 路线"的规则树。行为是训练出来的，代码只提供环境（游戏客户端、动作接口、奖励信号）。大模型 Agent 是同一件事在新环境里的重演。</p>
+    <p>所以当有人展示一个"节点图 + prompt 瀑布"的 Agent 平台时，你可以问一个问题：<b>如果模型变聪明一倍，这个系统会变强一倍吗？</b>真正的 harness 会；而写死了流程的系统不会 —— 它的上限在图纸画完那一刻就定死了。</p>
+<pre data-lang="python"><code># 反例（伪代码，不是仓库实现）：把判断搬进代码的典型写法
+for step in FIXED_PLAN:                 # 流程在第 1 行就被写死了
+    result = ask_model(step["prompt"])
+    if step["name"] == "test" and "failed" in result:
+        step = switch_to_plan_b()        # 规则穷举：第 51 种情况谁来写？
+    elif retries > 3:
+        return "give up"                 # 模型没有机会自己调整策略
+</code></pre>
+    <p>这段代码不是"错的实现"，而是"错的位置"。它把本该由模型根据观测做出的判断，提前写成了有限分支。它唯一合理的场景，是流程真的固定且判断空间很小 —— 即便如此，也应该交给第 17 讲的工作流运行时来管理，而不是散落在循环里。</p>
+
+    <h3><span class="h3num">04</span>一个循环，就是全部秘密</h3>
+    <p>把上面的道理压到代码里，就是下面这三十行。这是整门课唯一不变的骨架，后续 17 讲都在它周围加东西：</p>
+<pre data-lang="python"><code>def agent_loop(messages):
+    while True:
+        # 1. 把完整对话和工具定义交给模型
+        response = client.messages.create(
+            model=MODEL, system=SYSTEM, messages=messages,
+            tools=TOOLS, max_tokens=8000,
+        )
+        # 2. 模型的回答原样进入历史
+        messages.append({"role": "assistant", "content": response.content})
+
+        # 3. 判断：这一轮它想调用工具吗？
+        tool_calls = [
+            block for block in response.content if block.type == "tool_use"
+        ]
+        if not tool_calls:
+            return      # 不想调工具 = 它认为任务结束了
+
+        # 4. 执行工具，把结果包装成 tool_result
+        results = []
+        for block in tool_calls:
+            output = run_bash(block.input["command"])
+            results.append({
+                "type": "tool_result",
+                "tool_use_id": block.id,
+                "content": output,
+            })
+        # 5. 结果以 user 身份回到对话，进入下一轮
+        messages.append({"role": "user", "content": results})
+</code></pre>
+    <p>这五步里，<b>只有第 3 步和第 4 步之间是"harness 的领地"</b>。第 1、2、5 步是协议（怎么把对话喂给模型），第 3 步是模型的决定。你会看到后面所有机制都只做两件事之一：改变模型能看到什么（知识、上下文、观测），或者改变模型能做什么（工具、权限、并发）。</p>
+    <div class="callout key">
+      <span class="callout-title">整门课最重要的一句话</span>
+      <p>循环属于 Agent，机制属于 Harness。模型决定下一步，代码让下一步发生。</p>
+    </div>
+
+    <h3><span class="h3num">05</span>Harness 工程师到底在干什么</h3>
+    <p>"造 harness"听起来抽象，落到日常就是四件很具体的事：</p>
+    <ul>
+      <li><b>实现工具。</b>给模型装手：读写文件、跑命令、调 API、控制浏览器。每个工具是一个原子动作，描述要清楚到模型不会误用。</li>
+      <li><b>管理上下文。</b>模型的工作记忆有限。子代理隔离（ch07）、压缩（ch09）、记忆（ch10）、技能按需加载（ch08）都是在管理"它此刻该看到什么"。</li>
+      <li><b>划定权限。</b>哪些命令直接跑、哪些要问人、哪些永远禁止，以及被拒绝时如何让模型知道原因并调整（ch03、ch04、ch14）。</li>
+      <li><b>让任务跨轮次、跨进程、跨 Agent 地存活。</b>任务落盘（ch11）、后台执行（ch12）、定时触发（ch13）、团队协作（ch14）、编排恢复（ch17）。</li>
+    </ul>
+    <p>还有一个不写在职责表里、但真实存在的第五项：<b>收集轨迹数据。</b>Agent 在你的 harness 里执行的每一步，都是一条"感知 → 判断 → 动作"的样本。这些真实部署轨迹，正是训练下一代模型的原料。所以你设计 harness 时的一个决策（比如工具返回什么格式），会反过来影响未来模型的训练质量 —— 这也是为什么大厂对 harness 的细节如此偏执。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么"prompt 编排"这条路的尽头是死胡同？</summary>
+      <div class="deep-body">
+        <p>先公平地说：编排不是一无是处。当任务流程高度固定（每晚跑一次报表、每次提交前跑五个检查），把流程写进代码是正确选择 —— 这正是第 17 讲 Workflow Runtime 讲的事。问题出在<b>用编排去解决需要判断的问题</b>。</p>
+        <p>原因有三个：</p>
+        <ul>
+          <li><b>规则是穷举，世界是长尾。</b>你写 50 条 if-else，用户第 51 种输入就崩。模型见过的人类代码与失败模式，比你团队见过的多几个数量级。</li>
+          <li><b>规则会互相污染。</b>每加一条分支，其他分支的行为都可能变，测试用例指数增长。Agent 用循环 + 新观测替代分支，状态空间小得多。</li>
+          <li><b>规则把判断权从模型手里抢走，却保留了模型的责任。</b>流程错的时候，模型没有机会纠正；流程对的时候，模型又只是个文本生成节点。两头不讨好。</li>
+        </ul>
+        <p>正确的分工是：<b>模型决定"做什么"，代码决定"怎么做才安全、可观测、可恢复"</b>。前者是判断，后者是工程。</p>
+        <details class="deep deep-2">
+          <summary>再深一层：那"自主性"到底是不是个伪命题？</summary>
+          <div class="deep-body">
+            <p>不是。自主性 = 模型在训练中习得的"在给定观测下选择动作"的能力，加上 harness 提供的"动作空间"与"反馈回路"。缺任何一半都不成立：模型没有动作空间，只能空谈；harness 没有会判断的模型，只能执行死规则。</p>
+            <p>所以当有人问"你们的 Agent 有多自主"，正确的反问是：<b>它的动作空间有多大？反馈有多完整？边界有多清楚？</b>这三个问题比任何"自主等级"标签都更有信息量。</p>
+          </div>
+        </details>
+      </div>
+    </details>
+
+    <h3><span class="h3num">06</span>读后续源码的固定方法</h3>
+    <p>从下一讲开始，你会看到 17 个几百到几千行的 Python 文件。它们全部由同一个架子生成，所以读法可以固定下来。拿到任何一个新章节，按这四步走：</p>
+    <ol class="steps">
+      <li><b>找循环。</b>搜索 <code class="inline-code">def agent_loop</code>，看这一讲在循环里<b>多加了哪几行</b>。这是整章最重要的信息，通常不超过 10 行。</li>
+      <li><b>找分发。</b>搜索 <code class="inline-code">TOOL_HANDLERS</code> 或 <code class="inline-code">execute_tool</code>，看工具有没有变多、handler 怎么注册。工具是模型的"动作空间"，动作空间变大 = 能力变强。</li>
+      <li><b>找状态。</b>搜索 <code class="inline-code">Path(</code>、<code class="inline-code">json.dump</code>、<code class="inline-code">open(</code>，看哪些东西被写到了磁盘。落盘意味着跨轮次、跨进程、跨崩溃的持久化，是长任务的根。</li>
+      <li><b>找边界。</b>搜索 <code class="inline-code">permission</code>、<code class="inline-code">hook</code>、<code class="inline-code">truncat</code>、<code class="inline-code">timeout</code>，看作者在哪些地方"主动认怂"。这些防御性代码往往比主流程更有信息量。</li>
+    </ol>
+    <p>用这个方法，一个 2000 行的文件在 10 分钟内就能定位到核心。本课每一讲的"代码精读"其实就是在示范这四步。</p>
+
+    <h3><span class="h3num">07</span>常见误区</h3>
+    <div class="callout warn">
+      <span class="callout-title">误区一：以为"多 Agent 一定比单 Agent 强"</span>
+      <p>不是。多 Agent 的收益来自<b>上下文隔离</b>和<b>并行</b>，成本是协调开销、消息延迟、结果不一致。第 14 讲会讲清楚什么时候值得拆团队，什么时候一个循环更快。默认答案永远是：先单 Agent，直到它真的撑不住。</p>
+    </div>
+    <div class="callout warn">
+      <span class="callout-title">误区二：以为"工具越多越好"</span>
+      <p>工具是模型的选项。选项越多，模型越容易选错，prompt 也越长。第 3 讲会展示从 1 个工具加到 5 个工具的过程，但你要记住的是：<b>每个工具都要有明确的、模型无法用 bash 更好完成的理由</b>。</p>
+    </div>
+    <div class="callout warn">
+      <span class="callout-title">误区三：以为"读完源码就学会了"</span>
+      <p>源码是别人做出的决策。学习发生在你"不同意某个决策并试图改进"的时候。每章末尾的实验就是逼你做这件事：改一行，观察系统怎么坏。</p>
+    </div>
+
+    <h3><span class="h3num">08</span>自测</h3>
+    <details class="quiz">
+      <summary>产品经理说："我们的 Agent 不够聪明，加一套决策树让它更可靠。" 你怎么反驳？</summary>
+      <div class="answer">
+        <p>先承认目标（更可靠）合理，再指出手段错位：决策树把"判断"从模型搬进代码，会同时降低上限和灵活性 —— 模型变强时系统不会变强，遇到没写过的输入时系统直接失效。</p>
+        <p>正确的方向是提升"判断质量"与"执行可靠性"：判断靠更强模型 + 更完整的观测（工具返回更多有用信息）；可靠靠权限、校验、重试、可恢复的任务状态、可观测性（ch03、ch04、ch11、ch17）。换句话说，<b>把可靠性做在 harness 层，把决策留给模型</b>。</p>
+      </div>
+    </details>
+    <details class="quiz">
+      <summary>为什么第 3 步"检查响应里有没有 tool_use"可以决定循环是否继续，而不用检查模型说了什么？</summary>
+      <div class="answer">
+        <p>因为"结束"是模型的一种决策，而 tool_use block 是它表达"我还需要动作"的<b>结构化信号</b>。解析自然语言（"我想我完成了"）既不可靠也不必要 —— 模型只要不再请求工具，就说明它认为可以直接回答用户了。</p>
+        <p>这也是为什么后面所有机制都围绕"响应内容块"而不是文本：内容块是协议层的事实，文本是解释。工程上永远优先相信结构化信号。</p>
+      </div>
+    </details>
+    <details class="quiz">
+      <summary>如果模型变聪明一倍，本课里的哪些机制会变得不那么必要？哪些反而更重要？</summary>
+      <div class="answer">
+        <p>变得不那么必要的：把大任务拆成小步骤的计划机制（模型能自己保持长程一致性）、部分上下文压缩（模型上下文窗口和利用效率提升）、部分技能加载（模型内部知识更多）。</p>
+        <p>反而更重要的：权限与边界（更强的模型能造成更大的破坏）、可观测与可恢复（它能做更长、更贵的任务，失败成本更高）、编排与目标判定（它能自主执行很久，必须有人/机制决定何时停）。一句话：<b>模型越强，边界与验证越值钱。</b></p>
+      </div>
+    </details>
+    <details class="quiz">
+      <summary>本课 17 个机制里，哪些是在"改变模型能看到什么"，哪些是在"改变模型能做什么"？</summary>
+      <div class="answer">
+        <p>改变"看到什么"（上下文/知识/观测）：ch08 技能加载、ch09 上下文压缩、ch10 记忆、ch07 子代理（隔离视野）、ch05 钩子（注入上下文）。</p>
+        <p>改变"能做什么"（动作空间/执行方式）：ch02 工具分发、ch03 权限（缩小空间）、ch11 任务图、ch12 后台、ch13 定时、ch14 团队、ch15 MCP、ch16 集成、ch17 工作流、ch18 目标循环（改变何时停）。</p>
+        <p>剩下 ch04 钩子与 ch06 计划跨越两类：钩子既拦动作也注入信息，计划既约束行动也组织视线。</p>
+      </div>
+    </details>
+  </div>
+
+  <div class="takeaway">
+    <span class="tk-label">这一讲带走</span>
+    <p>Agent = 模型 + Harness。模型负责判断，harness 负责让判断落地、让边界成立、让结果可观测。你要造的是车，不是方向盘上的手。</p>
+    <p class="next"><b>下一讲：</b>现在你知道了循环长什么样。但只有 bash 一个工具时，模型连"读文件"都得拼 <code class="inline-code">cat</code> 和 <code class="inline-code">find</code>。是时候给它装上手了。</p>
+  </div>
+</section>

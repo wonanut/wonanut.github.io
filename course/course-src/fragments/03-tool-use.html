@@ -1,0 +1,350 @@
+<section id="ch03" class="chapter">
+  <p class="chapter-kicker">第 3 讲 · 阶段一 · 让 Agent 动起来</p>
+  <h2 class="chapter-title">Tool Use：从 1 个工具到 5 个，循环只改一行
+    <small>对应 s02_tool_use：一张分发表，四个新工具，while 循环原样不动</small>
+  </h2>
+  <p class="chapter-lede">上一讲模型只有一把锤子：bash。它想“读这个文件”，却得先翻译成一条 shell 命令；这一讲把翻译层拿掉，给它五个具名工具——而循环只改了一行。</p>
+  <p class="source-line">
+    <span>源码 <code>s02_tool_use/code.py</code></span>
+    <span>原章 <a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/s02_tool_use/README.zh.md">README.zh.md</a></span>
+  </p>
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>说清工具定义（schema）和工具处理函数（handler）分别给谁看</li>
+    <li>用 <code class="inline-code">TOOL_HANDLERS</code> 分发表替换硬编码调用，新增工具不碰循环</li>
+    <li>理解为什么工具错误必须作为字符串返回，而不是抛异常</li>
+    <li>知道 <code class="inline-code">safe_path</code> 挡住了什么，又漏掉了什么</li>
+  </ul>
+
+  <div class="chapter-body">
+
+    <h3><span class="h3num">01</span>一个工具不够用</h3>
+    <p>如果你跳过了上一讲，只需记住一句话：Agent 的全部骨架是一个循环——调用模型、看响应里有没有 <code class="inline-code">tool_use</code>、有就执行、把结果以 <code class="inline-code">tool_result</code> 追加回 <code class="inline-code">messages[]</code>，没有就退出。s01 的执行动作只有一句 <code class="inline-code">run_bash(block.input["command"])</code>。</p>
+    <p>只有 bash 时，模型的日子是这样的：读文件写 <code class="inline-code">cat path/to/file</code>，写文件写 <code class="inline-code">echo "..." &gt; file.py</code>，找文件写 <code class="inline-code">find . -name "*.py"</code>，改一行要拼 <code class="inline-code">sed -i</code>。这些命令它当然会写，但每一句都要经过一次“意图 → shell 语法”的翻译。</p>
+    <p>翻译是有代价的。第一，<b>容易错</b>：写一个带引号和三引号的 Python 文件，<code class="inline-code">echo</code> 的转义能让人抓狂，模型也会经常翻车。第二，<b>浪费 token</b>：它得把“读文件”这个简单意图展开成一条命令字符串。第三，也是最关键的——<b>harness 看不懂</b>。在 loop 眼里，所有操作都是一坨不透明的字符串，你没法在“执行之前”按工具类型或路径做判断。</p>
+    <div class="callout insight">
+      <span class="callout-title">这些工具没有增加新能力</span>
+      <p>read、write、edit、glob 能做的事，bash 全都能做。它们真正改善的是<b>模型与 harness 之间的接口</b>：模型不必再翻译语法，harness 拿到的不再是字符串，而是“具名操作 + 结构化参数”。后面几讲会反复受益于这一点——权限按工具名判断，钩子按工具名记录，都建立在这个结构上。</p>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>意图</th><th>只有 bash 时</th><th>有专用工具后</th></tr></thead>
+        <tbody>
+          <tr><td>读文件</td><td><code>cat path</code>，大文件无法只读一段</td><td><code>read_file(path, limit)</code>，自带剩余行数提示</td></tr>
+          <tr><td>写文件</td><td><code>echo "..." &gt; path</code>，引号、换行、特殊字符全是坑</td><td><code>write_file(path, content)</code>，内容原样写入</td></tr>
+          <tr><td>精确改一处</td><td><code>sed -i 's/old/new/'</code>，旧文本里的正则元字符会捣乱</td><td><code>edit_file(path, old_text, new_text)</code>，字面匹配</td></tr>
+          <tr><td>找文件</td><td><code>find . -name '*.py'</code>，输出还得再解析</td><td><code>glob("**/*.py")</code>，直接返回路径列表</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>把这张表从上往下看一遍，你会发现 bash 那一列的共同点：<b>每一个意图都被编码成了字符串</b>，而字符串里的每个字符都可能有特殊含义。专用工具那一列的共同点则是：<b>意图直接对应参数</b>，参数由 schema 描述类型和必填项。少了一层编解码，模型犯错的概率就低一截。</p>
+    <p>当然，bash 不会被取消。它仍然是那个“什么都能做”的万能出口；专用工具只是覆盖最高频的几类动作。真实 harness 里两者长期共存，靠权限系统决定“哪些 bash 命令需要额外审批”——这正是下一讲的主题。</p>
+
+    <h3><span class="h3num">02</span>直觉：把“翻译”变成“结构”</h3>
+    <p>新设计只有两块东西，各自服务一个对象：</p>
+    <div class="card-grid">
+      <div class="card"><h4><code>TOOLS</code>：给模型看的菜单</h4><p>每个工具一条：叫什么、干什么、参数是什么类型、哪些必填。模型照着菜单点单，不用猜命令怎么写。</p></div>
+      <div class="card"><h4><code>TOOL_HANDLERS</code>：给 harness 用的岗位表</h4><p>工具名映射到处理函数。模型报出工具名，harness 查表找到实现，把参数按名字传进去。</p></div>
+    </div>
+    <div class="flow">
+      <div class="flow-node"><b>LLM</b>返回 <code>tool_use</code><br><code>name</code> + <code>input</code></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>TOOL_HANDLERS</b><br>按 <code>block.name</code> 查表</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>handler</b><br><code>(**block.input)</code></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>tool_result</b><br>字符串回填 <code>messages[]</code></div>
+    </div>
+    <p>和 s01 相比，循环的骨架完全没动。唯一的差别在执行那一行：从写死的 <code class="inline-code">run_bash(block.input["command"])</code>，变成“先查表、再调用”。所以这一讲的标题才敢说“只改一行”。</p>
+    <p>但“只改一行”背后是一次视角切换：s01 把工具当成“一个要调用的函数”，s02 把工具当成“一份可增长的数据”。函数是写死在代码里的，数据是可以从配置、从插件、从远端服务里长出来的。后面第 15 讲接 MCP 时，外部工具会动态出现在 <code class="inline-code">TOOL_HANDLERS</code> 里，而这个循环依然不需要认识它们中的任何一个。</p>
+    <p>这也解释了为什么值得先停下来读 s02：它代码量不大，却是整个仓库的“扩展点样板”。后面所有机制——权限、钩子、子代理、MCP——都会反复使用同一个套路：把变化的部分做成数据或回调，让核心保持稳定。</p>
+<p>如果这一讲只能带走一个习惯，我希望是：以后写任何“分发”逻辑时，先想想它能不能用一张表表达。能，就别写一长串 if/elif。</p>
+    <div class="analogy">
+      <span class="analogy-title">菜单与后厨岗位表</span>
+      <p><code class="inline-code">TOOLS</code> 是贴在大堂的菜单：顾客（模型）看着它点菜，不需要知道后厨怎么切配。<code class="inline-code">TOOL_HANDLERS</code> 是后厨的岗位表：哪道菜归哪个师傅做。服务员（harness）拿到订单，只看菜名，就把单子递给对应的师傅。</p>
+      <p><b>类比到哪为止：</b>真实餐厅的菜单和后厨可以各改各的，顶多某道菜售罄；而这里的菜单和岗位表必须严格一一对应。你加了 schema 却忘了注册 handler，模型会开心地点一道没人会做的菜，harness 只能回一句 <code class="inline-code">Unknown: xxx</code>。反过来，注册了 handler 却没写 schema，模型根本不知道这道菜存在。</p>
+    </div>
+
+    <h3><span class="h3num">03</span>代码精读：三块拼图</h3>
+    <h4>第一块：工具定义，给模型看的契约</h4>
+    <pre data-lang="python"><code>TOOLS = [
+    {"name": "bash", "description": "Run a shell command.",
+     "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
+    {"name": "read_file", "description": "Read file contents.",
+     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["path"]}},
+    {"name": "write_file", "description": "Write content to a file.",
+     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}},
+    # ... edit_file / glob 同样格式，此处略 ...
+]
+</code></pre>
+    <p><code class="inline-code">input_schema</code> 是标准的 JSON Schema。它做两件事：告诉模型“参数长什么样”，以及在你把请求发过去时，让 API 能在模型输出不符合 schema 时纠正或拒绝。注意 <code class="inline-code">required</code> 的价值：<code class="inline-code">read_file</code> 的 <code class="inline-code">limit</code> 不是必填，所以模型可以只说“读这个文件”，不用先想“读多少行”。</p>
+    <p><code class="inline-code">description</code> 也不是装饰。它直接进入模型的上下文，是模型决定“该用哪个工具”的主要依据。写“Find files matching a glob pattern; ** matches recursively”比写“找文件”有用得多——模型会据此知道要传 <code class="inline-code">**/*.py</code> 而不是 <code class="inline-code">*.py</code>。</p>
+
+    <h4>第二块：分发表，给 harness 用的实现</h4>
+    <pre data-lang="python"><code>TOOL_HANDLERS = {
+    "bash": run_bash, "read_file": run_read, "write_file": run_write,
+    "edit_file": run_edit, "glob": run_glob,
+}
+</code></pre>
+    <p>这是一个再普通不过的字典，但它是这一讲真正的“机制”。它把“名字 → 实现”的映射从控制流里拿出来，变成一份数据。想加第六个工具？在 <code class="inline-code">TOOLS</code> 里加一条定义，在 <code class="inline-code">TOOL_HANDLERS</code> 里加一行映射，收工。循环不需要知道世界上有几个工具，也不需要 import 谁。</p>
+    <p>对比 s01 的写法：执行是 <code class="inline-code">run_bash(block.input["command"])</code>，工具名根本不存在，参数位置也是写死的。想加 <code class="inline-code">read_file</code>，你就得在循环里写 <code class="inline-code">if block.name == "read_file": ... elif ...</code>。五个工具还行，十个工具时循环会变成一锅粥。更糟的是，这锅粥每加一个工具都要重改一次，而循环本该是最稳定的那段代码。</p>
+
+    <h4>第三块：分发那一行</h4>
+    <pre data-lang="python"><code>results = []
+for block in tool_calls:
+    print(f"\033[33m&gt; {block.name}\033[0m")
+    handler = TOOL_HANDLERS.get(block.name)
+    output = handler(**block.input) if handler else f"Unknown: {block.name}"
+    print(str(output)[:200])
+    results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
+
+messages.append({"role": "user", "content": results})
+</code></pre>
+    <p>三行核心，每一行都有讲究：</p>
+    <ul>
+      <li><b><code class="inline-code">TOOL_HANDLERS.get(block.name)</code></b>：用 <code class="inline-code">.get</code> 而不是 <code class="inline-code">[]</code>。模型是可能编出一个不存在的工具名的（尤其是在 context 里见过别的工具之后）。用下标会抛 <code class="inline-code">KeyError</code>，整个循环当场去世；用 <code class="inline-code">.get</code> 拿到 <code class="inline-code">None</code>，还能回一句 <code class="inline-code">Unknown: xxx</code> 给模型，让它自己纠正。</li>
+      <li><b><code class="inline-code">handler(**block.input)</code></b>：字典展开成关键字参数。这一步隐含一个契约：<b>schema 里的参数名必须和 handler 的形参名逐字一致</b>。模型给 <code class="inline-code">{"path": ..., "content": ...}</code>，handler 就得是 <code class="inline-code">def run_write(path, content)</code>。拼错一个字母，<code class="inline-code">**</code> 展开就会抛 <code class="inline-code">TypeError</code>。</li>
+      <li><b><code class="inline-code">results.append(...)</code></b>：和上一讲一样，<code class="inline-code">tool_use_id</code> 必须带。工具名变了、参数结构变了，但配对规则一点没变。</li>
+    </ul>
+    <div class="callout key">
+      <span class="callout-title">核心抽象</span>
+      <p>整个工具层可以总结成一句话：<b>模型决定“用哪个工具、传什么参数”，harness 用一张表把名字翻译成函数。</b>想扩展能力，就加表项；循环始终只认识 <code class="inline-code">block.name</code> 和 <code class="inline-code">block.input</code> 这两个字段。</p>
+    </div>
+
+    <p>把一次工具调用从模型到回填拆开，就是五个阶段。以后无论加权限、加钩子还是加日志，都是往这五个阶段之间塞逻辑：</p>
+    <div class="flow down">
+      <div class="flow-node accent"><b>① 点单</b>模型按 schema 选工具、填参数</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>② 查表</b>harness 用 <code>block.name</code> 找到 handler</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>③ 执行</b><code>handler(**block.input)</code></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>④ 兜错</b>成功返回内容，失败返回 <code>Error: ...</code></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>⑤ 回填</b>带 <code>tool_use_id</code> 写回 <code>messages[]</code></div>
+    </div>
+
+    <h4>四个新工具，各自在防什么</h4>
+    <p>回看实现会发现，它们都不是“bash 的薄包装”，每个都夹带了一个具体的防线：</p>
+    <pre data-lang="python"><code>def run_read(path: str, limit: int | None = None) -&gt; str:
+    try:
+        lines = safe_path(path).read_text(encoding="utf-8").splitlines()
+        if limit and limit &lt; len(lines):
+            lines = lines[:limit] + [f"... ({len(lines) - limit} more lines)"]
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error: {e}"
+
+def run_write(path: str, content: str) -&gt; str:
+    try:
+        file_path = safe_path(path)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content, encoding="utf-8")
+        return f"Wrote {len(content)} bytes to {path}"
+    except Exception as e:
+        return f"Error: {e}"
+</code></pre>
+    <ul>
+      <li><b><code class="inline-code">run_read</code> 的 <code class="inline-code">limit</code></b>：截断时不是静默少给，而是补一句 <code class="inline-code">... (N more lines)</code>。模型因此知道“后面还有”，需要时再指定更精确的范围，而不是以为文件只有这么长。</li>
+      <li><b><code class="inline-code">run_write</code> 的 <code class="inline-code">parent.mkdir(parents=True, exist_ok=True)</code></b>：目标目录不存在时自动创建。没有这一行，模型得先跑一条 <code class="inline-code">mkdir -p</code>，白多一轮。工具替模型吸收掉这种“机械前置步骤”，是接口设计的一部分。</li>
+      <li><b><code class="inline-code">run_edit</code> 的精确匹配</b>：见下面的深入区。它把“改哪一段”的责任交给模型，靠原文匹配而不是行号，避免改错位置。</li>
+      <li><b><code class="inline-code">run_glob</code> 的递归与上限</b>：<code class="inline-code">**</code> 递归匹配、结果排序去重、最多 200 条，并过滤掉逃出工作区的路径。找文件变成一个可预测的操作，而不是一段需要解析的 shell 输出。</li>
+    </ul>
+
+    <h4>一张表看清五个工具</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>工具</th><th>关键参数</th><th>返回什么</th><th>主要防什么</th></tr></thead>
+        <tbody>
+          <tr><td><code>bash</code></td><td><code>command</code></td><td>stdout + stderr（截断 50000 字符）</td><td>超时、危险命令、输出爆炸</td></tr>
+          <tr><td><code>read_file</code></td><td><code>path</code>、<code>limit</code></td><td>文件文本 + 剩余行数提示</td><td>路径越界、读太多撑爆上下文</td></tr>
+          <tr><td><code>write_file</code></td><td><code>path</code>、<code>content</code></td><td><code>Wrote N bytes to ...</code></td><td>路径越界、父目录不存在</td></tr>
+          <tr><td><code>edit_file</code></td><td><code>path</code>、<code>old_text</code>、<code>new_text</code></td><td>成功或“文本未找到”</td><td>路径越界、改错位置</td></tr>
+          <tr><td><code>glob</code></td><td><code>pattern</code></td><td>路径列表（最多 200 条）</td><td>结果过多、路径越界</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>这张表也解释了为什么五个工具不算多：每一个都对应一个高频动作，且都有明确的失败模式。工具不是越多越好，而是“每个都值得被单独审计”。当模型调用 <code class="inline-code">write_file</code> 时，harness 知道这是写操作；调用 <code class="inline-code">bash</code> 时，它只能看到一个命令字符串——两种信息量完全不同。</p>
+
+    <h4>错误为什么非要用字符串返回？</h4>
+    <p>看看每个 handler 的结构，它们几乎长得一模一样：<code class="inline-code">try</code> 包住全部逻辑，<code class="inline-code">except Exception as e: return f"Error: {e}"</code>。这不是偷懒，而是这一层最重要的设计决策之一。</p>
+    <p>工具失败是<b>常态</b>：文件不存在、权限不够、参数类型不对、路径越界、编码不是 UTF-8。这些失败对模型来说都是有用的信息——“这个文件不存在，我该先 glob 一下”。如果 handler 直接抛异常，异常会一路冒泡出 <code class="inline-code">agent_loop</code>，进程结束，模型连“失败了”都不知道，更别提重试。</p>
+    <p>所以这里的原则是：<b>把异常翻译成模型能读的反馈</b>。失败不是一个要终止世界的事件，而是一条要写进对话的消息。你会发现，后面所有机制（权限拒绝、钩子拦截）都沿用同一个套路——不抛异常，回一句字符串，让循环继续转。</p>
+
+    <h3><span class="h3num">04</span>safe_path：文件工具的边界</h3>
+    <p>四个文件工具共享一个入口检查：</p>
+    <pre data-lang="python"><code>def safe_path(p: str) -&gt; Path:
+    path = (WORKDIR / p).resolve()
+    if not path.is_relative_to(WORKDIR):
+        raise ValueError(f"Path escapes workspace: {p}")
+    return path
+</code></pre>
+    <p>三行代码，干了两件关键的事。<code class="inline-code">(WORKDIR / p).resolve()</code> 把相对路径拼到工作目录上，并<b>解析掉所有 <code class="inline-code">..</code> 和符号链接</b>——注意是解析之后才判断，否则 <code class="inline-code">../../etc/passwd</code> 这种字符串层面的检查一绕就过。<code class="inline-code">is_relative_to(WORKDIR)</code> 再确认最终路径仍在工作区内。</p>
+    <p>为什么这里敢 <code class="inline-code">raise</code>？因为调用它的地方在 handler 的 <code class="inline-code">try</code> 里面：<code class="inline-code">run_read</code>、<code class="inline-code">run_write</code> 等函数会捕获 <code class="inline-code">ValueError</code>，把它变成 <code class="inline-code">Error: Path escapes workspace: ../x</code> 返回给模型。也就是说，越界不是崩溃，而是一次“被拒绝的工具调用”。这是一次很好的分层示范：底层检查只管拒绝，顶层负责把拒绝翻译成对话。</p>
+    <p>为什么判断用 <code class="inline-code">is_relative_to</code>，而不是简单的字符串前缀比较？假设工作区是 <code class="inline-code">/work</code>，目标路径是 <code class="inline-code">/work2/secret</code>。字符串层面 <code class="inline-code">"/work2/secret".startswith("/work")</code> 是 <code class="inline-code">True</code>，但它明明在工作区外面。按路径组件判断，就不会被“同前缀的兄弟目录”骗过去。</p>
+    <p>符号链接是另一个经典绕过点：如果工作区里有个 <code class="inline-code">link</code> 指向 <code class="inline-code">/etc</code>，那么 <code class="inline-code">link/passwd</code> 这个“工作区内路径”实际指向系统文件。<code class="inline-code">resolve()</code> 会先把软链接解开，再做判断，所以这种绕法在 s02 里无效。</p>
+    <p>当然它仍有边界：检查与写入之间存在时间差（极端情况下路径可能被替换），而且 bash 完全不走这条路。它是“防手滑”和“防误用”的一层，不是不可绕过的安全边界。把这个定位说清楚，比夸大它的作用重要。</p>
+    <div class="callout warn">
+      <span class="callout-title">它只保护文件工具</span>
+      <p><code class="inline-code">safe_path</code> 只管 read / write / edit / glob。bash 完全不受它约束——<code class="inline-code">cat /etc/passwd</code> 照样能跑。所以这一讲的“安全”是局部的、不完整的：它证明了路径检查该放在哪里，但真正的安全边界要等下一讲的权限闸门。</p>
+    </div>
+
+    <h3><span class="h3num">05</span>一次响应里的多个工具调用</h3>
+    <p>模型经常一次点好几道菜：“读一下 a.py 和 b.py，然后列出所有 .py 文件。”这时 <code class="inline-code">response.content</code> 里会躺着两个或三个 <code class="inline-code">tool_use</code> block，<code class="inline-code">tool_calls</code> 列表里也就有好几项。</p>
+    <p>s02 的处理方式很朴素：<code class="inline-code">for block in tool_calls</code>，<b>按响应里的原始顺序，一个接一个执行</b>。不是并行，不是多线程，就是老老实实排队。这个选择有明确的取舍：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>维度</th><th>顺序执行（s02 的选择）</th><th>如果并行执行</th></tr></thead>
+        <tbody>
+          <tr><td>顺序</td><td>确定，就是响应里的顺序</td><td>完成顺序不定，结果顺序需要额外维护</td></tr>
+          <tr><td>失败</td><td>一次失败只影响那一个结果</td><td>需要处理部分成功、部分失败</td></tr>
+          <tr><td>文件系统</td><td>不会有两个工具同时改同一个文件</td><td>写写冲突、读到半成品</td></tr>
+          <tr><td>速度</td><td>慢，一个等一个</td><td>快，但复杂度和风险都上来了</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>失败隔离在代码里的体现，是每个 handler 自己兜住异常。假设模型一次要求读 <code class="inline-code">a.py</code>（不存在）和 <code class="inline-code">b.py</code>（存在）：第一个返回 <code class="inline-code">Error: ...</code>，循环不中断，第二个照常执行。结果是两条 <code class="inline-code">tool_result</code>：一条错误、一条内容。模型下一轮就能看到“a 读失败、b 读成功”，自行决定补一个 glob 还是先写 a。</p>
+    <p>这里有个值得记住的判断：<b>“模型一次请求多个调用”不等于“harness 要并发执行”</b>。并发是 harness 的实现自由，不是协议要求。先做对，再谈快；这个仓库到第 12 讲才会引入后台任务，处理“慢”的问题。</p>
+
+    <h4>返回值为什么都是字符串？</h4>
+    <p>看五个 handler 的返回：<code class="inline-code">read_file</code> 返回文件文本，<code class="inline-code">write_file</code> 返回 <code class="inline-code">"Wrote N bytes to ..."</code>，<code class="inline-code">glob</code> 返回换行拼接的路径列表。没有一个是字典或对象。这是有意的：<code class="inline-code">tool_result</code> 的 <code class="inline-code">content</code> 是给模型读的自然语言，不是给程序解析的 API 响应。</p>
+    <p>如果返回一个 JSON 对象，模型得先“读懂 JSON 再理解语义”，多绕一步；而且不同工具的 JSON 结构各不一样，模型很容易记混字段。用一句人话总结结果，模型下一轮就能直接行动：“写成功了，去读回来验证”或者“路径越界了，换个位置”。</p>
+    <p>代价是机器不好解析。如果 harness 自己也想知道“这次写入多少字节”，从字符串里正则抠数字就很别扭。所以真实产品会做<b>两层</b>：给模型看一段摘要文本，同时另存一份结构化的工具执行记录用于日志和审计。两层各服务一个读者，不要混在一起。</p>
+    <div class="callout insight">
+      <span class="callout-title">设计要点</span>
+      <p>工具的返回值同时是“模型的输入”和“系统的日志源”。想清楚这一层是给谁看的，就不会纠结该返回字符串还是对象——答案往往是：给模型字符串，给系统另记一份结构。</p>
+    </div>
+
+    <h4>这一段真正建立了什么</h4>
+    <p>到 s02 结束，你已经有了一个稳定的“执行层”：模型说 <code class="inline-code">name</code> 和 <code class="inline-code">input</code>，harness 查表、调用、把结果变成字符串回填。加能力不用改循环，这是后面所有章节的复用基础。</p>
+    <p>但还有三样东西没建立。<b>策略</b>：什么操作允许、什么需要问用户——目前模型写什么就执行什么。<b>观测</b>：谁调了什么、花了多久、输出多大——目前只有一句 <code class="inline-code">print</code>。<b>生命周期</b>：循环什么时候必须停、谁能拦它——目前完全靠模型自觉。</p>
+    <p>接下来的两讲正好一人补一块：s03 用权限管线补“策略”，s04 用钩子把“策略 + 观测 + 部分生命周期”统一挂到固定扩展点上。你现在记住这个缺口，后面看代码时就知道每一段是在补哪一块。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么 if/elif 迟早会崩？</summary>
+      <div class="deep-body">
+        <p>假设你不用字典，直接在循环里写分支：</p>
+        <p><code class="inline-code">if block.name == "bash": output = run_bash(...)</code><br><code class="inline-code">elif block.name == "read_file": output = run_read(...)</code><br>看起来也能跑，五个工具时甚至挺直观。问题出在“随时间演化”：</p>
+        <ul>
+          <li><b>改循环才能扩能力</b>。每加一个工具，你都要动 <code class="inline-code">agent_loop</code> 这个最该稳定的函数，回归测试的范围被动扩大。</li>
+          <li><b>参数处理各写各的</b>。每个分支都要手工从 <code class="inline-code">block.input</code> 里取参数，写错一个键就是运行时错误，而且错误藏在分支里，不容易看出规律。</li>
+          <li><b>无法动态注册</b>。分支是写死在源码里的。而后面第 15 讲接入 MCP 时，工具是运行时从外部服务器发现的——你不可能在代码里为未知工具预写 <code class="inline-code">elif</code>。</li>
+          <li><b>容易漏</b>。加了 schema 忘了加分支，模型点单后静默失败；字典至少还能用 <code class="inline-code">.get</code> 给出统一兜底。</li>
+        </ul>
+        <p>所以分发表不只是“写得好看”，它把工具注册从<b>控制流</b>转移到了<b>数据</b>。数据可以加、可以删、可以由外部系统生成；控制流一旦写死，扩展就要动刀。</p>
+        <details class="deep deep-2">
+          <summary>再深一层：schema 和 handler 的契约靠什么保证？</summary>
+          <div class="deep-body">
+            <p>靠命名约定，不靠类型系统。Python 的 <code class="inline-code">**block.input</code> 只认“键名 = 形参名”，不会读你 JSON Schema 里的约束。所以 <code class="inline-code">required</code> 里写了 <code class="inline-code">content</code>，handler 形参却叫 <code class="inline-code">body</code>，运行时就会 <code class="inline-code">TypeError</code>；这个异常被 handler 外面的 <code class="inline-code">try</code> 捕获，变成一条 <code class="inline-code">Error: ...</code> 发给模型。模型看到一个语法层面的报错，通常会困惑地重试，浪费一轮。</p>
+            <p>工程上常见的加固手段：一是把 handler 签名写进测试，逐一比对 schema 的 properties；二是在分发前做一次参数校验（缺参数、多参数、类型不对都提前拒绝）；三是统一命名规范，比如 <code class="inline-code">path</code>、<code class="inline-code">content</code>、<code class="inline-code">pattern</code> 这些词全项目复用。这一讲先用最简单的约定，你在自己实现时至少要知道这层契约存在。</p>
+          </div>
+        </details>
+      </div>
+    </details>
+
+    <details class="deep">
+      <summary>🔬 深入：并行调用真的并行吗？顺序和失败谁负责？</summary>
+      <div class="deep-body">
+        <p>不是。模型可以在一条响应里<b>请求</b>多个工具，但 s02 的 harness 是串行执行的。这常被误解成“模型并行调用了工具”，其实模型只是把多个意图打包在了一次输出里。执行是 harness 的事，而这里的 harness 选择了排队。</p>
+        <p><b>顺序</b>由 <code class="inline-code">response.content</code> 里的 block 顺序决定。<code class="inline-code">tool_calls</code> 是列表推导，保持原序；<code class="inline-code">for</code> 循环从头跑到尾。结果也按同样顺序 append 进 <code class="inline-code">results</code>。真正保证结果与调用对上的不是顺序，而是 <code class="inline-code">tool_use_id</code>——协议按 id 配对，不按位置。但保持顺序能让日志和调试舒服很多。</p>
+        <p><b>失败隔离</b>由每个 handler 自己负责。所谓“隔离”，是指 A 的异常不会阻止 B 执行，也不会让整批结果丢失。代价是：如果 A 是个耗时 120 秒的超时命令，B 就得干等两分钟。串行系统的典型问题——木桶效应，在这里同样存在。</p>
+        <p>那什么时候该并行？当调用之间<b>没有依赖、不写同一份资源</b>时，比如并行读五个文件。但这需要 harness 引入线程池、结果顺序管理、以及“部分失败”的表达方式。s02 刻意不做，是因为这一讲要教的是分发结构，不是并发工程。先把边界划清楚，比先跑得快重要。</p>
+      </div>
+    </details>
+
+    <details class="deep">
+      <summary>🔬 深入：read / edit 的精确匹配，glob 与 find 的差别</summary>
+      <div class="deep-body">
+        <p><code class="inline-code">run_edit</code> 的逻辑是：读全文，<code class="inline-code">if old_text not in text</code> 就直接返回错误；否则 <code class="inline-code">text.replace(old_text, new_text, 1)</code>，只替换第一次出现。这个设计把“精确匹配”的责任推给了模型：它必须先读文件，抄一段真实存在的原文，才能改。模糊匹配、按行号猜、正则替换全都没有——因为对 Agent 来说，<b>改错文件比改不动文件危险得多</b>。</p>
+        <p>但 <code class="inline-code">replace(..., 1)</code> 有个安静的坑：如果 <code class="inline-code">old_text</code> 在文件里出现多次，它只改第一处，不报错也不提示。模型以为改完了，其实别的副本还在。成熟的 edit 工具会要求“匹配必须唯一”，或者返回“发现 N 处匹配，请提供更多上下文”。自己实现时，这一点值得抄走。</p>
+        <p><code class="inline-code">run_glob</code> 和 shell 的 <code class="inline-code">find</code> 看起来都是“找文件”，差别却在接口形状：<code class="inline-code">glob</code> 接收一个模式，返回<b>排序、去重、限制在 200 条、且被限制在工作区内</b>的路径列表；<code class="inline-code">find</code> 是一条 shell 命令，返回任意格式的文本，还能顺手执行 <code class="inline-code">-delete</code>。<code class="inline-code">glob</code> 的输出是模型可以直接拿去调 <code class="inline-code">read_file</code> 的干净路径，<code class="inline-code">find</code> 的输出还得再解析。前者是“结构化工具”，后者是“万能但不受控”。</p>
+        <p>这也是这一讲反复出现的主题：专用工具牺牲了一点灵活性，换来稳定的接口和可审计的参数。值不值，取决于你要做的是玩具还是产品。</p>
+        <details class="deep deep-2">
+          <summary>再深一层：为什么不用行号或 diff 来编辑？</summary>
+          <div class="deep-body">
+            <p>行号编辑看起来更精确：<code class="inline-code">replace_line(path, 42, "new code")</code>。但它有一个前提——文件内容在你读它和改它之间<b>没有变过</b>。Agent 的运行是异步的：它可能在读完之后又跑了格式化、又执行了另一个写入工具，等它回头按行号改时，第 42 行已经换人了。结果就是“改成功，但改错了地方”，而且不会报错。</p>
+            <p>原文匹配天然更稳：只要那段文本还在文件里，改的就是它；不在了，就明确失败，模型可以重新读一遍再改。代价是模型必须先把原文抄对，长文件里抄错一个空格就会失败——所以“先 read 再 edit”成了 Agent 的固定动作。</p>
+            <p>真实的 edit 工具通常还会加两条约束：<b>匹配必须唯一</b>（出现两处就报错，要求更多上下文），以及<b>失败时不写入</b>（先检查后写，避免半成功）。这一讲的实现只做了“必须存在”，另外两条留给你自己补。写工具的时候多问一句“它失败时会不会悄悄改错”，胜过事后加一堆校验。</p>
+          </div>
+        </details>
+      </div>
+    </details>
+
+    <details class="deep">
+      <summary>🔬 深入：description 才是模型选工具的依据</summary>
+      <div class="deep-body">
+        <p>很多人把 <code class="inline-code">description</code> 当成注释，随手写一句“读文件”。它其实是模型做选择的<b>唯一说明书</b>——工具名、描述、参数 schema 一起进入上下文，模型据此决定这一轮要不要调、调哪个。描述写得含糊，模型就会做出你看不懂的选择：明明有 <code class="inline-code">read_file</code>，它偏用 <code class="inline-code">bash cat</code>；或者该用 <code class="inline-code">glob</code> 时反复 <code class="inline-code">find</code>。</p>
+        <p>好的描述通常会回答四件事：<b>做什么</b>（Read file contents）、<b>关键参数怎么填</b>（<code class="inline-code">**</code> matches recursively）、<b>边界在哪</b>（最多返回 200 条）、<b>什么时候别用</b>（比如“编辑请用 edit_file，不要用 write_file 覆盖整文件”）。后两条最容易被省略，也最影响行为。</p>
+        <p>看 s02 的实际写法：<code class="inline-code">bash</code> 是“Run a shell command.”，<code class="inline-code">edit_file</code> 是“Replace exact text in a file once.”。后者把“exact”和“once”都点出来了，模型就知道要抄原文、且只会改一处。这不是文学修辞，是在给模型写接口文档。</p>
+        <p>但描述不是越长越好。它每轮都占上下文，五个工具各写两百字，就是一千字的固定开销。取舍标准和代码注释一样：写“不看就会用错”的信息，省略“看了也不会用错”的常识。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">06</span>动手实验</h3>
+    <ol class="steps">
+      <li><b>加第六个工具。</b>照着 <code class="inline-code">read_file</code> 的样子，在 <code class="inline-code">TOOLS</code> 里加一个 <code class="inline-code">list_dir</code>（参数 <code class="inline-code">path</code>），在 <code class="inline-code">TOOL_HANDLERS</code> 里注册一个 <code class="inline-code">run_list</code>，返回目录项列表。运行 <code class="inline-code">python s02_tool_use/code.py</code>，输入“列出当前目录下的所有文件”。预期：模型开始使用你的新工具，而 <code class="inline-code">agent_loop</code> 一行没改。这就是分发表的价值。</li>
+      <li><b>制造一次参数拼写错误。</b>把 <code class="inline-code">TOOLS</code> 里 <code class="inline-code">read_file</code> 的属性名 <code class="inline-code">path</code> 改成 <code class="inline-code">file_path</code>，但 handler 仍然叫 <code class="inline-code">run_read(path, limit=None)</code>。跑一次“读 README.md”。预期：handler 收到 <code class="inline-code">file_path=...</code> 后抛 <code class="inline-code">TypeError</code>，被 <code class="inline-code">except</code> 捕获，模型收到一条 <code class="inline-code">Error: ...</code>，然后大概率重试一次仍然失败。亲眼看一看“契约错位”长什么样。</li>
+      <li><b>试试目录穿越。</b>输入“读一下 <code class="inline-code">../../etc/hosts</code>”。预期：read_file 返回 <code class="inline-code">Error: Path escapes workspace</code>；模型会改用 <code class="inline-code">bash cat</code>，然后成功——因为 bash 不受 <code class="inline-code">safe_path</code> 约束。这个对比正好引出下一讲。</li>
+      <li><b>观察多工具调用。</b>输入“同时读 README.md 和 requirements.txt，再找一下所有 .py 文件”。在分发处 <code class="inline-code">print(block.name)</code>，观察模型一次返回了几个 <code class="inline-code">tool_use</code>、执行顺序是否和响应顺序一致。再把其中一个文件名改错，确认“一条失败、其余照跑”。</li>
+      <li><b>用 description 引导选择。</b>把 <code class="inline-code">read_file</code> 的 description 改成一句容易误解的话，例如“Run a shell command to read a file.”，再输入“读一下 README.md”。预期：模型更可能选择 <code class="inline-code">bash</code> 而不是 <code class="inline-code">read_file</code>。改回清晰描述后重试，观察选择是否回来。这个小实验能让你直观感到：工具描述是行为的一部分，不是文档。</li>
+    </ol>
+    <div class="callout tip">
+      <span class="callout-title">加工具前的三个问题</span>
+      <p>这个动作高频吗？它的参数能稳定结构化吗？它失败时能给出模型看得懂的字符串吗？三个都是“是”，才值得加一个工具。否则宁可让模型用 bash——多一个工具，就多一份 schema 维护成本和上下文开销。</p>
+    </div>
+    <p>做完这几个实验，最好再回头看一眼分发那一行代码。你会发现它短得不像“机制”，但正是这四行让工具数量从 1 变成 5、将来变成 50，而循环不变。判断一段代码重不重要，不要看它多长，要看它承担了多少变化。</p>
+
+    <h3><span class="h3num">07</span>常见误区</h3>
+    <ul>
+      <li><b>很多人以为多写几个工具就“更强”了。</b>其实工具没有增加模型的原始能力，bash 都能做。增加的是<b>接口质量</b>：更少翻译、更少转义、更结构化、更容易被权限和日志系统处理。判断该不该加工具，问的不是“能不能做”，而是“这个动作是否高频、是否值得一个稳定接口”。</li>
+      <li><b>很多人以为 handler 里应该让异常冒出去，交给上层统一处理。</b>在这一层不行。工具失败是要写进对话的信息，不是要终止程序的事故。正确姿势是 handler 内部兜住异常、返回字符串；上层判断的只是“要不要继续循环”。</li>
+      <li><b>很多人以为 <code class="inline-code">safe_path</code> 让 Agent 安全了。</b>它只保护文件工具。模型完全可以用 bash 绕过，<code class="inline-code">../../etc/hosts</code> 不行就 <code class="inline-code">cat /etc/hosts</code>。真正的权限边界必须建在“所有工具执行之前”，而不是某一个工具内部。</li>
+    </ul>
+    <div class="callout key">
+      <span class="callout-title">工具是能力边界，也是审计边界</span>
+      <p>模型能做什么，取决于你注册了哪些工具；系统能审计什么，取决于工具被切得多细。<code class="inline-code">bash</code> 是一把万能钥匙，但它只留下一条命令字符串；<code class="inline-code">write_file</code> 留下的是一次明确的写操作和路径。想让权限、日志、审批做得准，就把高频动作拆成具名工具。</p>
+    </div>
+
+    <p>到这里，这一讲的主干就讲完了。接下来先自己动手，再对答案——看代码和写代码之间，差的从来不是理解，而是那几次亲手改错。</p>
+
+    <h3><span class="h3num">08</span>自测</h3>
+    <p>五道题从“机制细节”问到“设计取舍”，建议先自己想一遍再展开答案。</p>
+    <details class="quiz">
+      <summary>如果模型返回一个 <code class="inline-code">TOOL_HANDLERS</code> 里没有的工具名，会发生什么？</summary>
+      <div class="answer"><p><code class="inline-code">TOOL_HANDLERS.get(block.name)</code> 返回 <code class="inline-code">None</code>，于是 <code class="inline-code">output</code> 变成 <code class="inline-code">f"Unknown: {block.name}"</code>。这条字符串照常作为 <code class="inline-code">tool_result</code> 回填，循环继续。模型下一轮看到“工具不存在”，通常会换成已知工具重试。注意：这里用的是 <code class="inline-code">.get</code>，如果写成 <code class="inline-code">TOOL_HANDLERS[block.name]</code>，就会抛 <code class="inline-code">KeyError</code>，整个循环直接终止。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>模型一次返回三个 <code class="inline-code">tool_use</code>，其中第二个执行失败。第一个和第三个还会执行吗？</summary>
+      <div class="answer"><p>会。失败被第二个 handler 内部的 <code class="inline-code">try/except</code> 吃掉，返回一条 <code class="inline-code">Error: ...</code> 字符串，循环进入第三次迭代。三个结果都会出现在 <code class="inline-code">results</code> 里，按原顺序排列。这正是“失败隔离”的含义：一次工具失败只影响它自己那条 <code class="inline-code">tool_result</code>，不影响同批其他调用，也不中断 agent 循环。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>给 <code class="inline-code">TOOLS</code> 加了新工具、却忘了在 <code class="inline-code">TOOL_HANDLERS</code> 里注册，会怎样？</summary>
+      <div class="answer"><p>模型看得见这个工具（schema 在 <code class="inline-code">TOOLS</code> 里），于是可能调用它；但 harness 查不到实现，只会返回 <code class="inline-code">Unknown: 工具名</code>。模型会困惑、重试、或者改用别的工具。这是“菜单和后厨岗位表必须同步”的典型翻车。反过来，注册了 handler 却没写 schema，模型根本不知道有这个工具，永远不会调用——症状更安静，也更难查。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>把 <code class="inline-code">run_read</code> 里的 <code class="inline-code">limit</code> 逻辑删掉，只返回全文，风险是什么？</summary>
+      <div class="answer"><p>一个大文件就能把上下文撑爆。比如读一个几万行的日志，几千 token 的输出会挤占模型注意力，还可能让后续轮次超出上下文窗口。<code class="inline-code">limit</code> 加上“还有 N 行”的提示，是在“给模型足够信息”和“别把预算烧光”之间做平衡。工具返回什么、返回多少，本身就是一个设计决策。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么说“多工具”是为下一讲的权限做铺垫？</summary>
+      <div class="answer"><p>因为权限判断需要知道“这是什么操作、参数是什么”。bash 时代 harness 只有一坨字符串，只能做脆弱的子串匹配；有了具名工具和结构化参数，权限系统才能精确地说“<code class="inline-code">write_file</code> 的 <code class="inline-code">path</code> 在工作区外，需要审批”“<code class="inline-code">bash</code> 的命令里含删除动作，需要审批”。s02 先把接口结构立起来，s03 才有地方挂闸门。</p></div>
+    </details>
+
+    <h4>延伸：工具改完之后，谁来验证结果？</h4>
+    <p>这一讲的所有工具都只负责“执行”，不负责“验证”。<code class="inline-code">write_file</code> 返回 <code class="inline-code">Wrote 100 bytes</code>，不代表内容写对了；<code class="inline-code">edit_file</code> 返回 <code class="inline-code">Edited</code>，也不代表改的是你想要的那一处。模型的常见做法是“写完再读回来确认”，这需要多花一轮，但比默默写错强。</p>
+    <p>更成熟的做法是在工具层做校验：写之前检查内容、写之后读回比对、edit 时确认匹配唯一。但校验逻辑一多，工具本身就开始膨胀。s04 给出的解法是把这类“执行前后要做的事”挂到钩子上——写之前检查、写之后提醒，而工具保持单一职责。</p>
+    <p>所以你读源码时可以留意这个规律：<b>工具负责“做”，钩子负责“看”和“拦”</b>。两者分开，工具才好测，钩子才好换。下一讲先补“拦”，再下一讲补“看”，顺序刚好。</p>
+    <div class="callout tip">
+      <span class="callout-title">一个自检习惯</span>
+      <p>每加一个会改文件的工具，就问自己：它失败时会留下半成品吗？重试一次安全吗？如果答案让你犹豫，先把它改成“先校验、后写入”，再谈接进循环。Agent 会重试，工具最好别怕重试。</p>
+    </div>
+    <p>最后提醒一句：不要把“工具写得万能”当成目标。工具的价值在于边界清晰——输入是什么、输出是什么、什么情况下失败、失败了让谁知道。这四条写清楚，后面权限和钩子才有抓手；写不清楚，再多工具也只是把混乱搬进循环里。</p>
+
+  </div>
+
+  <div class="takeaway">
+    <span class="tk-label">这一讲带走</span>
+    <p>加工具不是加代码，是加两行数据：一条 schema、一条映射。循环只认识 <code class="inline-code">name</code> 和 <code class="inline-code">input</code>，所以它可以一直保持不变。这个“数据扩展、控制流稳定”的结构，是后面所有能力的地基。</p>
+    <p class="next"><b>下一讲：</b>五个工具都能跑了，但 bash 依然能把整个项目删掉，<code class="inline-code">safe_path</code> 也只管住了文件工具。在执行之前加一道门——拒绝列表、规则匹配、用户审批，三道闸门怎么串起来？</p>
+  </div>
+</section>

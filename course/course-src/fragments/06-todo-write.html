@@ -1,0 +1,352 @@
+<section id="ch06" class="chapter">
+  <p class="chapter-kicker">第 6 讲 · 阶段二 · 做复杂任务</p>
+  <h2 class="chapter-title">TodoWrite：先列计划再动手，Agent 才不会跑偏
+    <small>对应 s05_todo_write：370 行 Python，一个 TodoManager，一个 reminder 计数器</small>
+  </h2>
+  <p class="chapter-lede">到上一讲为止，Agent 会调工具、会被权限拦下、会被钩子插话——能力已经齐了。可一旦任务超过五步，它还是会做着做着就忘了自己最初要干什么。这一讲只加一块白板：让模型把计划写下来，然后照着做。</p>
+  <p class="source-line">
+    <span>源码 <code>s05_todo_write/code.py</code></span>
+    <span>原章 <a href="https://github.com/shareAI-lab/learn-claude-code/blob/main/s05_todo_write/README.zh.md">README.zh.md</a></span>
+  </p>
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>说清"规划"为什么能在不改模型的前提下提升多步任务的完成率</li>
+    <li>读懂 <code class="inline-code">TodoManager</code> 的校验规则，以及状态如何重新进入上下文</li>
+    <li>分清 <code class="inline-code">todo_write</code>（注意力工具）与 s10 Task System（跨代理协调）的边界</li>
+  </ul>
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>一个真实的麻烦：模型做着做着就忘了主线</h3>
+    <p>给 Agent 一个典型的重构任务：<b>"把所有 Python 文件改成 snake_case 命名，改完跑测试，把失败的修好。
+    "</b>这是一条五步以上的任务链，中间还带着分支。</p>
+    <p>Agent 开始干活：改名 3 个文件，跑了一次测试，发现 2 个用例失败，于是全力去修测试。
+    修着修着，测试里的断言失败把它全部注意力吸走了。
+    它可能改成"让测试通过"——而不是"让代码符合 snake_case 并且测试通过"。
+    最初那个命名规范，在十几轮工具调用之后，已经被挤出了它可以关注的窗口。</p>
+    <p>对话越长越严重：每一次 <code class="inline-code">read_file</code> 的文件内容、每一条 <code class="inline-code">bash</code> 的报错、每一个 <code class="inline-code">tool_result</code>，都在往上下文里加东西。
+    system prompt 里的要求依然在，但它在第 1 轮时权重很高，到第 30 轮已经被稀释成背景噪音。
+    一个 10 步的重构，做到第 3 步就开始即兴发挥，因为第 4 到第 10 步压根没有"存在于任何地方"——它们只存在于模型的一个念头里。</p>
+    <p>注意问题的性质：这里不是模型"能力不够"。
+    它完全会改名、会修测试。
+    它缺的是<mark>工作记忆</mark>——一个能在多轮之间稳定存在、每轮都能被重新看见的地方，用来存放"我要做哪几步、现在做到哪了"。</p>
+
+    <h3><span class="h3num">02</span>直觉：给模型一块随时能看见的白板</h3>
+    <div class="analogy">
+      <span class="analogy-title">像装修工长兜里的那张清单</span>
+      <p>工长带着一班工人干活。
+      他不用记得全部细节，但他兜里有一张手写清单：拆墙、走水电、贴砖、刷漆、验收。
+      每干完一项，他就掏出笔打个勾，然后看下一项。
+      清单不在他脑子里，而在纸上——所以他可以随时低头确认，不会被眼前某块贴歪的砖带跑。</p>
+      <p><b>类比到哪为止：</b>真实工长有专业判断，能发现"这活其实没干完"，而 <code class="inline-code">TodoManager</code> 不会验证任务是否真的完成。
+      它只记录模型<b>声称</b>的状态。
+      清单是自我报告，不是事实。</p>
+    </div>
+    <p>所以 s05 加的东西非常克制：一个 <code class="inline-code">todo_write</code> 工具、一个持有任务列表的 <code class="inline-code">TodoManager</code>、一个记录"多久没更新"的计数器。
+    它不接管执行，不强制流程，只做一件事——把模型的计划变成上下文里的一段真实文本。</p>
+    <div class="flow">
+      <div class="flow-node"><b>User</b>多步任务</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>LLM</b>先调 todo_write 列出全部步骤</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>TodoManager</b>校验并渲染清单</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>tool_result</b>把清单塞回 messages[]</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>LLM</b>做一步，勾一项，再看清单</div>
+    </div>
+    <p>这个循环里有四个关键设计决策，每一个都值得停下来想一秒：</p>
+    <ul>
+      <li><b>状态放在 harness 的内存里</b>，也就是 <code class="inline-code">TODO = TodoManager()</code>，而不是指望模型"记住"。
+      模型的下一次调用是全新的、无状态的，它唯一能看到的只有 <code class="inline-code">messages[]</code>。</li>
+      <li><b>每次更新都返回完整清单</b>，而不只是返回"更新成功"。这样模型在下一轮说话前，刚刚"读"过一遍自己的计划。</li>
+      <li><b>不强制</b>。
+      模型可以连续好几轮不碰 todo，harness 只在连续 3 轮没更新时，往工具结果里塞一句提醒。</li>
+      <li><b>严格校验</b>。
+      最多 20 项、每项必须有非空 content、同一时间只允许一个 <code class="inline-code">in_progress</code>。
+      约束越清楚，模型越不容易把清单写成流水账。</li>
+    </ul>
+    <p>还有一个常被忽略的问题：模型怎么知道"该列几步"？
+    答案在 system prompt 里那句 <code class="inline-code">Before starting any multi-step task, use todo_write to plan your steps</code>。
+    它没有规定步数，只规定了<b>时机</b>。
+    步数由模型自己判断——这既是自由，也是风险：列得太粗（一步"改完所有文件"），清单就退化成一句口号；列得太细（"打开文件、找到第 12 行、改一个字母"），清单本身就成了负担。</p>
+    <p>所以本章的机制其实是一个三方协作：<b>system prompt 负责触发</b>（什么时候该规划）、<b>模型负责内容</b>（列哪几步、怎么拆分）、<b>TodoManager 负责边界</b>（最多几项、什么状态合法）。
+    三者缺一不可，而代码里真正"聪明"的部分很少——这正是好 harness 的样子：把判断留给模型，把约束写死在代码里。</p>
+    <div class="callout insight">
+      <span class="callout-title">设计要点</span>
+      <p>todo 不给 Agent 增加任何<b>执行能力</b>——它不会多出工具，也不会变聪明。
+      它增加的是<b>规划能力</b>：让计划从"模型脑子里的一个念头"变成"上下文里的一段文本"，从而在每一轮都能被重新读到。</p>
+    </div>
+
+    <h3><span class="h3num">03</span>代码精读：一块会自我校验的白板</h3>
+    <p><b>先看数据结构。
+    </b><code class="inline-code">TodoManager</code> 只有一个字段 <code class="inline-code">items</code>，是 <code class="inline-code">list[dict]</code>，每项形如 <code class="inline-code">{"content": "...", "status": "pending"}</code>。
+    注意 <code class="inline-code">update()</code> 是<b>整体替换</b>，不是"修改第 N 项"：模型每次传进来的是"当前完整的计划快照"，而不是增量补丁。</p>
+    <pre data-lang="python"><code>class TodoManager:
+    def update(self, todos: list | str) -&gt; str:
+        if isinstance(todos, str):
+            try:
+                todos = json.loads(todos)          # 先试 JSON
+            except json.JSONDecodeError:
+                todos = ast.literal_eval(todos)    # 再试 Python 字面量，不用 eval
+        if not isinstance(todos, list):
+            raise ValueError("todos must be a list")
+        if len(todos) &gt; 20:
+            raise ValueError("Max 20 todos allowed")
+        # ... 逐项校验 content 非空、status 属于三种取值 ...
+        if in_progress_count &gt; 1:
+            raise ValueError("Only one todo can be in_progress at a time")
+        self.items = validated
+        return self.render()</code></pre>
+    <p>逐行问"这行在防什么"：</p>
+    <ul>
+      <li><code class="inline-code">isinstance(todos, str)</code> 两段解析，是在防"模型把数组写成字符串"。
+      有的模型会把 <code class="inline-code">[{...}]</code> 序列化成文本再传，JSON 解析失败就退到 <code class="inline-code">ast.literal_eval</code>。
+      用 <code class="inline-code">literal_eval</code> 而不是 <code class="inline-code">eval</code>，是安全的底线——只解析字面量，不执行代码。</li>
+      <li><code class="inline-code">len(todos) &gt; 20</code> 是硬上限。
+      清单越长，它自己占的上下文越多，模型维护它的成本越高。
+      20 是"够用但不会失控"的经验值。</li>
+      <li><code class="inline-code">in_progress_count &gt; 1</code> 这条最有意思：它强制"同一时间只做一件事"。
+      这不是工程限制，是<b>注意力约束</b>——清单的价值在于把注意力钉在下一步，允许七项并行等于没有计划。</li>
+    </ul>
+    <p><b>再看渲染。
+    </b>校验通过后，<code class="inline-code">render()</code> 把状态翻译成人类一眼能扫的文本。
+    这份文本的归宿不是终端日志，而是下一轮模型的输入：</p>
+    <pre data-lang="python"><code>    def render(self) -&gt; str:
+        if not self.items:
+            return "No todos."
+        lines = []
+        for todo in self.items:
+            marker = {
+                "pending": "[ ]",
+                "in_progress": "[&gt;]",
+                "completed": "[x]",
+            }[todo["status"]]
+            lines.append(f"{marker} {todo['content']}")
+        done = sum(todo["status"] == "completed" for todo in self.items)
+        lines.append(f"\n({done}/{len(self.items)} completed)")
+        return "\n".join(lines)</code></pre>
+    <p>渲染结果形如 <code class="inline-code">[x] 1/3 改名</code>、<code class="inline-code">[&gt;] 2/3 跑测试</code>、<code class="inline-code">[ ] 3/3 修失败用例</code>，末尾一行 <code class="inline-code">(1/3 completed)</code>。
+    别小看这个进度分数——它是模型判断"还剩多少、离结束多远"的锚点。
+    没有它，模型会反复确认"我是不是快做完了"；有了它，一个数字就够了。</p>
+    <p><b>系统提示只放指令，不放状态。</b>这是本讲最容易被忽略的取舍：</p>
+    <pre data-lang="python"><code>SYSTEM = (
+    f"You are a coding agent at {WORKDIR}. Environment: {ENVIRONMENT_PROMPT}. "
+    "Before starting any multi-step task, use todo_write to plan your steps. "
+    "Update status as you go."
+)</code></pre>
+    <p>system prompt 里只有一句行为指令（"多步任务前先规划"），具体计划一个字都没写。
+    计划全部走 <code class="inline-code">tool_result</code>。
+    为什么？
+    因为 system prompt 是固定的角色设定，而计划是<b>每轮都在变</b>的动态状态；把动态状态塞进静态位置，等于每轮都要重写 system，还会让缓存失效。</p>
+    <p>工具定义那边，<code class="inline-code">input_schema</code> 里写了 <code class="inline-code">"maxItems": 20</code> 和 <code class="inline-code">"enum": ["pending", "in_progress", "completed"]</code>。
+    这是<b>双层约束</b>：schema 层温和地告诉模型边界，handler 层严格地拒绝越界。
+    模型可以无视 schema，但逃不过 <code class="inline-code">update()</code> 的 <code class="inline-code">ValueError</code>——错误会变成一条 <code class="inline-code">Error: ...</code> 的 <code class="inline-code">tool_result</code>，模型下一轮看到后自己修正。</p>
+    <p><b>最后是提醒计数器。</b>这是整个机制里唯一"harness 主动介入"的地方，只有 5 行：</p>
+    <pre data-lang="python"><code>            if block.name == "todo_write":
+                used_todo = True
+            results.append({"type": "tool_result", "tool_use_id": block.id,
+                            "content": str(output)})
+
+        rounds_since_todo = 0 if used_todo else rounds_since_todo + 1
+        if rounds_since_todo &gt;= 3:
+            results.append({"type": "text",
+                            "text": "&lt;reminder&gt;Update your todos.&lt;/reminder&gt;"})
+            rounds_since_todo = 0</code></pre>
+    <p>三个细节值得抠：</p>
+    <ol class="steps">
+      <li><b><code class="inline-code">used_todo</code> 按"这一批 tool_calls"统计</b>：一次响应里模型可能同时调 4 个工具，只要其中有一个是 <code class="inline-code">todo_write</code>，计数就清零。
+      粒度选的是"轮次"，不是"调用"。</li>
+      <li><b>reminder 追加进 <code class="inline-code">results</code></b>，也就是和 <code class="inline-code">tool_result</code> 躺在同一条 <code class="inline-code">role=user</code> 消息里。
+      它不是单独一条用户消息，不会打断"assistant 发工具调用 → user 回工具结果"的成对结构。</li>
+      <li><b>提醒后立刻清零</b>，防止每轮都刷同一句话。这是一个"低频、可忽略"的提示，而不是命令。</li>
+    </ol>
+    <p>为什么阈值是 3，而不是 1 或 10？
+    这是一个纯粹的经验取舍。
+    取 1 会让提醒过于频繁，模型把轮次浪费在维护清单上，还会产生"为了更新而更新"的敷衍；取 10 又太晚，漂移已经发生，提醒救不回来。
+    3 轮大致对应"做了一件小事、还没回到计划"的典型间隔——足够宽容，又不至于失联。</p>
+    <div class="callout warn">
+      <span class="callout-title">注意</span>
+      <p>reminder 只是把注意力拉回清单，模型完全可以选择继续埋头干活。
+      这是有意的：如果每轮都硬性要求更新 todo，模型会把轮次浪费在维护清单上，甚至敷衍勾选。
+      提醒式设计把"要不要更新"的判断权留给了模型。</p>
+    </div>
+
+    <h3><span class="h3num">04</span>为什么"先计划再执行"真的能提高完成率</h3>
+    <p>把机制拆开，它至少起了四个作用，而且是叠加的：</p>
+    <p><b>第一，外部化工作记忆。
+    </b>人做长任务时靠便签、清单、待办 App，本质是把"记住"外包给环境。
+    模型没有持久记忆，<code class="inline-code">messages[]</code> 就是它唯一的环境。
+    todo 清单把"我要做 5 件事"从一次性的隐状态，变成每轮都能重读的显式文本，直接对抗上下文稀释。</p>
+    <p><b>第二，先分解，再执行。
+    </b>写下清单这个动作本身，迫使模型在动手前把任务拆成可执行单元。
+    这一步发生在"上下文还干净、注意力还完整"的时候，质量远高于做到一半时的即兴分解。
+    工程上这叫 plan-then-execute，规划阶段和执行阶段分开，各自面对的上下文更专注。</p>
+    <p><b>第三，可见的进度反馈。
+    </b><code class="inline-code">(2/5 completed)</code> 给了模型一个廉价的"到哪了"信号。
+    没有它，模型得回翻历史去数自己做了几步；有了它，一个数字就把状态说完了。</p>
+    <p><b>第四，承诺效应。
+    </b>清单在上下文里，等于模型对自己做过的公开承诺。
+    后续如果它想跳过第 4 步直接收尾，那张还留着 <code class="inline-code">[ ]</code> 的清单会提醒它"还有事没做"。</p>
+    <p>但必须说清楚边界：<b>todo 与 s10 的 Task System 是两件不同的事。
+    </b>本章的 todo 活在 <code class="inline-code">messages[]</code> 里，服务对象是<b>同一个模型</b>的注意力，是"我下一步做什么"；s10 的 Task System 把任务写到磁盘上，服务对象是<b>多个代理</b>之间的协调，是"谁在做哪件事、依赖关系是什么"。
+    前者是便签，后者是项目看板。
+    搞混了，你会给一个单人任务套上多代理的复杂度。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>维度</th><th>本章 todo_write</th><th>s10 Task System</th></tr></thead>
+        <tbody>
+          <tr><td>状态存在哪</td><td><code class="inline-code">TodoManager.items</code>（内存）</td><td>磁盘上的任务文件</td></tr>
+          <tr><td>给谁看</td><td>当前模型自己</td><td>多个代理 / 跨会话</td></tr>
+          <tr><td>解决什么</td><td>注意力漂移、漏步骤</td><td>分工、依赖、认领</td></tr>
+          <tr><td>生命周期</td><td>随对话结束消失</td><td>跨进程存活</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>既然清单的内容由模型自己写，那"写得好不好"就直接决定效果。同一个任务，两种清单的差别是肉眼可见的：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>好清单的样子</th><th>坏清单的样子</th><th>差异在哪</th></tr></thead>
+        <tbody>
+          <tr><td>"把 user_service.py 里的 3 个函数改成 snake_case"</td><td>"重构代码"</td><td>可验证 vs 无法判断是否完成</td></tr>
+          <tr><td>"跑 pytest，记录失败用例"</td><td>"确保测试通过"</td><td>动作 vs 结果口号</td></tr>
+          <tr><td>"修 test_login 的 2 个失败断言"</td><td>"修所有 bug"</td><td>有边界 vs 无底洞</td></tr>
+          <tr><td>5 项，每项一条可执行命令或一次编辑</td><td>20 项，细到"读第 3 行"</td><td>里程碑粒度 vs 操作日志</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>判断标准只有一条：<b>每一项完成时，能不能用一次工具调用验证？
+    </b>"改名完成"可以跑 <code class="inline-code">grep</code> 验证，"重构更好"不能。
+    清单写的是可验证的里程碑，模型才有明确的下一步；写成愿景或操作流水账，清单都会失效。</p>
+    <p>那模型为什么会"无视"已经写好的清单？常见原因有三种。
+    一是任务太短，它判断不值得维护清单，于是直接跳过；
+    二是 system 里的引导太弱，被前面几十轮工具结果淹没；
+    三是它把"手上的报错"当成了新的全部目标。
+    前两种是提示工程问题，第三种才是本章真正要治的病——而 reminder 恰好只对第三种有效，因为它打断的是"沉浸在局部问题里"的状态。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：todo 到底该放 system prompt 还是 tool_result？</summary>
+      <div class="deep-body">
+        <p>这是设计 review 里最常被问到的问题，两个方案都有人用，代价完全不同。</p>
+        <p><b>放 system prompt</b> 的好处是"永远在最前面、权重稳定"，你甚至可以每轮重写 system 来塞最新清单。
+        坏处有三个：第一，system 是角色设定，塞进度进去会让"你是谁"和"你做到哪了"混在一起，模型容易把状态当指令；第二，每轮改写 system 会让 prompt 缓存大面积失效，长会话成本飙升；第三，system 在长上下文里同样会被稀释，"永远在最前面"不等于"永远被重视"。</p>
+        <p><b>放 tool_result</b> 的好处是它天然属于"刚刚发生的事"：模型每调用一次 <code class="inline-code">todo_write</code>，就在下一轮开头附近看到最新清单，注意力权重高。
+        坏处是它会随消息流往后走，也会被 s08 的压缩管线当成旧工具结果处理（毕竟它就是一个 <code class="inline-code">tool_result</code>）。</p>
+        <p>本实现的选择是<b>分工</b>：system 只放"多步任务前先规划"这条行为指令，状态 100% 走 <code class="inline-code">tool_result</code>。
+        这符合一个通用原则——<b>静态的角色定义放 system，动态的状态放消息流</b>。</p>
+        <p><b>注意力漂移的真实机制</b>也值得说透。
+        模型的注意力不是均匀撒在上下文里的：距离当前越近的内容，权重通常越高；出现次数越多、位置越靠前的内容，越容易被"记住"。
+        一个 30 轮的会话里，最初的用户请求离当前位置有 29 条消息，中间隔着几十个工具结果，它的相对权重会被自然稀释。
+        这不是模型的缺陷，而是所有有限窗口注意力的共性。
+        todo 清单做的，是把"最初的意图"复制一份到离当前很近的位置——每更新一次，就相当于重新强调一次。</p>
+        <details class="deep deep-2">
+          <summary>再深一层：todo 和真实世界不一致时怎么办？</summary>
+          <div class="deep-body">
+            <p>真实情况一定会发生：模型把"修好测试"标成 <code class="inline-code">completed</code>，但测试明明还在失败；或者它列了 5 步，做到第 2 步时发现第 1 步的方案是错的。
+            此时清单和事实分叉了。</p>
+            <p>先说清楚原则：<b>todo 是模型的自我报告，不是事实来源。
+            </b>事实来源永远是工具输出、文件系统、测试退出码。
+            任何自动化决策（比如"todo 全 completed 就认为任务完成"）都不该直接读 todo。</p>
+            <p>那 harness 能做什么？
+            三件事。
+            其一，用 s04 的 hook 在关键工具结果上做校验：比如 <code class="inline-code">PostToolUse</code> 里发现 <code class="inline-code">bash</code> 跑测试的退出码非零，就往结果里注入一句"测试仍失败，检查你的进度"。
+            其二，在工具结果里放"事实锚点"而不是结论：让模型看到 <code class="inline-code">FAILED (2 tests)</code>，而不是你说"你还没做完"。
+            其三，接受它会不一致——模型的自我修正能力比你想的强，只要事实摆在它面前。
+            真正危险的不是清单错了，而是<b>清单错了却没人去核对事实</b>。</p>
+            <p>最后回答"为什么不强制更新"：强制会让模型把勾选当义务，产出"为了勾选而勾选"的敷衍清单；提醒式设计承认模型有判断力，只在它明显漂移时轻推一下。
+            这是一个<b>把约束放在校验层、把自由放在调度层</b>的典型取舍。</p>
+          </div>
+        </details>
+      </div>
+    </details>
+
+    <h3><span class="h3num">05</span>动手实验：看清单怎么改变行为</h3>
+    <ol class="steps">
+      <li><b>跑起来</b>：在仓库根目录执行 <code class="inline-code">python s05_todo_write/code.py</code>，输入 <code class="inline-code">Refactor s05_todo_write/example/hello.py: add type hints, docstrings, and a main guard</code>。</li>
+      <li><b>观察第一次工具调用</b>：它是不是 <code class="inline-code">todo_write</code>？
+      清单列了几项？
+      如果模型直接开始读文件、跳过规划，说明 system 里那句引导还不够硬——这本身就是个值得记录的实验结论。</li>
+      <li><b>跟踪状态迁移</b>：终端会打印黄色的 <code class="inline-code">## Current Tasks</code>。
+      看状态有没有经历 <code class="inline-code">pending → in_progress → completed</code>，还是从 <code class="inline-code">pending</code> 直接跳到 <code class="inline-code">completed</code>。</li>
+      <li><b>改阈值</b>：把 <code class="inline-code">if rounds_since_todo &gt;= 3:</code> 改成 <code class="inline-code">1</code>，重跑同一个任务。
+      预期现象：提醒变得非常频繁，模型更勤快地更新清单，但总轮次可能变多、任务完成时间变长——这就是"提醒太密"的代价。</li>
+      <li><b>制造非法输入</b>：把 <code class="inline-code">if in_progress_count &gt; 1</code> 那段临时注释掉，观察模型是否会出现两项同时 <code class="inline-code">in_progress</code>，以及它的行为是否变得散乱。
+      再恢复，看它收到 <code class="inline-code">Error: Only one todo can be in_progress at a time</code> 之后如何自我修正。</li>
+      <li><b>无 API Key 也能做</b>：直接构造 <code class="inline-code">TODO.update([...])</code> 的几种输入（字符串 JSON、Python 列表字面量、21 项、空 content），看 <code class="inline-code">render()</code> 输出和异常文本。
+      这能让你彻底弄清"哪层在拦什么"。</li>
+      <li><b>改 reminder 文案</b>：把 <code class="inline-code">&lt;reminder&gt;Update your todos.&lt;/reminder&gt;</code> 改成更具体的一句，比如 <code class="inline-code">&lt;reminder&gt;Check your todo list before the next step.&lt;/reminder&gt;</code>，重跑同一个任务，比较模型被提醒后的行为。
+      你会发现"提醒什么"比"提醒几次"更能影响它下一步做什么。</li>
+    </ol>
+
+    <h3><span class="h3num">06</span>常见误区</h3>
+    <div class="callout warn">
+      <span class="callout-title">误区一：以为 todo_write 让模型变聪明了</span>
+      <p>很多人以为加了任务列表，模型就"更会做复杂任务"。
+      其实它一个能力都没多。
+      提升来自两个更朴素的地方：计划被写成了文本、每轮都能重读；以及模型被迫在动手前先分解。
+      前者是上下文工程，后者是提示结构，都不是模型本身的进化。</p>
+    </div>
+    <div class="callout warn">
+      <span class="callout-title">误区二：把 todo 当成可信状态机</span>
+      <p>有人会用 todo 的 <code class="inline-code">completed</code> 数量来自动判定任务是否结束。
+      这很危险——todo 是模型自报的，它可能标错、可能偷懒、可能把"我改完了"当成"测试通过了"。
+      判定完成要靠事实：测试退出码、文件 diff、外部校验。
+      todo 只用来辅助模型自己看路。</p>
+    </div>
+    <div class="callout warn">
+      <span class="callout-title">误区三：清单越细越好</span>
+      <p>把 5 步任务拆成 30 项，看起来"更严谨"，实际是负担：清单本身占上下文、每勾一项多一次工具调用、模型还要维护状态一致性，最后它大概率不再更新清单、直接凭感觉做。
+      经验上 3–8 项、以"可验证的里程碑"为单位最舒服。
+      上限 20 是硬防线，不是推荐值。</p>
+    </div>
+
+    <h3><span class="h3num">07</span>自测</h3>
+    <details class="quiz">
+      <summary>有人说："有了 todo_write，Agent 就不会漏步骤了。"这个说法对吗？</summary>
+      <div class="answer">
+        <p>不对，但方向有一半是对的。
+        todo_write 不保证不漏——它只是把计划放在模型每轮都能看到的位置，降低漏的概率；模型完全可能列了清单却不更新、更新了却不照做、标成 completed 却实际没做完。
+        它改变的是<b>注意力分布</b>，不是<b>正确性保证</b>。
+        真正的保证来自校验层：测试、diff、外部检查。
+        把 todo 当"降低漂移概率的软约束"，而不是"防漏的硬保证"。</p>
+      </div>
+    </details>
+    <details class="quiz">
+      <summary>为什么 <code class="inline-code">update()</code> 用整体替换，而不是"修改第 N 项"的增量接口？</summary>
+      <div class="answer">
+        <p>因为整体替换把"当前计划的全貌"变成一次输入，模型不需要维护索引、不需要记住哪一项是第几号，出错面小得多。
+        增量接口要求模型先记住列表顺序，再做 patch，一旦索引错位就会改错项；而整体替换是幂等的——同一份清单传两次，结果一样。
+        代价是每次更新都要重发全部内容，但清单最多 20 项，这个成本可以忽略。
+        用"简单的数据结构 + 稍大的传输"换"更少的出错方式"，在 harness 里通常是划算的。</p>
+      </div>
+    </details>
+    <details class="quiz">
+      <summary>连续三轮没调 todo_write 后，reminder 被放在哪里？为什么不单独发一条 user 消息？</summary>
+      <div class="answer">
+        <p>它被 append 进 <code class="inline-code">results</code> 列表，也就是和同一批 <code class="inline-code">tool_result</code> 一起，装在同一条 <code class="inline-code">role=user</code> 消息里。
+        原因有两条：第一，Anthropic 的消息格式要求 assistant 的 <code class="inline-code">tool_use</code> 后面必须紧跟包含对应 <code class="inline-code">tool_result</code> 的 user 消息，单独插一条 user 消息会破坏这个成对结构；第二，单独插消息会让模型感觉"用户又说话了"，可能误触发一轮新的用户意图理解。
+        把提醒混在工具结果里，语义上更像"环境给的提示"，更不容易被误读成新任务。</p>
+      </div>
+    </details>
+    <details class="quiz">
+      <summary>把"同时只允许一个 in_progress"去掉，会发生什么？</summary>
+      <div class="answer">
+        <p>模型可能同时把三件事标成进行中，清单从"下一步做什么"退化成"待办池"，注意力没有落点。
+        这条限制的收益不在数据一致性，而在<b>强制单点聚焦</b>：任何时刻只有一个"现在"，模型下一轮的行动选择少了一个维度。
+        真实项目里当然会并行，但本章的 todo 是注意力工具，不是项目管理工具——并行协调是 s10 的事。</p>
+      </div>
+    </details>
+    <details class="quiz">
+      <summary>如果让你给 s05 加一条 <code class="inline-code">PostToolUse</code> hook，用来缓解"todo 与事实不一致"，你会怎么写？</summary>
+      <div class="answer">
+        <p>思路是：只在"事实明确否定进度"的工具结果上注入提醒，而不是每轮都提醒。
+        比如检测到 <code class="inline-code">block.name == "bash"</code> 且输出里包含测试失败标志（<code class="inline-code">FAILED</code>、<code class="inline-code">Traceback</code>、非零退出码），就返回一条类似 <code class="inline-code">&lt;reminder&gt;Tests still failing; verify your todo status.&lt;/reminder&gt;</code> 的文本，让 harness 把它追加进 <code class="inline-code">results</code>。
+        关键原则：<b>用事实触发，而不是用轮次触发</b>；提醒里陈述事实（测试失败），不要替模型下结论（"你还没做完"）。</p>
+      </div>
+    </details>
+  </div>
+  <div class="takeaway">
+    <span class="tk-label">这一讲带走</span>
+    <p>todo_write 不增加任何执行能力，它增加的是"可见的计划"：把工作记忆写成上下文里的文本，让模型每一轮都能重新看见自己的承诺，再用一个低频 reminder 在它漂移时轻推一下。</p>
+    <p class="next"><b>下一讲：</b>计划再清楚，有些子任务本身就会把上下文塞满——比如"把整个认证模块的调用链摸清楚"。下一讲把这类活派到另一个房间去做，只带回结论：Subagent。</p>
+  </div>
+</section>
