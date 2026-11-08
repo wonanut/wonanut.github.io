@@ -157,19 +157,19 @@ pre{margin:0;padding:15px 17px!important;overflow-x:auto;font-family:ui-monospac
   font-size:13px!important;line-height:1.72!important;color:var(--code-text)!important;tab-size:4}
 pre code{background:transparent!important;border:0!important;color:inherit!important;font-size:inherit!important;padding:0!important}
 /* wrappers that contain a pre become the dark code card */
-div.clay:has(pre){
+div.clay:has(> pre){
   background:var(--code-bg)!important;
   border:1px solid var(--code-border)!important;
   border-radius:12px!important;
   box-shadow:var(--shadow)!important;
   overflow:hidden;
 }
-div.clay:has(pre) > div{
+div.clay:has(> pre) > div{
   background:rgba(255,255,255,.035)!important;
   border-color:var(--code-border)!important;
   color:#93a4bd!important;
 }
-div.clay:has(pre) .chip{
+div.clay:has(> pre) .chip{
   background:rgba(255,255,255,.06)!important;
   border-color:rgba(255,255,255,.12)!important;
   color:#c7d2e5!important;
@@ -391,19 +391,19 @@ aside.clay, .clay.my-4{margin-top:14px!important;margin-bottom:14px!important}
 .prose > :last-child{margin-bottom:0!important}
 
 /* code components: no borders/shadows, smaller light text */
-div.clay:has(pre){
+div.clay:has(> pre){
   background:#111827!important;
   border:0!important;
   box-shadow:none!important;
   border-radius:10px!important;
 }
-div.clay:has(pre) > div{
+div.clay:has(> pre) > div{
   background:#0b1220!important;
   border:0!important;
   box-shadow:none!important;
   padding:7px 12px!important;
 }
-div.clay:has(pre) .chip{
+div.clay:has(> pre) .chip{
   border:0!important;
   background:transparent!important;
   box-shadow:none!important;
@@ -449,7 +449,7 @@ article > div[class*="lg:grid"]{order:4;grid-column:1/-1}
    ============================================================ */
 
 /* ---- code cards: .code-block / .code-head / pre ---- */
-div.clay:has(pre){
+div.clay:has(> pre){
   background:var(--code-bg)!important;
   border:1px solid var(--code-border)!important;
   border-radius:12px!important;
@@ -457,7 +457,7 @@ div.clay:has(pre){
   overflow:hidden!important;
   margin:20px 0!important;
 }
-div.clay:has(pre) > div{
+div.clay:has(> pre) > div{
   display:flex!important;align-items:center!important;gap:10px!important;
   padding:9px 14px!important;
   background:rgba(255,255,255,.04)!important;
@@ -466,32 +466,32 @@ div.clay:has(pre) > div{
   font-family:ui-monospace,Menlo,monospace!important;
   font-size:11.5px!important;color:#93a4bd!important;
 }
-div.clay:has(pre) > div::before{
+div.clay:has(> pre) > div::before{
   content:"";width:9px;height:9px;border-radius:50%;background:#ff5f57;flex:none;
   box-shadow:14px 0 #febc2e,28px 0 #28c840;
   margin-right:23px;
 }
-div.clay:has(pre) > div > span{
+div.clay:has(> pre) > div > span{
   color:#7c8ba1!important;letter-spacing:.08em!important;text-transform:uppercase!important;
 }
-div.clay:has(pre) .chip,
-div.clay:has(pre) button{
+div.clay:has(> pre) .chip,
+div.clay:has(> pre) button{
   border:0!important;background:transparent!important;box-shadow:none!important;
   color:#93a4bd!important;font-size:11px!important;font-weight:500!important;
   padding:0 4px!important;margin-left:auto!important;
 }
-div.clay:has(pre) pre{
+div.clay:has(> pre) pre{
   margin:0!important;padding:16px 18px!important;overflow-x:auto;
   font-family:ui-monospace,SFMono-Regular,Menlo,monospace!important;
   font-size:13px!important;line-height:1.72!important;color:var(--code-text)!important;tab-size:4;
 }
-div.clay:has(pre) pre code{
+div.clay:has(> pre) pre code{
   background:transparent!important;border:0!important;padding:0!important;
   color:inherit!important;font-size:inherit!important;white-space:pre!important;
 }
 
 /* ---- quiz cards: course .quiz look ---- */
-div.clay.not-prose:has(ul li button[class*="bg-[#f4f2fc]"]){
+div.clay.not-prose:has(> div > p + ul li button){
   margin:14px 0!important;
   border:1px solid var(--border)!important;
   border-radius:12px!important;
@@ -499,37 +499,37 @@ div.clay.not-prose:has(ul li button[class*="bg-[#f4f2fc]"]){
   box-shadow:none!important;
   overflow:hidden!important;
 }
-div.clay.not-prose:has(ul li button[class*="bg-[#f4f2fc]"]) > header{
+div.clay.not-prose:has(> div > p + ul li button) > header{
   padding:13px 18px 10px!important;
   border-bottom:1px solid var(--border)!important;
   gap:9px!important;
 }
-div.clay.not-prose:has(ul li button[class*="bg-[#f4f2fc]"]) > header > span:first-child{
+div.clay.not-prose:has(> div > p + ul li button) > header > span:first-child{
   width:20px!important;height:20px!important;min-width:20px!important;
   border-radius:6px!important;background:var(--primary)!important;
   border:0!important;box-shadow:none!important;
   display:grid!important;place-items:center!important;
   font-size:0!important;line-height:1!important;
 }
-div.clay.not-prose:has(ul li button[class*="bg-[#f4f2fc]"]) > header > span:first-child::before{
+div.clay.not-prose:has(> div > p + ul li button) > header > span:first-child::before{
   content:"Q";font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:700;color:#fff;
 }
-div.clay.not-prose:has(ul li button[class*="bg-[#f4f2fc]"]) > header h3{
+div.clay.not-prose:has(> div > p + ul li button) > header h3{
   font-size:14.5px!important;font-weight:600!important;color:var(--text-soft)!important;
 }
-div.clay.not-prose:has(ul li button[class*="bg-[#f4f2fc]"]) > div > p{
+div.clay.not-prose:has(> div > p + ul li button) > div > p{
   font-family:var(--font-display)!important;
   font-size:14.5px!important;font-weight:600!important;line-height:1.6!important;
   color:var(--text)!important;margin:0 0 10px!important;
 }
-div.clay.not-prose:has(ul li button[class*="bg-[#f4f2fc]"]) ul{gap:7px!important;margin-top:10px!important}
-div.clay.not-prose:has(ul li button[class*="bg-[#f4f2fc]"]) button{
+div.clay.not-prose:has(> div > p + ul li button) ul{gap:7px!important;margin-top:10px!important}
+div.clay.not-prose:has(> div > p + ul li button) button{
   width:100%!important;border-radius:8px!important;border:1px solid var(--border)!important;
   background:#fff!important;color:var(--text-soft)!important;
   box-shadow:none!important;padding:8px 12px!important;
   font-size:13.5px!important;font-weight:500!important;line-height:1.5!important;
 }
-div.clay.not-prose:has(ul li button[class*="bg-[#f4f2fc]"]) button:hover{
+div.clay.not-prose:has(> div > p + ul li button) button:hover{
   background:var(--accent-soft)!important;border-color:#c7ccff!important;color:var(--text)!important;
 }
 
@@ -554,7 +554,7 @@ div[aria-label*="时序图"] svg [fill="#f3f0fb"]{fill:#fff!important}
 div[aria-label*="时序图"] svg [fill="#efeaff"]{fill:var(--accent-soft)!important}
 
 /* remove the inherited inner paper border/shadow on <pre> */
-div.clay:has(pre) pre{
+div.clay:has(> pre) pre{
   border:0!important;
   border-radius:0!important;
   box-shadow:none!important;
@@ -568,3 +568,68 @@ article{row-gap:16px!important}
 /* sequence diagram: no focus/selection outlines */
 div[aria-label*="时序图"],div[aria-label*="时序图"]:focus-visible{outline:none!important}
 div[aria-label*="时序图"] *:focus-visible{outline:none!important;box-shadow:none!important}
+
+/* ---- quiz: compact layout + answer feedback (override base option rule) ---- */
+div.clay.not-prose:has(> div > p + ul li button){
+  margin:16px 0!important;
+}
+div.clay.not-prose:has(> div > p + ul li button) > header{
+  padding:11px 16px 8px!important;
+}
+div.clay.not-prose:has(> div > p + ul li button) > div{
+  padding:10px 16px 14px!important;
+}
+div.clay.not-prose:has(> div > p + ul li button) > div > p{
+  margin-bottom:8px!important;
+  font-size:14px!important;
+}
+div.clay.not-prose:has(> div > p + ul li button) ul{
+  margin-top:6px!important;display:grid;gap:5px;
+}
+div.clay.not-prose:has(> div > p + ul li button) button{
+  border-radius:7px!important;padding:7px 10px!important;
+  font-size:13.5px!important;line-height:1.5!important;
+}
+/* correct option */
+div.clay.not-prose:has(> div > p + ul li button) button[class*="bg-[#dcf5ec]"]{
+  background:#ecfdf5!important;color:#0f766e!important;
+  border:1px solid #99f6e4!important;box-shadow:none!important;
+}
+/* wrong option */
+div.clay.not-prose:has(> div > p + ul li button) button[class*="bg-[#ffe3e3]"]{
+  background:#fff1f2!important;color:#be123c!important;
+  border:1px solid #fecdd3!important;box-shadow:none!important;
+}
+/* feedback line */
+div.clay.not-prose:has(> div > p + ul li button) p[class*="text-[#0e8a72]"],
+div.clay.not-prose:has(> div > p + ul li button) p[class*="text-[#d5303e]"]{
+  margin-top:9px!important;padding:7px 10px!important;border-radius:8px!important;
+  font-size:13px!important;font-weight:600!important;
+  display:flex;align-items:center;gap:6px;
+}
+div.clay.not-prose:has(> div > p + ul li button) p[class*="text-[#0e8a72]"]{
+  background:#ecfdf5!important;border:1px solid #99f6e4!important;color:#0f766e!important;
+}
+div.clay.not-prose:has(> div > p + ul li button) p[class*="text-[#d5303e]"]{
+  background:#fff1f2!important;border:1px solid #fecdd3!important;color:#be123c!important;
+}
+/* explanation */
+div.clay.not-prose:has(> div > p + ul li button) p[class*="bg-[#f4f2fc]"]{
+  margin-top:7px!important;padding:8px 10px!important;
+  background:#f6f7f9!important;border-radius:7px!important;
+  font-size:12.5px!important;line-height:1.65!important;color:var(--text-soft)!important;
+}
+
+/* non-code inline traces keep normal ink colour */
+pre:not(div.clay > pre){color:var(--ink)!important;background:inherit!important;border:0!important;box-shadow:none!important}
+pre:not(div.clay > pre) code{color:inherit!important;background:transparent!important;border:0!important;padding:0!important}
+
+/* quiz: tighter card, clearer feedback */
+div.clay.not-prose:has(> div > p + ul li button) > header{padding:9px 14px 6px!important}
+div.clay.not-prose:has(> div > p + ul li button) > div{padding:8px 14px 12px!important}
+div.clay.not-prose:has(> div > p + ul li button) > div > p{margin-bottom:6px!important;font-size:13.5px!important}
+div.clay.not-prose:has(> div > p + ul li button) ul{gap:4px!important;margin-top:5px!important}
+div.clay.not-prose:has(> div > p + ul li button) button{padding:6px 10px!important;font-size:13px!important}
+div.clay.not-prose:has(> div > p + ul li button) p[class*="text-[#0e8a72]"],
+div.clay.not-prose:has(> div > p + ul li button) p[class*="text-[#d5303e]"]{margin-top:7px!important;padding:6px 9px!important;font-size:12.5px!important}
+div.clay.not-prose:has(> div > p + ul li button) p[class*="bg-[#f4f2fc]"]{margin-top:6px!important;padding:7px 9px!important;font-size:12px!important}
