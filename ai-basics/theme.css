@@ -443,3 +443,121 @@ article > div[class*="lg:grid"]{order:4;grid-column:1/-1}
   article{column-gap:9px}
   article > div.mb-5 > a{padding-left:10px!important;padding-right:10px!important}
 }
+
+/* ============================================================
+   Match Claude Code course components exactly
+   ============================================================ */
+
+/* ---- code cards: .code-block / .code-head / pre ---- */
+div.clay:has(pre){
+  background:var(--code-bg)!important;
+  border:1px solid var(--code-border)!important;
+  border-radius:12px!important;
+  box-shadow:var(--shadow)!important;
+  overflow:hidden!important;
+  margin:20px 0!important;
+}
+div.clay:has(pre) > div{
+  display:flex!important;align-items:center!important;gap:10px!important;
+  padding:9px 14px!important;
+  background:rgba(255,255,255,.04)!important;
+  border:0!important;border-bottom:1px solid var(--code-border)!important;
+  box-shadow:none!important;
+  font-family:ui-monospace,Menlo,monospace!important;
+  font-size:11.5px!important;color:#93a4bd!important;
+}
+div.clay:has(pre) > div::before{
+  content:"";width:9px;height:9px;border-radius:50%;background:#ff5f57;flex:none;
+  box-shadow:14px 0 #febc2e,28px 0 #28c840;
+  margin-right:23px;
+}
+div.clay:has(pre) > div > span{
+  color:#7c8ba1!important;letter-spacing:.08em!important;text-transform:uppercase!important;
+}
+div.clay:has(pre) .chip,
+div.clay:has(pre) button{
+  border:0!important;background:transparent!important;box-shadow:none!important;
+  color:#93a4bd!important;font-size:11px!important;font-weight:500!important;
+  padding:0 4px!important;margin-left:auto!important;
+}
+div.clay:has(pre) pre{
+  margin:0!important;padding:16px 18px!important;overflow-x:auto;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace!important;
+  font-size:13px!important;line-height:1.72!important;color:var(--code-text)!important;tab-size:4;
+}
+div.clay:has(pre) pre code{
+  background:transparent!important;border:0!important;padding:0!important;
+  color:inherit!important;font-size:inherit!important;white-space:pre!important;
+}
+
+/* ---- quiz cards: course .quiz look ---- */
+div.clay.not-prose:has(ul li button[class*="bg-[#f4f2fc]"]){
+  margin:14px 0!important;
+  border:1px solid var(--border)!important;
+  border-radius:12px!important;
+  background:var(--bg-soft)!important;
+  box-shadow:none!important;
+  overflow:hidden!important;
+}
+div.clay.not-prose:has(ul li button[class*="bg-[#f4f2fc]"]) > header{
+  padding:13px 18px 10px!important;
+  border-bottom:1px solid var(--border)!important;
+  gap:9px!important;
+}
+div.clay.not-prose:has(ul li button[class*="bg-[#f4f2fc]"]) > header > span:first-child{
+  width:20px!important;height:20px!important;min-width:20px!important;
+  border-radius:6px!important;background:var(--primary)!important;
+  border:0!important;box-shadow:none!important;
+  display:grid!important;place-items:center!important;
+  font-size:0!important;line-height:1!important;
+}
+div.clay.not-prose:has(ul li button[class*="bg-[#f4f2fc]"]) > header > span:first-child::before{
+  content:"Q";font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:700;color:#fff;
+}
+div.clay.not-prose:has(ul li button[class*="bg-[#f4f2fc]"]) > header h3{
+  font-size:14.5px!important;font-weight:600!important;color:var(--text-soft)!important;
+}
+div.clay.not-prose:has(ul li button[class*="bg-[#f4f2fc]"]) > div > p{
+  font-family:var(--font-display)!important;
+  font-size:14.5px!important;font-weight:600!important;line-height:1.6!important;
+  color:var(--text)!important;margin:0 0 10px!important;
+}
+div.clay.not-prose:has(ul li button[class*="bg-[#f4f2fc]"]) ul{gap:7px!important;margin-top:10px!important}
+div.clay.not-prose:has(ul li button[class*="bg-[#f4f2fc]"]) button{
+  width:100%!important;border-radius:8px!important;border:1px solid var(--border)!important;
+  background:#fff!important;color:var(--text-soft)!important;
+  box-shadow:none!important;padding:8px 12px!important;
+  font-size:13.5px!important;font-weight:500!important;line-height:1.5!important;
+}
+div.clay.not-prose:has(ul li button[class*="bg-[#f4f2fc]"]) button:hover{
+  background:var(--accent-soft)!important;border-color:#c7ccff!important;color:var(--text)!important;
+}
+
+/* ---- sequence diagrams: course .flow look ---- */
+div[aria-label*="时序图"]{
+  background:var(--bg-soft)!important;
+  border:1px dashed var(--border-strong)!important;
+  border-radius:12px!important;
+  box-shadow:none!important;
+  padding:16px!important;
+  margin:24px 0!important;
+}
+div[aria-label*="时序图"] svg rect[fill="#ffffff"]{fill:#fff!important;stroke:var(--border-strong)!important}
+div[aria-label*="时序图"] svg line[stroke="#d9d4ee"]{stroke:var(--border-strong)!important}
+div[aria-label*="时序图"] svg text[fill="#2c2945"]{fill:var(--ink)!important}
+div[aria-label*="时序图"] svg text[fill="#8b88a3"]{fill:var(--muted)!important}
+div[aria-label*="时序图"] svg [fill="#7c6ff0"]{fill:var(--primary)!important}
+div[aria-label*="时序图"] svg [fill="#2ec4a0"]{fill:var(--mint)!important}
+div[aria-label*="时序图"] svg [stroke="#7c6ff0"]{stroke:var(--primary)!important}
+div[aria-label*="时序图"] svg [stroke="#2ec4a0"]{stroke:var(--mint)!important}
+div[aria-label*="时序图"] svg [fill="#f3f0fb"]{fill:#fff!important}
+div[aria-label*="时序图"] svg [fill="#efeaff"]{fill:var(--accent-soft)!important}
+
+/* remove the inherited inner paper border/shadow on <pre> */
+div.clay:has(pre) pre{
+  border:0!important;
+  border-radius:0!important;
+  box-shadow:none!important;
+  background:transparent!important;
+  margin:0!important;
+}
