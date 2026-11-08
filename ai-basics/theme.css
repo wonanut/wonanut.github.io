@@ -561,3 +561,10 @@ div.clay:has(pre) pre{
   background:transparent!important;
   margin:0!important;
 }
+
+/* lesson header → TOC spacing */
+article{row-gap:16px!important}
+
+/* sequence diagram: no focus/selection outlines */
+div[aria-label*="时序图"],div[aria-label*="时序图"]:focus-visible{outline:none!important}
+div[aria-label*="时序图"] *:focus-visible{outline:none!important;box-shadow:none!important}
