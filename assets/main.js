@@ -32,21 +32,31 @@
     });
   }
 
-  /* reveal on scroll */
+  /* reveal on scroll — fail-safe: content stays visible unless the observer is ready */
   var revealItems = document.querySelectorAll(".reveal");
   var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (reduce || !("IntersectionObserver" in window)) {
+  function revealAll() {
     revealItems.forEach(function (el) { el.classList.add("in"); });
+  }
+  if (reduce || !("IntersectionObserver" in window)) {
+    revealAll();
   } else {
-    var io = new IntersectionObserver(function (entries) {
-      entries.forEach(function (entry) {
-        if (entry.isIntersecting) {
-          entry.target.classList.add("in");
-          io.unobserve(entry.target);
-        }
-      });
-    }, { rootMargin: "0px 0px -8% 0px", threshold: 0.08 });
-    revealItems.forEach(function (el) { io.observe(el); });
+    try {
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("in");
+            io.unobserve(entry.target);
+          }
+        });
+      }, { rootMargin: "0px 0px -8% 0px", threshold: 0.08 });
+      document.body.classList.add("reveal-on");
+      revealItems.forEach(function (el) { io.observe(el); });
+      /* if something prevents the observer callback, never leave content hidden */
+      setTimeout(revealAll, 2500);
+    } catch (error) {
+      revealAll();
+    }
   }
 
   /* footer year */
