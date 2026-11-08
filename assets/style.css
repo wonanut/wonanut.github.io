@@ -441,3 +441,63 @@ body.scene-dragging,body.scene-dragging *{user-select:none}
 @media (prefers-reduced-motion:reduce){
   .hero-hint-dot{animation:none}
 }
+
+/* ============================================================
+   Light hero (daylight low-poly + hologram)
+   ============================================================ */
+.scene-scrim{background:none}
+
+.hero{color:#0b1220;background:linear-gradient(90deg, rgba(246,251,255,.82) 0%, rgba(246,251,255,.45) 32%, rgba(246,251,255,0) 58%)}
+.hero .wrap{position:relative;z-index:3}
+.hero .eyebrow{color:#0f766e}
+.hero .eyebrow::before{background:#0f766e;box-shadow:0 0 0 4px rgba(15,118,110,.14)}
+.hero h1{color:#0b1220}
+.hero h1 .grad{background:linear-gradient(100deg,#4f46e5 6%,#0d9488 55%,#db2777 96%);
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.hero-sub{color:#334155}
+.hero-sub b{color:#0b1220}
+.hero .chip{color:#334155;border-color:rgba(15,23,42,.16);background:rgba(255,255,255,.62)}
+.hero .chip b{color:#0d9488}
+.hero .btn-primary{background:linear-gradient(135deg,#4f46e5,#6366f1);color:#fff;
+  box-shadow:0 14px 34px -14px rgba(79,70,229,.7)}
+.hero .btn-primary:hover{box-shadow:0 18px 40px -14px rgba(79,70,229,.8)}
+.hero .btn-ghost{color:#0b1220;border-color:rgba(15,23,42,.18);background:rgba(255,255,255,.6)}
+.hero .btn-ghost:hover{background:rgba(255,255,255,.9);border-color:rgba(15,23,42,.3)}
+.hero-hint{color:#475569}
+.hero-hint-dot{background:#0d9488;box-shadow:0 0 0 3px rgba(13,148,136,.12)}
+
+.hero .stats{background:rgba(255,255,255,.42);border-color:rgba(15,23,42,.12)}
+.hero .stat{background:rgba(255,255,255,.66)}
+.hero .stat b{color:#0b1220}
+.hero .stat b i{color:#4f46e5}
+.hero .stat span{color:#475569}
+
+.hero::after{
+  content:"";position:absolute;left:0;right:0;bottom:0;height:200px;z-index:2;pointer-events:none;
+  background:linear-gradient(180deg, rgba(5,7,15,0) 0%, rgba(5,7,15,.5) 55%, #05070f 100%);
+}
+
+/* header over the light hero */
+.site-header.on-light{background:rgba(255,255,255,.55);border-bottom-color:rgba(15,23,42,.06)}
+.site-header.on-light .logo{color:#0b1220}
+.site-header.on-light .brand{color:#0b1220}
+.site-header.on-light .logo small{color:#64748b}
+.site-header.on-light .brand small{color:#64748b}
+.site-header.on-light .nav-links a{color:#334155}
+.site-header.on-light .nav-links a:hover{color:#0b1220;background:rgba(15,23,42,.06)}
+.site-header.on-light .nav-cta{color:#0b1220;border-color:rgba(15,23,42,.16);background:rgba(255,255,255,.6)}
+.site-header.on-light .nav-cta:hover{background:#fff;border-color:rgba(15,23,42,.3)}
+.site-header.on-light .nav-toggle{color:#0b1220;border-color:rgba(15,23,42,.16);background:rgba(255,255,255,.6)}
+
+/* graceful fallback when WebGL is unavailable / JS off */
+.no-scene .hero,.no-js .hero{
+  background:linear-gradient(180deg,#e8f6ff 0%,#f7fbff 42%,#fff5e6 72%,#05070f 100%);
+}
+
+@media (max-width:900px){
+  .hero{color:#0b1220;background:linear-gradient(90deg, rgba(246,251,255,.82) 0%, rgba(246,251,255,.45) 32%, rgba(246,251,255,0) 58%)}
+  .hero::after{height:170px}
+  .hero .stats{background:rgba(255,255,255,.5)}
+  .hero .stat{background:rgba(255,255,255,.72)}
+  .site-header.on-light{background:rgba(255,255,255,.72)}
+}

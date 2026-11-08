@@ -3,13 +3,19 @@
   "use strict";
 
   var header = document.getElementById("header");
+  var hero = document.getElementById("hero");
   var toggle = document.getElementById("nav-toggle");
   var links = document.getElementById("nav-links");
 
   /* header shadow on scroll */
   function onScroll() {
     if (!header) return;
-    header.classList.toggle("scrolled", window.scrollY > 8);
+    var y = window.scrollY || 0;
+    if (hero) {
+      var heroBottom = hero.offsetTop + hero.offsetHeight;
+      header.classList.toggle("on-light", y < heroBottom - window.innerHeight * 0.55);
+    }
+    header.classList.toggle("scrolled", y > 8);
   }
   window.addEventListener("scroll", onScroll, { passive: true });
   onScroll();

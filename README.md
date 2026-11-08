@@ -13,8 +13,9 @@ Doran 的个人站点：<https://wonanut.github.io/>
 ```
 index.html            首页
 assets/               样式、脚本、头像、favicon
-assets/lowpoly.js     首页背景：手写 WebGL 低多边形场景（模型写在代码里，零第三方库）
-                     shader：极光星空 / 数据网格海面 / 能量光束 / 浮游粒子 / 自发光水晶
+assets/lowpoly.js     首页背景：手写 WebGL 日光低多边形悬浮岛（模型写在代码里，零第三方库）
+                     shader：日光天空 / 云海 / 全息扫描（scan lines + fresnel + glitch）/ 自发光水晶
+                     扫描特效思路参考 YasirAwan4831/holographic-shader-visualizer-three.Js，按自研管线重写
 agent-lab/            交互式项目「Agent 实验室」（静态适配 + 插件源码副本 + 构建脚本）
 course/               课程（index.html + 构建源 + 许可与署名）
 404.html              404 页
