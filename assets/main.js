@@ -32,6 +32,23 @@
     });
   }
 
+
+  /* in-page anchor links: always scroll, even when the hash is already set */
+  var anchorLinks = document.querySelectorAll('.nav-links a[href^="#"], .hero-actions a[href^="#"]');
+  anchorLinks.forEach(function (a) {
+    a.addEventListener('click', function (event) {
+      var id = a.getAttribute('href');
+      if (!id || id === '#') return;
+      var target = document.querySelector(id);
+      if (!target) return;
+      event.preventDefault();
+      var behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+      target.scrollIntoView({ behavior: behavior, block: 'start' });
+      if (window.history && window.history.replaceState) window.history.replaceState(null, '', id);
+      else window.location.hash = id;
+    });
+  });
+
   /* reveal on scroll — fail-safe: content stays visible unless the observer is ready */
   var revealItems = document.querySelectorAll(".reveal");
   var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
