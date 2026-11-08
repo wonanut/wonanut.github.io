@@ -633,3 +633,16 @@ div.clay.not-prose:has(> div > p + ul li button) button{padding:6px 10px!importa
 div.clay.not-prose:has(> div > p + ul li button) p[class*="text-[#0e8a72]"],
 div.clay.not-prose:has(> div > p + ul li button) p[class*="text-[#d5303e]"]{margin-top:7px!important;padding:6px 9px!important;font-size:12.5px!important}
 div.clay.not-prose:has(> div > p + ul li button) p[class*="bg-[#f4f2fc]"]{margin-top:6px!important;padding:7px 9px!important;font-size:12px!important}
+
+/* quiz header: centre Q badge with the label */
+div.clay.not-prose:has(> div > p + ul li button) > header{
+  align-items:center!important;
+}
+div.clay.not-prose:has(> div > p + ul li button) > header > span:first-child{
+  display:flex!important;align-items:center!important;justify-content:center!important;
+  line-height:1!important;font-size:0!important;
+}
+div.clay.not-prose:has(> div > p + ul li button) > header h3{
+  margin:0!important;line-height:1.2!important;
+  display:flex;align-items:center;
+}
