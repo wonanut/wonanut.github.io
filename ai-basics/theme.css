@@ -205,3 +205,153 @@ input[type="checkbox"],input[type="radio"]{
 }
 input[type="range"]{accent-color:var(--primary);background:transparent!important;border:0!important}
 select{color-scheme:dark}
+
+/* ============================================================
+   Layout / typography / header — align with the personal site
+   ============================================================ */
+:root{--header-h:64px}
+
+/* ---- shared site header ---- */
+.ai-header{
+  position:sticky;top:0;z-index:60;
+  background:rgba(7,9,14,.72);
+  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  border-bottom:1px solid rgba(255,255,255,.06);
+}
+.ai-header-inner{max-width:1120px;margin:0 auto;padding:0 28px;height:var(--header-h);
+  display:flex;align-items:center;gap:26px}
+.ai-brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink-strong);font-weight:760;letter-spacing:-.01em;white-space:nowrap}
+.ai-brand-mark{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;
+  font:800 13px/1 var(--font-display);color:#0a0b10;
+  background:linear-gradient(135deg,#8b93ff,#5eead4);box-shadow:0 6px 16px -8px rgba(139,147,255,.7)}
+.ai-brand-text{display:flex;flex-direction:column;line-height:1.1;font-size:15px}
+.ai-brand-text small{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:8.5px;
+  letter-spacing:.14em;color:var(--muted);font-weight:600;margin-top:3px;text-transform:uppercase}
+.ai-nav{display:flex;align-items:center;gap:2px;margin-left:auto}
+.ai-nav a{font-size:13px;padding:7px 11px;border-radius:8px;text-decoration:none;
+  color:var(--muted);font-weight:600;transition:.18s;white-space:nowrap}
+.ai-nav a:hover{color:var(--ink);background:rgba(255,255,255,.05)}
+.ai-nav a.is-active{color:var(--ink-strong);background:rgba(139,147,255,.14)}
+.ai-header-cta{font-size:12.5px;padding:7px 12px;border:1px solid var(--line);border-radius:9px;
+  color:var(--ink);text-decoration:none;white-space:nowrap;transition:.18s;background:rgba(255,255,255,.03)}
+.ai-header-cta:hover{border-color:var(--primary);background:rgba(139,147,255,.1)}
+
+@media (max-width:900px){
+  :root{--header-h:58px}
+  .ai-header-inner{padding:0 18px;gap:12px}
+  .ai-nav a:nth-child(3),.ai-nav a:nth-child(4){display:none}
+  .ai-brand-text small{display:none}
+  .ai-header-cta{display:none}
+}
+@media (max-width:560px){
+  .ai-nav a:not(.is-active){display:none}
+  .ai-brand-text{font-size:14px}
+}
+
+/* ---- content widths / four-side padding ---- */
+main[class*="max-w-[1440px]"],
+main.max-w-7xl,
+main.max-w-6xl,
+article[class*="max-w-[1600px]"]:not([class*="h-[100dvh]"]){
+  max-width:1120px!important;
+  padding:32px 28px 76px!important;
+}
+@media (max-width:640px){
+  main[class*="max-w-[1440px]"],main.max-w-7xl,main.max-w-6xl,
+  article[class*="max-w-[1600px]"]:not([class*="h-[100dvh]"]){padding:22px 18px 56px!important}
+}
+/* app-like pages keep their full-bleed layout, just make room for the header */
+main[class*="h-[100dvh]"]{height:calc(100dvh - var(--header-h))!important}
+
+/* ---- typography scale ---- */
+body{font-size:16px!important;line-height:1.75!important}
+[class~="text-4xl"]{font-size:36px!important;line-height:1.14!important;letter-spacing:-.03em!important}
+[class~="text-3xl"]{font-size:31px!important;line-height:1.16!important;letter-spacing:-.025em!important}
+[class~="text-2xl"]{font-size:25px!important;line-height:1.22!important;letter-spacing:-.02em!important}
+[class~="text-xl"]{font-size:21px!important;line-height:1.3!important}
+[class~="text-lg"]{font-size:18px!important;line-height:1.4!important}
+[class~="text-base"]{font-size:16px!important}
+[class~="text-[15px]"]{font-size:15px!important;line-height:1.75!important}
+[class~="text-sm"]{font-size:13.5px!important;line-height:1.7!important}
+[class~="text-[13px]"]{font-size:13px!important}
+[class~="text-[12px]"]{font-size:12.5px!important;line-height:1.65!important}
+[class~="text-xs"]{font-size:12px!important;line-height:1.6!important}
+[class~="text-[11px]"]{font-size:11px!important}
+[class~="text-[10px]"]{font-size:10px!important}
+h1,h2,h3,h4{font-weight:760}
+.prose{font-size:16px!important;line-height:1.85!important}
+.prose p{margin:0 0 16px!important}
+.prose h2{font-size:22px!important;line-height:1.35!important;margin:34px 0 14px!important}
+.prose h3{font-size:18px!important;line-height:1.4!important;margin:26px 0 10px!important}
+.prose ul,.prose ol{margin:0 0 16px!important;padding-left:1.3em!important}
+.prose li{margin:4px 0!important}
+.prose strong{color:var(--ink-strong)}
+.prose table{font-size:14px!important}
+
+/* ---- buttons / chips ---- */
+.clay-btn{border-radius:9px!important;padding:8px 15px!important;font-size:13.5px!important;
+  font-weight:650!important;letter-spacing:0!important;box-shadow:none!important;
+  font-family:var(--font-display)!important;gap:6px!important}
+.clay-btn--ghost{background:rgba(255,255,255,.035)!important;border:1px solid rgba(255,255,255,.16)!important;color:var(--ink)!important}
+.clay-btn--ghost:hover{background:rgba(255,255,255,.075)!important;border-color:var(--primary)!important;transform:translateY(-1px)!important}
+.clay-btn:not(.clay-btn--ghost):not(.clay-btn--coral):not(.clay-btn--mint){
+  background:linear-gradient(135deg,#8b93ff,#a5aaff)!important;color:#080a10!important}
+.chip{font-size:11px!important;font-weight:650!important;padding:2px 9px!important;letter-spacing:.02em}
+.progress{height:6px!important}
+.progress__seg{height:6px!important;border-radius:99px!important}
+
+/* ---- course landing / catalog spacing ---- */
+main > section.clay{padding:30px 32px!important;border-radius:18px!important}
+main > section.clay h1{margin-top:10px!important}
+main > section.clay .chip{margin-bottom:2px}
+main > .mt-5.grid{gap:14px!important}
+main .clay{transition:border-color .2s ease,background .2s ease,transform .2s ease}
+main .clay:hover{border-color:rgba(255,255,255,.16)!important}
+main .clay.p-5{padding:18px!important}
+main .clay.p-4{padding:16px!important}
+main h2.font-display{letter-spacing:-.02em}
+
+/* ---- lesson sidebar / TOC ---- */
+article > div[class*="lg:grid"]{grid-template-columns:236px minmax(0,1fr)!important;gap:34px!important}
+aside > nav[aria-label="课程目录"]{
+  background:transparent!important;border:0!important;box-shadow:none!important;padding:0!important;
+  position:sticky!important;top:calc(var(--header-h) + 20px)!important;
+  max-height:calc(100vh - var(--header-h) - 40px)!important;
+}
+aside > nav[aria-label="课程目录"] > p{
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace!important;
+  font-size:10px!important;letter-spacing:.16em!important;color:var(--muted)!important;
+  padding:0 10px 10px!important;
+}
+aside > nav[aria-label="课程目录"] ol{gap:2px}
+aside > nav[aria-label="课程目录"] a{
+  border-radius:8px!important;padding:6px 9px!important;font-size:12.5px!important;
+  color:var(--muted)!important;line-height:1.55!important;
+}
+aside > nav[aria-label="课程目录"] a:hover{background:rgba(255,255,255,.05)!important;color:var(--ink)!important}
+aside > nav[aria-label="课程目录"] a[aria-current="page"]{
+  background:rgba(139,147,255,.15)!important;color:var(--ink-strong)!important}
+aside > nav[aria-label="课程目录"] a span[class*="h-5"]{width:18px!important;height:18px!important;font-size:10px!important}
+
+/* course landing: lesson list tighter and closer to the reference */
+ol.grid .clay{padding:12px 14px!important;border-radius:12px!important}
+ol.grid .clay .icon[class*="h-11"]{width:34px!important;height:34px!important;border-radius:10px!important;font-size:14px!important}
+
+/* interview / small app cards */
+main .clay.p-6{padding:22px!important}
+
+/* wide header for full-bleed app pages */
+.ai-header--wide .ai-header-inner{max-width:1600px}
+
+/* shared footer for content pages */
+.ai-footer{border-top:1px solid var(--line);padding:22px 28px 34px;color:var(--muted);font-size:12px}
+.ai-footer-inner{max-width:1120px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.ai-footer-links{display:flex;gap:18px;flex-wrap:wrap}
+.ai-footer a{color:var(--muted);text-decoration:none;transition:.18s}
+.ai-footer a:hover{color:var(--mint)}
+
+/* quiz options / small clickable tiles */
+button[class*="inset_0_1px"]{box-shadow:none!important}
+button[class*="bg-[#f4f2fc]"]{background-color:rgba(255,255,255,.045)!important;border:1px solid rgba(255,255,255,.07)!important}
+button[class*="bg-[#f4f2fc]"]:hover{background-color:rgba(139,147,255,.14)!important;border-color:rgba(139,147,255,.3)!important}
+input[type="checkbox"]{color-scheme:dark;accent-color:var(--primary)}
