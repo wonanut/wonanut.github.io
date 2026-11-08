@@ -441,3 +441,8 @@ body.scene-dragging,body.scene-dragging *{user-select:none}
 @media (prefers-reduced-motion:reduce){
   .hero-hint-dot{animation:none}
 }
+
+/* homepage: drag-to-rotate, so disable text selection by default */
+body.home{user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+input,textarea,select{user-select:text;-webkit-user-select:text}
+img{-webkit-user-drag:none}
