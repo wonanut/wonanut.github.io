@@ -318,3 +318,128 @@ aside > nav[aria-label="课程目录"]{
   border-radius:12px!important;
   padding:14px 10px 16px!important;
 }
+
+/* ============================================================
+   v3 refinements: header quick nav, one-line lesson bar,
+   compact typography and code blocks
+   ============================================================ */
+.ai-header-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.ai-quicknav{position:relative}
+.ai-quicknav summary{
+  list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+  font-size:13px;font-weight:600;color:var(--muted);
+  padding:7px 11px;border:1px solid var(--border);border-radius:8px;background:#fff;
+  transition:.15s;
+}
+.ai-quicknav summary::-webkit-details-marker{display:none}
+.ai-quicknav summary:hover{color:var(--ink);border-color:var(--border-strong)}
+.ai-quicknav[open] summary{color:var(--accent-strong);border-color:#c7ccff;background:var(--accent-soft)}
+.ai-quicknav-panel{
+  position:absolute;right:0;top:calc(100% + 8px);width:270px;max-height:min(70vh,520px);overflow:auto;
+  background:#fff;border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);
+  padding:7px;z-index:80;
+}
+.ai-quicknav-panel a{
+  display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:7px;
+  text-decoration:none;color:var(--ink-soft);font-size:13px;line-height:1.4;
+}
+.ai-quicknav-panel a:hover{background:var(--bg-soft);color:var(--ink)}
+.ai-quicknav-panel a.is-current{background:var(--accent-soft);color:var(--accent-strong);font-weight:600}
+.ai-quicknav-panel .num{font-family:ui-monospace,Menlo,monospace;font-size:10px;color:var(--faint);width:18px;flex:none}
+.ai-quicknav-panel a.is-current .num{color:var(--accent-strong)}
+.ai-quicknav-home{border-bottom:1px solid var(--border);border-radius:7px 7px 0 0;margin-bottom:4px;padding-bottom:9px!important;color:var(--muted)!important;font-size:12px!important}
+@media (max-width:620px){
+  .ai-brand-text small{display:none}
+  .ai-header-cta{display:none}
+  .ai-quicknav-panel{right:-8px;width:250px}
+}
+
+/* one-line lesson header: back | progress | counter */
+.ai-lesson-bar{display:flex;align-items:center;gap:16px;margin:0 0 24px}
+.ai-lesson-bar > .clay-btn{flex:none}
+.ai-lesson-track{display:flex;align-items:center;gap:12px;flex:1;min-width:0}
+.ai-lesson-track .progress{flex:1;margin:0!important}
+.ai-lesson-track .chip{flex:none;white-space:nowrap}
+@media (max-width:640px){
+  .ai-lesson-bar{flex-wrap:wrap;gap:10px;margin-bottom:18px}
+  .ai-lesson-track{flex-basis:100%}
+}
+
+/* compact right-hand typography */
+.prose{font-size:15px!important;line-height:1.8!important}
+.prose p{margin:0 0 11px!important}
+.prose h2{font-size:20px!important;margin:24px 0 10px!important}
+.prose h3{font-size:18px!important;margin:20px 0 8px!important}
+.prose ul,.prose ol{margin:0 0 11px!important}
+.prose li{margin:3px 0!important}
+[class~="text-[15px]"]{font-size:14.5px!important;line-height:1.75!important}
+[class~="text-base"]{font-size:15px!important}
+[class~="text-sm"]{font-size:14px!important;line-height:1.65!important}
+[class~="text-[13px]"]{font-size:13px!important}
+[class~="text-[12px]"]{font-size:12.5px!important;line-height:1.6!important}
+[class~="text-xs"]{font-size:12px!important}
+[class~="text-3xl"]{font-size:27px!important;line-height:1.22!important}
+[class~="text-2xl"]{font-size:23px!important;line-height:1.26!important}
+[class~="text-xl"]{font-size:19px!important}
+[class~="text-lg"]{font-size:17px!important}
+
+/* tighter vertical rhythm between lesson blocks */
+article section.clay.my-6{margin:30px 0!important}
+article section.clay.my-6 > header{padding:0 0 9px!important}
+aside.clay, .clay.my-4{margin-top:14px!important;margin-bottom:14px!important}
+.prose > :first-child{margin-top:0!important}
+.prose > :last-child{margin-bottom:0!important}
+
+/* code components: no borders/shadows, smaller light text */
+div.clay:has(pre){
+  background:#111827!important;
+  border:0!important;
+  box-shadow:none!important;
+  border-radius:10px!important;
+}
+div.clay:has(pre) > div{
+  background:#0b1220!important;
+  border:0!important;
+  box-shadow:none!important;
+  padding:7px 12px!important;
+}
+div.clay:has(pre) .chip{
+  border:0!important;
+  background:transparent!important;
+  box-shadow:none!important;
+  color:#94a3b8!important;
+  padding:0!important;
+  font-size:11px!important;
+}
+pre{
+  font-size:12.5px!important;
+  line-height:1.65!important;
+  padding:13px 15px!important;
+  color:#dbe5f3!important;
+}
+.prose code{
+  border:0!important;
+  background:#f3f4f6!important;
+  padding:1px 4px!important;
+  font-size:.85em!important;
+}
+.prose pre code{background:transparent!important;padding:0!important}
+blockquote,.prose blockquote{
+  border:0!important;
+  border-left:2px solid #c7ccff!important;
+  box-shadow:none!important;
+  padding:12px 16px!important;
+  margin:16px 0!important;
+}
+
+/* re-lay the original header row + progress into a single line without DOM changes */
+article{display:grid!important;grid-template-columns:auto minmax(0,1fr) auto;column-gap:14px;align-items:center}
+article > div.mb-5{display:contents}
+article > div.mb-5 > a{order:1;grid-column:1;justify-self:start}
+article > div.mb-5 > .chip{order:3;grid-column:3;justify-self:end;white-space:nowrap}
+article > .progress{order:2;grid-column:2;margin:0!important;width:100%}
+article > div[class*="lg:grid"]{order:4;grid-column:1/-1}
+@media (max-width:520px){
+  article{column-gap:9px}
+  article > div.mb-5 > a{padding-left:10px!important;padding-right:10px!important}
+}
