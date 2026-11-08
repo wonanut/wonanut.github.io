@@ -47,6 +47,24 @@ python3 course-src/build.py --stats    # 每章中文字数 / 代码块 / 折叠
 
 不要直接改 `index.html` —— 它每次构建都会被覆盖。
 
+## 更新并发布到 GitHub Pages
+
+改完章节后，用下面这套流程发布（本站就是 `wonanut.github.io` 仓库的 `master` 分支）：
+
+```sh
+cd course
+python3 course-src/build.py --check   # 结构/转义校验，必须通过
+python3 course-src/build.py           # 重新生成 index.html
+cd ..
+git add -A
+git commit -m "course: 更新 <章节或主题>"
+git push
+```
+
+推送后 GitHub Pages 会在一分钟内重新发布。提交前请确认 `course/index.html` 也一起提交了 —— 页面实际访问的是构建产物，不是 `course-src`。
+
+> 课程源码（`course-src/`）就是公开的，方便对照与二次修改；许可见课程根目录的 `LICENSE` 与 `NOTICE.md`。
+
 ## 内容来源
 
 章节正文是对上游仓库 [shareAI-lab/learn-claude-code](https://github.com/shareAI-lab/learn-claude-code) 的 `s01_agent_loop/` … `s17_goal_loop/` 的**重新讲解**，不是原文翻译：主线补动机与类比，深入折叠区补源码级细节、边界与设计取舍，每章附动手实验与自测。遇到描述与源码不一致时，以仓库源码为准。
