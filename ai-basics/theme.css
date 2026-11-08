@@ -355,3 +355,8 @@ button[class*="inset_0_1px"]{box-shadow:none!important}
 button[class*="bg-[#f4f2fc]"]{background-color:rgba(255,255,255,.045)!important;border:1px solid rgba(255,255,255,.07)!important}
 button[class*="bg-[#f4f2fc]"]:hover{background-color:rgba(139,147,255,.14)!important;border-color:rgba(139,147,255,.3)!important}
 input[type="checkbox"]{color-scheme:dark;accent-color:var(--primary)}
+
+/* three feature cards after removing Agent Lab should fill the row */
+main > div[class*="mt-5"][class*="grid"]{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+@media (max-width:900px){main > div[class*="mt-5"][class*="grid"]{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+@media (max-width:640px){main > div[class*="mt-5"][class*="grid"]{grid-template-columns:1fr!important}}

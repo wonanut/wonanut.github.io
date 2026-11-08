@@ -493,3 +493,7 @@ img{-webkit-user-drag:none}
 @media (max-width:430px){
   .ai-course-grid{grid-template-columns:1fr}
 }
+
+.course-more{display:inline-block;margin-left:6px;color:var(--accent-2);text-decoration:none;
+  font-family:var(--mono);font-size:11px;border-bottom:1px solid rgba(94,234,212,.35);white-space:nowrap}
+.course-more:hover{color:#fff;border-bottom-color:var(--accent-2)}
