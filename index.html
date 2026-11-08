@@ -43,50 +43,39 @@
 
 <main id="main">
   <!-- ================= HERO ================= -->
-  <section class="hero">
-    <div class="wrap">
-      <div class="hero-grid">
-        <div class="hero-copy">
-          <p class="eyebrow">Huawei Shanghai · Technical Research · Since 2021</p>
-          <h1>让数据、知识与智能，<br><span class="grad">真正落到业务里。</span></h1>
-          <p class="hero-sub">
-            我是 Doran（wonanut），2021 年硕士毕业后一直在华为上海做技术研究。方向横跨 <b>交互体验</b>、<b>企业海量数据治理</b>、
-            <b>知识图谱落地</b> 与 <b>Agent 技术企业落地</b>。相信技术的价值不在参数里，而在真实业务中能不能跑通、可度量、被使用。
-          </p>
-          <div class="chips" aria-label="关键词">
-            <span class="chip"><b>01</b> 交互体验</span>
-            <span class="chip"><b>02</b> 数据治理</span>
-            <span class="chip"><b>03</b> 知识图谱</span>
-            <span class="chip"><b>04</b> Agent 工程</span>
-          </div>
-          <div class="hero-actions">
-            <a class="btn btn-primary" href="#focus">
-              看看我在做什么 <span class="arrow" aria-hidden="true">↓</span>
-            </a>
-            <a class="btn btn-ghost" href="course/">《Claude Code 内功课》</a>
-            <a class="btn btn-ghost" href="agent-lab/">Agent 实验室 <span aria-hidden="true">↗</span></a>
-          </div>
-        </div>
+  <section class="hero hero-3d" id="hero">
+    <div class="hero-canvas" id="hero-canvas" aria-hidden="true"></div>
+    <div class="hero-fallback" aria-hidden="true">
+      <div class="orbit two"></div>
+      <div class="orbit one"></div>
+      <div class="avatar-ring">
+        <img src="assets/avatar.jpg" width="212" height="212" alt="" loading="eager">
+      </div>
+    </div>
+    <div class="hero-scrim" aria-hidden="true"></div>
 
-        <div class="hero-visual" aria-hidden="true">
-          <div class="orbit two"></div>
-          <div class="orbit one"></div>
-          <div class="avatar-ring">
-            <img src="assets/avatar.jpg" width="212" height="212" alt="" loading="eager">
-          </div>
-          <div class="float-card fc-1">
-            <span class="fc-label">enterprise ai</span>
-            <span class="fc-value">从 demo 到交付</span>
-          </div>
-          <div class="float-card fc-2">
-            <span class="fc-label">focus</span>
-            <span class="fc-value">数据 · 知识 · Agent</span>
-          </div>
-          <div class="float-card fc-3">
-            <span class="fc-label">course</span>
-            <span class="fc-value">21 章 · 17 个机制</span>
-          </div>
+    <div class="wrap hero-layer">
+      <div class="hero-copy">
+        <p class="eyebrow">Huawei Shanghai · Technical Research · Since 2021</p>
+        <h1>让数据、知识与智能，<br><span class="grad">真正落到业务里。</span></h1>
+        <p class="hero-sub">
+          我是 Doran（wonanut），2021 年硕士毕业后一直在华为上海做技术研究。方向横跨 <b>交互体验</b>、<b>企业海量数据治理</b>、
+          <b>知识图谱落地</b> 与 <b>Agent 技术企业落地</b>。相信技术的价值不在参数里，而在真实业务中能不能跑通、可度量、被使用。
+        </p>
+        <div class="chips" aria-label="关键词">
+          <span class="chip"><b>01</b> 交互体验</span>
+          <span class="chip"><b>02</b> 数据治理</span>
+          <span class="chip"><b>03</b> 知识图谱</span>
+          <span class="chip"><b>04</b> Agent 工程</span>
         </div>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="#focus">
+            看看我在做什么 <span class="arrow" aria-hidden="true">↓</span>
+          </a>
+          <a class="btn btn-ghost" href="course/">《Claude Code 内功课》</a>
+          <a class="btn btn-ghost" href="agent-lab/">Agent 实验室 <span aria-hidden="true">↗</span></a>
+        </div>
+        <p class="hero-hint" aria-hidden="true"><span class="hero-hint-dot"></span>拖拽旋转 · 悬停节点 · 点击进入</p>
       </div>
 
       <div class="stats" role="list">
@@ -96,6 +85,8 @@
         <div class="stat" role="listitem"><b>92<i>个</i></b><span>GitHub 公开仓库</span></div>
       </div>
     </div>
+
+    <div class="hero-tip" id="hero-tip" hidden></div>
   </section>
 
   <!-- ================= FOCUS ================= -->
@@ -374,5 +365,6 @@
 </footer>
 
 <script src="assets/main.js" defer></script>
+<script type="module" src="assets/hero-scene.js"></script>
 </body>
 </html>
