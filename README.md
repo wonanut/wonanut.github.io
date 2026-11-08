@@ -2,6 +2,8 @@
 
 Doran 的个人站点：<https://wonanut.github.io/>
 
+华为技术研究，关注交互体验、企业海量数据治理、知识图谱与 Agent 企业落地。
+
 - 首页：个人介绍、精选作品、项目列表、联系方式（手写 HTML/CSS/JS，无构建步骤）
 - [`course/`](course/)：中文课程《Claude Code 内功课》——沿开源仓库 [shareAI-lab/learn-claude-code](https://github.com/shareAI-lab/learn-claude-code) 的 17 个机制，从零理解 Agent Harness。单文件、离线可读，源码在 [`course/course-src/`](course/course-src/)。
 
