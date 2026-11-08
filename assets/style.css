@@ -369,85 +369,60 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent-2);outline-o
 }
 
 /* ============================================================
-   3D hero (Three.js knowledge graph)
+   Low-poly floating islands (hand-written WebGL, no libraries)
    ============================================================ */
-.hero-3d{
-  position:relative; overflow:hidden; display:flex;
-  padding:124px 0 30px; min-height:min(100svh, 940px);
-}
-.hero-3d .wrap{
-  position:relative; z-index:2; flex:1;
-  display:flex; flex-direction:column; justify-content:center;
-  pointer-events:none;
-}
-.hero-3d .hero-copy{max-width:600px; pointer-events:auto}
-.hero-3d .stats{position:relative; z-index:2; margin-top:54px; pointer-events:auto}
-.hero-canvas{
-  position:absolute; inset:0; z-index:0; cursor:grab;
-  touch-action:pan-y;
-}
-.hero-canvas canvas{display:block; width:100%!important; height:100%!important}
-.hero-canvas.is-hover{cursor:pointer}
-.hero-canvas.grabbing{cursor:grabbing}
-.hero-scrim{
-  position:absolute; inset:0; z-index:1; pointer-events:none;
+#scene{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:-2;pointer-events:none}
+.bg{z-index:-3}
+.scene-scrim{
+  position:fixed;inset:0;z-index:-1;pointer-events:none;
   background:
-    linear-gradient(96deg, rgba(7,9,14,.97) 0%, rgba(7,9,14,.9) 27%, rgba(7,9,14,.58) 47%, rgba(7,9,14,.1) 63%, transparent 76%),
-    radial-gradient(58% 62% at 82% 44%, rgba(7,9,14,0) 0%, rgba(7,9,14,.32) 100%);
+    linear-gradient(90deg, rgba(7,9,14,.9) 0%, rgba(7,9,14,.78) 26%, rgba(7,9,14,.42) 46%, rgba(7,9,14,.08) 62%, transparent 74%),
+    radial-gradient(62% 60% at 74% 44%, rgba(7,9,14,0) 0%, rgba(7,9,14,.22) 60%, rgba(7,9,14,.55) 100%),
+    linear-gradient(180deg, rgba(7,9,14,.52) 0%, rgba(7,9,14,.18) 24%, rgba(7,9,14,.3) 58%, rgba(7,9,14,.78) 100%);
 }
-.hero-fallback{
-  position:absolute; right:9%; top:50%; transform:translateY(-50%);
-  z-index:0; pointer-events:none; transition:opacity .5s ease, visibility .5s;
-}
-.hero-fallback .orbit{position:absolute; left:50%; top:50%; margin:-145px 0 0 -145px}
-.hero-fallback .orbit.one{width:290px;height:290px;margin:-145px 0 0 -145px}
-.hero-fallback .orbit.two{width:380px;height:380px;margin:-190px 0 0 -190px}
-.hero-fallback .avatar-ring{width:212px;height:212px}
-.has-3d .hero-fallback{opacity:0; visibility:hidden}
-.no-3d .hero-canvas{display:none}
-.no-3d .hero-fallback{opacity:1; visibility:visible}
+.no-scene #scene,.no-scene .scene-scrim{display:none}
+
+.hero{position:relative;z-index:1;display:flex;min-height:min(100svh,980px);padding:144px 0 30px}
+.hero .wrap{display:flex;flex-direction:column;justify-content:center}
+.hero-copy{position:relative;max-width:640px}
+.hero .stats{margin-top:70px}
 
 .hero-hint{
-  display:inline-flex; align-items:center; gap:8px; margin:22px 0 0;
-  font-family:var(--mono); font-size:10.5px; letter-spacing:.13em;
-  text-transform:uppercase; color:var(--dim);
+  display:none;align-items:center;gap:8px;margin:22px 0 0;
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--dim);
 }
+.scene-on .hero-hint{display:inline-flex}
 .hero-hint-dot{
   width:6px;height:6px;border-radius:50%;background:var(--accent-2);
-  box-shadow:0 0 0 3px rgba(94,234,212,.12); animation:pulse 2.4s ease-in-out infinite;
-}
-.no-3d .hero-hint{display:none}
-
-.hero-tip{
-  position:absolute; z-index:5; transform:translate(-50%,-138%);
-  display:flex; align-items:center; gap:9px; padding:7px 11px;
-  border-radius:9px; background:rgba(9,12,19,.94);
-  border:1px solid var(--border-strong); box-shadow:var(--shadow);
-  font-size:12px; color:var(--text); white-space:nowrap; pointer-events:none;
-  backdrop-filter:blur(8px);
-}
-.hero-tip[hidden]{display:none}
-.hero-tip b{font-weight:650}
-.hero-tip .t-dot{width:6px;height:6px;border-radius:50%;flex:none}
-.hero-tip .t-act{
-  font-family:var(--mono); font-size:9.5px; letter-spacing:.06em;
-  text-transform:uppercase; color:var(--dim);
+  box-shadow:0 0 0 3px rgba(94,234,212,.12);animation:pulse 2.4s ease-in-out infinite;
 }
 
-@media (max-width:1100px){
-  .hero-3d{padding-top:112px}
-  .hero-3d .hero-copy{max-width:560px}
+.scene-tip{
+  position:fixed;z-index:60;transform:translate(-50%,-140%);
+  display:flex;align-items:center;gap:9px;padding:7px 11px;border-radius:9px;
+  background:rgba(9,12,19,.94);border:1px solid var(--border-strong);box-shadow:var(--shadow);
+  font-size:12px;color:var(--text);white-space:nowrap;pointer-events:none;backdrop-filter:blur(8px);
 }
+.scene-tip[hidden]{display:none}
+.scene-tip .tip-dot{width:6px;height:6px;border-radius:50%;flex:none}
+.scene-tip .tip-act{
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--dim);
+}
+body.scene-dragging{cursor:grabbing}
+body.scene-dragging,body.scene-dragging *{user-select:none}
+
 @media (max-width:900px){
-  .hero-3d{min-height:min(100svh, 880px); padding:104px 0 26px}
-  .hero-3d .hero-copy{max-width:none}
-  .hero-3d .stats{margin-top:42px}
-  .hero-scrim{
+  .hero{min-height:min(100svh,880px);padding-top:104px}
+  .hero-copy{max-width:none}
+  .hero .stats{margin-top:44px}
+  .scene-scrim{
     background:
-      linear-gradient(180deg, rgba(7,9,14,.34) 0%, rgba(7,9,14,.56) 28%, rgba(7,9,14,.86) 56%, var(--bg) 100%);
+      radial-gradient(84% 56% at 50% 28%, rgba(7,9,14,0) 0%, rgba(7,9,14,.38) 60%, rgba(7,9,14,.72) 100%),
+      linear-gradient(180deg, rgba(7,9,14,.72) 0%, rgba(7,9,14,.42) 30%, rgba(7,9,14,.64) 62%, rgba(7,9,14,.92) 100%);
   }
-  .hero-fallback{right:50%; transform:translate(50%,-50%); top:38%; opacity:.5}
-  .hero-hint{font-size:10px; letter-spacing:.1em}
+  .hero-hint{font-size:10px;letter-spacing:.1em}
 }
 @media (prefers-reduced-motion:reduce){
   .hero-hint-dot{animation:none}

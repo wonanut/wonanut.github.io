@@ -12,7 +12,8 @@ Doran 的个人站点：<https://wonanut.github.io/>
 
 ```
 index.html            首页
-assets/               样式、脚本、头像、favicon；vendor/ 下本地化 Three.js（含许可证）
+assets/               样式、脚本、头像、favicon
+assets/lowpoly.js     首页背景：手写 WebGL 低多边形场景（模型全部写在代码里，零第三方库）
 agent-lab/            交互式项目「Agent 实验室」（静态适配 + 插件源码副本 + 构建脚本）
 course/               课程（index.html + 构建源 + 许可与署名）
 404.html              404 页
@@ -43,6 +44,5 @@ python3 course-src/build.py
 ## 许可
 
 - 站点与课程文字：MIT（见 [`course/LICENSE`](course/LICENSE)）
-- 首页 3D 场景使用 [Three.js](https://threejs.org/)（MIT），许可证见 [`assets/vendor/THREE-LICENSE.txt`](assets/vendor/THREE-LICENSE.txt)
 - 课程引用的上游源码：MIT，署名见 [`course/NOTICE.md`](course/NOTICE.md)
 - Agent 实验室：来自 [wonanut/dsh-plugins](https://github.com/wonanut/dsh-plugins)（MIT），静态适配说明见 [`agent-lab/README.md`](agent-lab/README.md)
