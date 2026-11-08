@@ -21,7 +21,7 @@
 
 1. `src/` 与 `host-index.js` 是上游源码副本（`src/95-apply.js` 的 slot 注册在本站未使用）；
 2. `build.mjs` 把源码拼成一个 IIFE，暴露 `window.AgentLab.Page`，替代上游的 `window.__ModuleLoader__` 注册方式；
-3. `index.html` 提供页面外壳，并把 DSH 设计变量（`--dsw-alias-*`）映射成站点的深色主题；
+3. `index.html` 提供页面外壳，并把 DSH 设计变量（`--dsw-alias-*`）映射成浅色主题（与插件在 DSH 浅色下的观感一致）；
 4. `vendor/` 是本地化的 React 18.3.1 UMD（不再依赖 CDN）。
 
 ## 目录
@@ -68,4 +68,4 @@ git add -A && git commit -m "lab: sync agent-lab-plugin @<sha>" && git push
 ## 说明
 
 - 这是个人作品集里的交互式项目页，不是 DSH 的官方托管版本；真实模型、账号与工具执行仍以 DSH 环境为准。
-- UI 依赖 DSH 的设计 token，本站在 `index.html` 里提供了深色映射；如果你在别处复用，需要按自己的设计系统映射 `--dsw-alias-*`。
+- UI 依赖 DSH 的设计 token，本站在 `index.html` 里提供了浅色映射；如果你在别处复用，需要按自己的设计系统映射 `--dsw-alias-*`。

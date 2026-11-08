@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent 实验室 · Doran</title>
 <meta name="description" content="在浏览器里体验一个迷你 Agent 的完整循环：上下文组装、模型决策、工具调用、记忆写入与压缩；同时可翻阅正在运行的源码与 12 节原理长文。">
+<meta name="theme-color" content="#f5f7fa">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="canonical" href="https://wonanut.github.io/agent-lab/">
 <meta property="og:type" content="website">
@@ -13,9 +14,9 @@
 <meta property="og:url" content="https://wonanut.github.io/agent-lab/">
 <style>
   :root{
-    --bg:#07090e; --panel:#0b0e15; --line:rgba(255,255,255,.09);
-    --text:#e9edf7; --muted:#9aa5b8; --dim:#6b7689;
-    --accent:#8b93ff; --accent-2:#5eead4;
+    --bg:#f5f7fa; --panel:#ffffff; --line:#e3e7ee; --line-strong:#d5dae3;
+    --text:#14171f; --muted:#5a6474; --dim:#8a94a6;
+    --accent:#4f46e5; --accent-2:#0d9488;
     --sans:system-ui,-apple-system,"Segoe UI","PingFang SC","Hiragino Sans GB","Noto Sans SC","Microsoft YaHei",sans-serif;
     --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
   }
@@ -23,49 +24,54 @@
   html,body{height:100%}
   html{scroll-behavior:smooth}
   body{margin:0;height:100vh;height:100dvh;overflow:hidden;display:flex;flex-direction:column;
-    background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15px;line-height:1.7;
+    background:
+      radial-gradient(70% 50% at 10% -10%,rgba(79,70,229,.08),transparent 60%),
+      radial-gradient(50% 45% at 92% 0%,rgba(13,148,136,.06),transparent 60%),
+      var(--bg);
+    color:var(--text);font-family:var(--sans);font-size:15px;line-height:1.7;
     -webkit-font-smoothing:antialiased}
   a{color:inherit}
-  ::selection{background:rgba(139,147,255,.35)}
+  ::selection{background:rgba(79,70,229,.18)}
   .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
     clip:rect(0 0 0 0);white-space:nowrap;border:0}
 
   .topbar{flex:none;display:flex;align-items:center;gap:14px;padding:0 18px;height:58px;
-    border-bottom:1px solid var(--line);background:rgba(7,9,14,.72);backdrop-filter:blur(14px);z-index:20}
+    border-bottom:1px solid var(--line);background:rgba(255,255,255,.82);backdrop-filter:blur(14px);z-index:20}
   .brand{display:flex;align-items:center;gap:10px;text-decoration:none;font-weight:750;
-    letter-spacing:-.01em;white-space:nowrap}
+    letter-spacing:-.01em;white-space:nowrap;color:var(--text)}
   .mark{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;
-    background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#07090e;
-    font-family:var(--mono);font-size:13px;font-weight:800}
+    background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;
+    font-family:var(--mono);font-size:13px;font-weight:800;box-shadow:0 6px 14px -8px rgba(79,70,229,.6)}
   .brand small{display:block;font-family:var(--mono);font-size:9px;letter-spacing:.2em;color:var(--dim);
     text-transform:uppercase;font-weight:600;line-height:1.4}
   .crumbs{color:var(--dim);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .crumbs b{color:var(--text);font-weight:600}
   .crumbs .mit{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;color:var(--dim);
-    border:1px solid var(--line);border-radius:99px;padding:2px 7px;margin-left:6px;vertical-align:1px}
+    border:1px solid var(--line);background:#fff;border-radius:99px;padding:2px 7px;margin-left:6px;vertical-align:1px}
   .spacer{flex:1}
   .navlink{font-size:13px;color:var(--muted);text-decoration:none;padding:6px 10px;border-radius:9px;
     border:1px solid transparent;white-space:nowrap;transition:.16s;background:none;cursor:pointer;
     font-family:inherit;line-height:1.5}
-  .navlink:hover{color:var(--text);border-color:var(--line);background:rgba(255,255,255,.04)}
-  .navlink.ghost{border-color:var(--line);background:rgba(255,255,255,.03)}
+  .navlink:hover{color:var(--text);border-color:var(--line);background:rgba(15,23,42,.04)}
+  .navlink.ghost{border-color:var(--line);background:rgba(255,255,255,.7)}
 
   .lab-wrap{flex:1;min-height:0;display:flex}
   .lab-frame{position:relative;flex:1;min-height:0;overflow:hidden;background:var(--panel);
-    /* DSH design tokens the plugin CSS expects — dark mapping for this site */
-    --dsw-alias-bg-base:#07090e;
-    --dsw-alias-bg-layer-1:#0b0e15;
-    --dsw-alias-bg-layer-2:#10141d;
-    --dsw-alias-bg-layer-3:#151a24;
-    --dsw-alias-label-primary:#e9edf7;
-    --dsw-alias-label-secondary:#b9c2d4;
-    --dsw-alias-label-tertiary:#8d98ad;
-    --dsw-alias-border-l1:rgba(255,255,255,.09);
-    --dsw-alias-border-l2:rgba(255,255,255,.16);
-    --dsw-alias-brand-primary:#8b93ff;
-    --dsw-alias-state-error-primary:#fb7185;
-    --dsw-alias-state-success-primary:#5eead4;
-    --dsw-alias-state-warn-primary:#fbbf24;
+    border-top:1px solid rgba(15,23,42,.04);
+    /* DSH design tokens the plugin CSS expects — light mapping for this site */
+    --dsw-alias-bg-base:#f5f7fa;
+    --dsw-alias-bg-layer-1:#ffffff;
+    --dsw-alias-bg-layer-2:#f2f4f8;
+    --dsw-alias-bg-layer-3:#e9edf3;
+    --dsw-alias-label-primary:#14171f;
+    --dsw-alias-label-secondary:#4d5666;
+    --dsw-alias-label-tertiary:#7b8496;
+    --dsw-alias-border-l1:#e3e7ee;
+    --dsw-alias-border-l2:#cfd6e0;
+    --dsw-alias-brand-primary:#4f46e5;
+    --dsw-alias-state-error-primary:#dc2626;
+    --dsw-alias-state-success-primary:#0f766e;
+    --dsw-alias-state-warn-primary:#b45309;
   }
   .loading{position:absolute;inset:0;display:grid;place-items:center;color:var(--dim);font-family:var(--mono);
     font-size:12px;letter-spacing:.08em}
