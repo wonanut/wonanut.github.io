@@ -74,7 +74,12 @@ col += vec3(0.7,0.3,0.8) * smoothstep(0.55, 0.82, f) * 0.45;
       </div>
     </details>
 
-    <h3><span class="h3num">04</span>自测</h3>
+        <div class="callout insight">
+      <span class="callout-title">案例 · 云、火、水面</span>
+      <p>FBM 是云层与地形的基础；火焰通常再叠一个向上的 UV 偏移，水面则把噪声当作法线扰动。</p>
+    </div>
+
+<h3><span class="h3num">04</span>自测</h3>
     <details class="quiz">
       <summary>hash 的作用是什么？</summary>
       <div class="answer"><p>把坐标映射成固定但看起来随机的值；同样的输入永远得到同样的输出，所以动画可复现、无需存储随机表。</p></div>

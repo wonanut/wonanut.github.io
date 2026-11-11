@@ -4,11 +4,11 @@
 
 ```
 course-src/
-  manifest.json      # 课程元数据：10 章、分阶段标题、文件名
+  manifest.json      # 课程元数据：11 章、分阶段标题、文件名
   template.html      # 页面外壳 + WebGL demo runtime（CSS/GLSL/JS 均内联）
   build.py           # 校验 fragment → 拼装 → 输出 ../index.html
   STYLEGUIDE.md      # 写作契约（组件 class、结构、质量要求）
-  fragments/         # 10 个章节 fragment，每章一个 <section>
+  fragments/         # 11 个章节 fragment，每章一个 <section>
 ```
 
 ## 构建
@@ -28,7 +28,7 @@ Demo 不用额外文件：章节里写 `<div class="demo" data-demo="gradient"><
 
 可用 `data-demo`：
 
-`gradient` · `triangle` · `pulse` · `pattern` · `noise` · `sdf` · `raymarch` · `ripple` · `scene`
+`gradient` · `triangle` · `pulse` · `pattern` · `noise` · `sdf` · `raymarch` · `ripple` · `scene` · `toon`
 
 新增 demo 时，在 template 的 `DEMOS` 对象里加 vertex/fragment 源码，再在 fragment 里放一个容器即可。
 

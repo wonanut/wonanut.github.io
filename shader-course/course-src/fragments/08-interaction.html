@@ -73,7 +73,12 @@ document.addEventListener("visibilitychange", () =&gt; {
       </div>
     </details>
 
-    <h3><span class="h3num">05</span>自测</h3>
+        <div class="callout insight">
+      <span class="callout-title">案例 · 鼠标跟随展台</span>
+      <p>指针涟漪、跟随光斑、可拖拽的 3D 展台，都是把交互数据变成 uniform，再交给 shader 做视觉反馈。</p>
+    </div>
+
+<h3><span class="h3num">05</span>自测</h3>
     <details class="quiz">
       <summary>为什么鼠标 y 坐标要 1.0 - normalizedY？</summary>
       <div class="answer"><p>浏览器坐标原点在左上、y 向下；WebGL/UV 通常原点在左下、y 向上。翻转后才能让鼠标位置与画面一致。</p></div>

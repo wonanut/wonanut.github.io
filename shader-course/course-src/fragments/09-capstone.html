@@ -65,7 +65,12 @@ col += vec3(0.3,0.15,0.5) * smoothstep(0.8, 0.0, length(uv));
       </div>
     </details>
 
-    <h3><span class="h3num">04</span>自测</h3>
+        <div class="callout insight">
+      <span class="callout-title">案例 · 组合场景</span>
+      <p>游戏加载页、产品 hero、音乐可视化背景，往往就是「几个 SDF/噪声 + 光照 + 背景」的组合。</p>
+    </div>
+
+<h3><span class="h3num">04</span>自测</h3>
     <details class="quiz">
       <summary>两个 SDF 用 min 组合，表示什么？</summary>
       <div class="answer"><p>表示两个形状的并集：空间中任意点到「最近的任一表面」的距离。raymarch 用这个距离安全前进。</p></div>

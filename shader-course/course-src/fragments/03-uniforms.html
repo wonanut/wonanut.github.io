@@ -76,7 +76,12 @@ void main() {
       <li>把 <code class="inline-code">pow(..., 8.0)</code> 改成 <code class="inline-code">4.0</code> 或 <code class="inline-code">16.0</code>，看波峰宽度如何变化。</li>
     </ol>
 
-    <h3><span class="h3num">05</span>自测</h3>
+        <div class="callout insight">
+      <span class="callout-title">案例 · Loading 波纹与频谱</span>
+      <p>加载页面的扩散圆环、音频可视化的柱状条，都可以用时间 uniform 驱动 sin/abs 函数得到。</p>
+    </div>
+
+<h3><span class="h3num">05</span>自测</h3>
     <details class="quiz">
       <summary>为什么动画时间要用 performance.now() 而不是 Date.now()？</summary>
       <div class="answer"><p>performance.now() 单调递增，不受系统时间调整影响；Date.now() 可能因为校时/时区变化跳变，导致动画跳帧。</p></div>

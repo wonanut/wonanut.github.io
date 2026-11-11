@@ -1,0 +1,109 @@
+<section id="ch10" class="chapter">
+  <p class="chapter-kicker">第 10 讲 · 风格化</p>
+  <h2 class="chapter-title">3 渲 2：把 3D 变成动画截图
+    <small>卡通光照、轮廓线、半调点、速度线——把连续的 3D 画面压成二维动画语言</small>
+  </h2>
+  <p class="chapter-lede">最后一讲做一个「看起来很动画」的 shader：同一个 3D 形状，不追求真实，而是主动丢掉连续明暗，只留下色阶、线条和节奏。这就是 3D 渲染成 2D 动画风格（3 渲 2 / cel shading）的核心。</p>
+  <p class="source-line">
+    <span>Demo 10 · toon / cel shading</span>
+    <span>关键词 <code>cel</code> · <code>outline</code> · <code>halftone</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>把连续光照量化成 3 档色阶，做出卡通明暗</li>
+    <li>用法线/视线夹角画轮廓线，用屏幕空间图案做半调与速度线</li>
+    <li>知道把真实 3D 模型（OBJ / glTF）接进风格化 shader 的基本路径</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>3 渲 2 不是加一个滤镜</h3>
+    <p>它是一套「主动做减法」的渲染策略：几何还是 3D，光照还是点积，但最后呈现时把连续亮度压成几档、把轮廓描出来、把阴影换成网点或排线。观众看到的不是「真实的 3D」，而是「动画里的 3D」。</p>
+    <div class="demo" data-demo="toon" data-label="DEMO 10 · toon / cel" data-cap="移动鼠标：绕星球旋转；观察色阶、描边、半调点与速度线"></div>
+    <div class="flow">
+      <div class="flow-node"><b>3D</b>几何 / 法线</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>Light</b>点积亮度</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>Cel</b>量化 3 档</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>Ink</b>轮廓 / 网点</div>
+    </div>
+
+    <div class="analogy">
+      <span class="analogy-title">像动画师给赛璐璐片上色</span>
+      <p>真实光照有无数层灰；赛璐璐动画只留「亮、中、暗」几块颜色，再用黑线勾边。shader 里的 cel shading 就是把这个手工流程写成数学：`floor` 负责分层，`smoothstep` 负责勾线。</p>
+      <p><b>类比到哪为止：</b>动画师会按镜头手工调整色块；shader 是按像素自动算，所以需要额外处理描边粗细、锯齿和镜头运动。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>卡通光照：把亮度切成 3 档</h3>
+    <p>先算普通的 Lambert 亮度，再把 0..1 的连续值量化到 0 / 0.5 / 1 三档。注意加一点 `smoothstep` 过渡，否则移动镜头时色阶边缘会严重锯齿。</p>
+<pre data-lang="glsl"><code>float ndl = dot(n, l);
+float tone = clamp(ndl * 0.5 + 0.5, 0.0, 1.0);
+float cel = floor(tone * 3.0) / 2.0;   // 0.0 / 0.5 / 1.0
+vec3 col = mix(shadowColor, baseColor, cel);</code></pre>
+    <p>再叠一个硬高光：`pow(dot(n, halfDir), 48)` 超过阈值才显示，形成动画里常见的「一块白」。高光不要柔，柔了就像塑料而不是赛璐璐。</p>
+
+    <h3><span class="h3num">03</span>描边：轮廓与细节线</h3>
+    <p>最简单的外轮廓来自菲涅尔：视线越贴近表面切线，`1 - dot(n, -rd)` 越接近 1，把它压成一条暗边。它不需要第二个 pass，成本低，适合实时。</p>
+<pre data-lang="glsl"><code>float rim = 1.0 - max(dot(n, -rd), 0.0);
+float outline = smoothstep(0.55, 0.8, rim);
+col = mix(col, vec3(0.02, 0.02, 0.05), outline * 0.9);
+col += vec3(0.3, 0.85, 1.0) * pow(rim, 3.0) * 0.45;</code></pre>
+    <p>星球条纹、环轨、卫星这类「内部装饰」不是几何轮廓，需要在材质阶段按局部坐标画；Demo 里的条纹和卫星就是根据命中点的位置直接上色。</p>
+
+    <h3><span class="h3num">04</span>屏幕空间：半调与速度线</h3>
+    <p>把 UV 放大成网点，只在暗部叠加，就是漫画里的半调阴影；把极坐标角度做成放射线，再乘一个径向遮罩，就是速度线。它们不是 3D 几何，而是「贴在镜头上的动画语言」。</p>
+    <pre data-lang="glsl"><code>vec2 hp = fract(vUv * vec2(aspect, 1.0) * 120.0);
+float dots = step(0.35, length(hp - 0.5));
+float shadowMask = 1.0 - smoothstep(0.2, 0.8, cel);
+col *= 1.0 - dots * shadowMask * 0.25;
+
+float ang = atan(sp.y, sp.x);
+float speed = pow(0.5 + 0.5 * sin(ang * 60.0 + uTime * 1.8), 18.0)
+            * smoothstep(0.1, 1.1, length(sp));
+</code></pre>
+
+    <div class="callout insight">
+      <span class="callout-title">真实案例 · 动画与游戏里的卡通渲染</span>
+      <p>卡通渲染常见于动画电影、二次元游戏和风格化广告：角色用 cel shading，场景用轮廓线，特效叠半调/速度线。很多看起来「像手绘」的镜头，底层仍是 3D 模型 + 多 pass 后处理。</p>
+    </div>
+
+    <h3><span class="h3num">05</span>如果模型是 OBJ / glTF 呢？</h3>
+    <p>本课 Demo 用 SDF 生成角色，所以一切在片元里完成。真实项目里，3D 模型通常来自 Blender/OBJ/glTF，由 Three.js 或引擎加载，再用自定义材质替换默认光照：</p>
+    <ol class="steps">
+      <li>拿到模型的 <b>法线</b>、<b>世界坐标</b>和<b>深度</b>，作为 varying/uniform 传给 shader。</li>
+      <li>在片元里做 cel 量化，而不是用引擎默认的 PBR。</li>
+      <li>轮廓线用「背面外扩」第二 pass，或基于深度的边缘检测；菲涅尔描边只是最便宜的近似。</li>
+      <li>半调/速度线放在后处理 pass，不要塞进模型材质。</li>
+    </ol>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么风格化比写实更考验审美？</summary>
+      <div class="deep-body">
+        <p>写实渲染有物理参照，方向相对明确；风格化要主动决定「丢掉什么、保留什么」：色阶分几档、线多粗、高光多大、阴影用什么图案。这些选择没有唯一正确答案，只能靠大量看片和对比。</p>
+        <p>技术上，3 渲 2 往往需要多 pass（模型、描边、后处理）和稳定的帧率；先把单 pass 的 cel + 菲涅尔描边做顺，再考虑更复杂的管线。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">06</span>自测</h3>
+    <details class="quiz">
+      <summary>cel shading 里为什么要用 floor 而不是直接用 sin？</summary>
+      <div class="answer"><p>floor 把连续亮度切成离散的几档，形成「赛璐璐」色块；sin 是连续周期变化，会得到平滑渐变，不是卡通分层。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>菲涅尔描边为什么在物体边缘最明显？</summary>
+      <div class="answer"><p>边缘处法线与视线接近垂直，<code>dot(n,-rd)</code> 接近 0，<code>1-dot</code> 接近 1；中心处法线朝向相机，值接近 0。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>真实 glTF 模型的描边，为什么常用背面外扩 pass？</summary>
+      <div class="answer"><p>菲涅尔描边只能画「朝向相机的轮廓」，对内部折角/遮挡边界不够稳定；背面外扩沿法线扩大模型再画背面，能得到更均匀、可控粗细的轮廓。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>3 渲 2 = 几何 + 量化光照 + 轮廓线 + 屏幕空间图案。它不是「真实感的降级」，而是一套独立的视觉语言。你现在可以把任意 3D 场景压成动画截图，也可以继续往多 pass 和后处理走。</p>
+      <p class="next"><b>课程结束：</b>挑一个你喜欢的模型，先用 cel + 描边跑起来，再决定要不要加半调、速度线或色差。风格是你自己选的。</p>
+    </div>
+  </div>
+</section>

@@ -2,11 +2,11 @@
   <div class="hero">
     <p class="eyebrow">WebGL · Shader from scratch</p>
     <h1 class="chapter-title">在浏览器里，亲手写下第一束光</h1>
-    <p class="chapter-lede">这不是一份 WebGL API 手册，而是一趟从像素出发的旅程：你会写 GLSL、画全屏三角形、做渐变、噪声、SDF 和 raymarching，最终组合出一个能实时交互的场景。每一章都有可直接运行的 Demo。</p>
+    <p class="chapter-lede">这不是一份 WebGL API 手册，而是一趟从像素出发的旅程：你会写 GLSL、画全屏三角形、做渐变、噪声、SDF 和 raymarching，最后把 3D 场景压成动画风格的 3 渲 2 画面。大部分章节都有可直接运行的 Demo。</p>
     <div class="hero-meta">
       <span class="pill accent">中文 · 单页可离线阅读</span>
-      <span class="pill">10 章 · 约 3 小时</span>
-      <span class="pill">每章实时 WebGL Demo</span>
+      <span class="pill">11 章 · 约 4 小时</span>
+      <span class="pill">10 个实时 WebGL Demo</span>
       <span class="pill">零依赖 · 浏览器直接跑</span>
     </div>
   </div>
@@ -23,10 +23,73 @@
     <li>用 GLSL 写渐变、图案、噪声、SDF 与简单的 raymarching 光照</li>
     <li>知道如何把鼠标、时间、分辨率传给 shader，并让它持续高性能地运行</li>
     <li>能独立写出一个全屏 shader 作品，并知道下一步该往哪里深入</li>
+    <li>理解 CPU/GPU 的分工，以及 WebGL 在网页技术栈里的位置</li>
   </ul>
 
   <div class="chapter-body">
-    <h3><span class="h3num">01</span>先建立最小心智模型</h3>
+    <h3><span class="h3num">01</span>为什么需要 shader</h3>
+    <p>在 GPU 还能被编程之前，图形管线是「固定功能」的：你只能设置光源、材质、雾等参数，具体怎么算由厂商写死。想让一个物体表面出现卡通色阶、水面折射或自定义噪声，只能等新硬件或新 API。</p>
+    <p>可编程 shader 出现后，开发者可以接管两个关键阶段：顶点怎么变换、像素怎么上色。今天你在网页上看到的渐变按钮、粒子背景、产品 3D 展示、数据可视化、视频游戏、甚至「3 渲 2」的动画风格，背后都可能是同一套 shader 思路。</p>
+    <div class="callout insight">
+      <span class="callout-title">真实案例 · 它不只是特效</span>
+      <p>电商首页的光晕背景、音乐 App 的频谱、地图的流场、游戏里的角色描边、产品页的可旋转 3D 模型——这些效果的共同点是：需要逐像素/逐顶点的自定义计算，而不是简单贴一张图。</p>
+    </div>
+    <p>所以学 shader 的收益不是「会写一个酷炫背景」，而是获得一种能力：<b>用数学直接描述画面</b>。这也意味着它比写普通业务代码更依赖直觉和实验。</p>
+
+    <h3><span class="h3num">02</span>CPU 与 GPU：两种完全不同的快</h3>
+    <p>CPU 像几个很聪明的专家，擅长复杂分支、缓存、串行逻辑；GPU 像几千个流水线工人，每个人只会做简单计算，但同时开工。片元着色器就是「每个像素一个工人」：同一段代码在几百万个像素上并行执行。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>维度</th><th>CPU</th><th>GPU</th></tr></thead>
+        <tbody>
+          <tr><td>核心数量</td><td>少（几到几十）</td><td>多（成百上千）</td></tr>
+          <tr><td>擅长</td><td>复杂逻辑、分支、调度</td><td>大量相同、简单的计算</td></tr>
+          <tr><td>shader 里的含义</td><td>准备数据、发 draw call</td><td>并行处理顶点与像素</td></tr>
+          <tr><td>最怕</td><td>频繁同步、过度抽象</td><td>分支发散、纹理采样过多</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>这也解释了一个常见误区：shader 里的 `if` 不是不能用，而是「同一组线程走不同分支」会降低效率。初学阶段可以先写清楚，再逐步把形状和动画改写成连续函数。</p>
+
+    <h3><span class="h3num">03</span>WebGL 是什么，不是什么</h3>
+    <p>WebGL 是浏览器里的底层图形 API，大致对应 OpenGL ES 2.0（WebGL 1）与 ES 3.0（WebGL 2）。它只负责「把顶点和片元程序交给 GPU」这件事，不提供场景图、相机、模型加载、光照系统。</p>
+    <p>Three.js、Babylon.js、PlayCanvas 这些库都建立在 WebGL 之上；它们帮你管理场景和材质，但最终仍然要编译 GLSL、发 draw call。学会原生 WebGL，再换框架就只是换 API。</p>
+    <div class="callout tip">
+      <span class="callout-title">先修要求</span>
+      <p>会 JavaScript、知道什么是 canvas 就够。不需要线性代数基础：本课只用到向量加减、点积、`mix`、`sin`、`fract` 这些工具，遇到时会现场解释。</p>
+    </div>
+
+    <h3><span class="h3num">04</span>数学热身：四个够用的工具</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>工具</th><th>直觉</th><th>在 shader 里做什么</th></tr></thead>
+        <tbody>
+          <tr><td>向量 <code>vec2/vec3</code></td><td>带方向/分量的数</td><td>坐标、颜色、法线</td></tr>
+          <tr><td><code>dot(a,b)</code></td><td>两个方向的接近程度</td><td>光照、边缘、投影</td></tr>
+          <tr><td><code>mix(a,b,t)</code></td><td>按比例混合</td><td>渐变、颜色过渡</td></tr>
+          <tr><td><code>smoothstep(e0,e1,x)</code></td><td>柔和地判断「在不在范围内」</td><td>遮罩、柔边、抗锯齿</td></tr>
+          <tr><td><code>sin / fract</code></td><td>周期与小数部分</td><td>动画、重复图案</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>不要被「数学」吓到。shader 的美妙之处是：你能立刻看到公式长什么样。把 `sin` 的频率改一倍，画面就会给你反馈；这种即时反馈比推导公式更适合入门。</p>
+
+    <h3><span class="h3num">05</span>坐标系统：别在第一步迷路</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>空间</th><th>范围/含义</th><th>常见用途</th></tr></thead>
+        <tbody>
+          <tr><td>模型空间</td><td>模型自己的坐标</td><td>建模、局部图案</td></tr>
+          <tr><td>世界空间</td><td>放进场景后的坐标</td><td>光照、雾、相机</td></tr>
+          <tr><td>观察空间</td><td>以相机为原点</td><td>视线方向、深度</td></tr>
+          <tr><td>裁剪空间</td><td>x/y 约 -1..1</td><td>顶点着色器输出 <code>gl_Position</code></td></tr>
+          <tr><td>屏幕/UV</td><td>像素坐标 / 0..1</td><td>片元着色器采样、图案</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>本课程大部分例子只涉及最后两层：片元里的 UV 和像素坐标。等你写 raymarch 时，会再回到「从相机发射射线」的观察空间。</p>
+
+    <h3><span class="h3num">06</span>先建立最小心智模型</h3>
     <p>屏幕上的每个像素，最终都由 GPU 里的一小段程序决定颜色。WebGL 把这套过程拆成两个可编程阶段：<b>顶点着色器</b>决定几何体的顶点落在哪里；<b>片元着色器</b>决定每个像素最终是什么颜色。</p>
     <p>本课程大部分 Demo 都是「全屏三角形 + 片元着色器」：屏幕上每个像素都会执行一次你写的 <code class="inline-code">main()</code>。你只要根据坐标算出颜色，就能画出无限复杂的图案。</p>
     <div class="flow">
@@ -56,7 +119,7 @@ void main() {
 </code></pre>
     <p>这一小段会在屏幕每个像素上执行一次。把 <code class="inline-code">uv.x</code> 和 <code class="inline-code">uv.y</code> 分别送进红色和绿色通道，就得到一张从黑到黄、再到青的渐变图。整门课都是在这个形状上不断加东西。</p>
 
-    <h3><span class="h3num">02</span>课程地图</h3>
+    <h3><span class="h3num">07</span>课程地图</h3>
     <div class="table-wrap">
       <table>
         <thead><tr><th>阶段</th><th>章节</th><th>解决的问题</th></tr></thead>
@@ -66,11 +129,12 @@ void main() {
           <tr><td>图形</td><td>ch05–ch07</td><td>噪声、SDF、光照与 raymarch</td></tr>
           <tr><td>交互</td><td>ch08</td><td>鼠标、分辨率、性能与暂停</td></tr>
           <tr><td>结课</td><td>ch09</td><td>组合一个实时场景</td></tr>
+          <tr><td>风格化</td><td>ch10</td><td>3 渲 2：卡通光照、描边与后处理</td></tr>
         </tbody>
       </table>
     </div>
 
-    <h3><span class="h3num">03</span>不需要安装任何东西</h3>
+    <h3><span class="h3num">08</span>不需要安装任何东西</h3>
     <p>课程里的 Demo 已经在页面内运行。你只需要一个支持 WebGL 的现代浏览器，以及一个能改代码的编辑器。想自己实验，可以把页面里的 shader 代码复制到任意 WebGL Playground，或本地建一个 <code class="inline-code">index.html</code>：</p>
 <pre data-lang="html"><code>&lt;canvas id="c"&gt;&lt;/canvas&gt;
 &lt;script&gt;
@@ -88,7 +152,14 @@ const gl = document.getElementById('c').getContext('webgl');
       </div>
     </details>
 
-    <h3><span class="h3num">04</span>每章怎么读</h3>
+    <h3><span class="h3num">09</span>卡住时，先检查这四件事</h3>
+    <div class="callout warn">
+      <span class="callout-title">黑屏排查顺序</span>
+      <p>① canvas 的 CSS 宽高是否为 0；② shader 是否编译成功（看控制台报错）；③ attribute/uniform 名字是否拼错、是否被优化掉；④ 是否忘了设置 viewport 或清屏。大多数「没有画面」都不是数学错，而是状态没设对。</p>
+    </div>
+    <p>建议每写一个新 shader，先输出一个纯色，确认管线通了，再逐步加 UV、时间、图案。把「能显示」和「显示得对」分开调试，比一次性写完再猜快得多。</p>
+
+    <h3><span class="h3num">10</span>每章怎么读</h3>
     <ol class="steps">
       <li><b>先看 Demo</b>：观察画面随时间和鼠标怎么变化，猜它用了哪些输入。</li>
       <li><b>读代码</b>：把 shader 拆成「坐标 → 图案 → 颜色」三段，而不是逐行背语法。</li>
@@ -96,7 +167,7 @@ const gl = document.getElementById('c').getContext('webgl');
       <li><b>做自测</b>：至少回答一遍，确认自己不是在「看懂了」的幻觉里。</li>
     </ol>
 
-    <h3><span class="h3num">05</span>自测</h3>
+    <h3><span class="h3num">11</span>自测</h3>
     <details class="quiz">
       <summary>片元着色器每个像素执行一次，那它能读取相邻像素的颜色吗？</summary>
       <div class="answer"><p>不能。片元着色器只拿到当前片元的坐标和 uniform，无法访问邻居像素。需要邻域信息的效果通常要额外 pass、纹理或后处理。</p></div>

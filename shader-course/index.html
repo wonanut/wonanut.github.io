@@ -8,10 +8,10 @@
 <link rel="canonical" href="https://wonanut.github.io/shader-course/">
 <meta property="og:type" content="website">
 <meta property="og:title" content="WebGL Shader 内功课 · 从片元到画面">
-<meta property="og:description" content="一门在浏览器里直接写 GLSL 的 WebGL Shader 入门课：坐标系、顶点与片元、uniform、UV 图案、噪声、SDF、光照、交互与性能，每章配可直接运行的实时 Demo。">
+<meta property="og:description" content="一门在浏览器里直接写 GLSL 的 WebGL Shader 入门课：从 GPU 背景、坐标系与数学热身，到片元/顶点、uniform、UV 图案、噪声、SDF、光照、交互与性能，最后做 3 渲 2 卡通渲染；每章配可直接运行的实时 Demo。">
 <meta property="og:url" content="https://wonanut.github.io/shader-course/">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="description" content="一门在浏览器里直接写 GLSL 的 WebGL Shader 入门课：坐标系、顶点与片元、uniform、UV 图案、噪声、SDF、光照、交互与性能，每章配可直接运行的实时 Demo。">
+<meta name="description" content="一门在浏览器里直接写 GLSL 的 WebGL Shader 入门课：从 GPU 背景、坐标系与数学热身，到片元/顶点、uniform、UV 图案、噪声、SDF、光照、交互与性能，最后做 3 渲 2 卡通渲染；每章配可直接运行的实时 Demo。">
 <style>
 :root{
   --bg:#ffffff; --bg-soft:#f6f7f9; --bg-sink:#eef0f4;
@@ -387,6 +387,8 @@ html[data-theme="dark"] mark.hit{background:#a16207;color:#fef3c7}
 @media (max-width:640px){.demo-body{height:230px}.demo{margin:18px 0}}
 @media print{.demo{display:none!important}}
 
+.demo[data-demo="toon"] .demo-body{height:390px}
+@media (max-width:640px){.demo[data-demo="toon"] .demo-body{height:280px}}
 </style>
 </head>
 <body>
@@ -439,6 +441,7 @@ html[data-theme="dark"] mark.hit{background:#a16207;color:#fef3c7}
       <p class="nav-part-title">交互与结课</p>
       <a class="nav-link" href="#ch08" data-ch="ch08"><span class="nav-num">08</span><span class="nav-label">交互与性能：鼠标、分辨率、暂停</span><span class="nav-check" data-check="ch08" role="checkbox" aria-checked="false" tabindex="0"></span></a>
       <a class="nav-link" href="#ch09" data-ch="ch09"><span class="nav-num">09</span><span class="nav-label">结课：组合一个 shader 场景</span><span class="nav-check" data-check="ch09" role="checkbox" aria-checked="false" tabindex="0"></span></a>
+      <a class="nav-link" href="#ch10" data-ch="ch10"><span class="nav-num">10</span><span class="nav-label">3 渲 2：把 3D 变成动画截图</span><span class="nav-check" data-check="ch10" role="checkbox" aria-checked="false" tabindex="0"></span></a>
     </div>
     </nav>
     <div class="side-foot">
@@ -454,11 +457,11 @@ html[data-theme="dark"] mark.hit{background:#a16207;color:#fef3c7}
   <div class="hero">
     <p class="eyebrow">WebGL · Shader from scratch</p>
     <h1 class="chapter-title">在浏览器里，亲手写下第一束光</h1>
-    <p class="chapter-lede">这不是一份 WebGL API 手册，而是一趟从像素出发的旅程：你会写 GLSL、画全屏三角形、做渐变、噪声、SDF 和 raymarching，最终组合出一个能实时交互的场景。每一章都有可直接运行的 Demo。</p>
+    <p class="chapter-lede">这不是一份 WebGL API 手册，而是一趟从像素出发的旅程：你会写 GLSL、画全屏三角形、做渐变、噪声、SDF 和 raymarching，最后把 3D 场景压成动画风格的 3 渲 2 画面。大部分章节都有可直接运行的 Demo。</p>
     <div class="hero-meta">
       <span class="pill accent">中文 · 单页可离线阅读</span>
-      <span class="pill">10 章 · 约 3 小时</span>
-      <span class="pill">每章实时 WebGL Demo</span>
+      <span class="pill">11 章 · 约 4 小时</span>
+      <span class="pill">10 个实时 WebGL Demo</span>
       <span class="pill">零依赖 · 浏览器直接跑</span>
     </div>
   </div>
@@ -475,10 +478,73 @@ html[data-theme="dark"] mark.hit{background:#a16207;color:#fef3c7}
     <li>用 GLSL 写渐变、图案、噪声、SDF 与简单的 raymarching 光照</li>
     <li>知道如何把鼠标、时间、分辨率传给 shader，并让它持续高性能地运行</li>
     <li>能独立写出一个全屏 shader 作品，并知道下一步该往哪里深入</li>
+    <li>理解 CPU/GPU 的分工，以及 WebGL 在网页技术栈里的位置</li>
   </ul>
 
   <div class="chapter-body">
-    <h3><span class="h3num">01</span>先建立最小心智模型</h3>
+    <h3><span class="h3num">01</span>为什么需要 shader</h3>
+    <p>在 GPU 还能被编程之前，图形管线是「固定功能」的：你只能设置光源、材质、雾等参数，具体怎么算由厂商写死。想让一个物体表面出现卡通色阶、水面折射或自定义噪声，只能等新硬件或新 API。</p>
+    <p>可编程 shader 出现后，开发者可以接管两个关键阶段：顶点怎么变换、像素怎么上色。今天你在网页上看到的渐变按钮、粒子背景、产品 3D 展示、数据可视化、视频游戏、甚至「3 渲 2」的动画风格，背后都可能是同一套 shader 思路。</p>
+    <div class="callout insight">
+      <span class="callout-title">真实案例 · 它不只是特效</span>
+      <p>电商首页的光晕背景、音乐 App 的频谱、地图的流场、游戏里的角色描边、产品页的可旋转 3D 模型——这些效果的共同点是：需要逐像素/逐顶点的自定义计算，而不是简单贴一张图。</p>
+    </div>
+    <p>所以学 shader 的收益不是「会写一个酷炫背景」，而是获得一种能力：<b>用数学直接描述画面</b>。这也意味着它比写普通业务代码更依赖直觉和实验。</p>
+
+    <h3><span class="h3num">02</span>CPU 与 GPU：两种完全不同的快</h3>
+    <p>CPU 像几个很聪明的专家，擅长复杂分支、缓存、串行逻辑；GPU 像几千个流水线工人，每个人只会做简单计算，但同时开工。片元着色器就是「每个像素一个工人」：同一段代码在几百万个像素上并行执行。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>维度</th><th>CPU</th><th>GPU</th></tr></thead>
+        <tbody>
+          <tr><td>核心数量</td><td>少（几到几十）</td><td>多（成百上千）</td></tr>
+          <tr><td>擅长</td><td>复杂逻辑、分支、调度</td><td>大量相同、简单的计算</td></tr>
+          <tr><td>shader 里的含义</td><td>准备数据、发 draw call</td><td>并行处理顶点与像素</td></tr>
+          <tr><td>最怕</td><td>频繁同步、过度抽象</td><td>分支发散、纹理采样过多</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>这也解释了一个常见误区：shader 里的 `if` 不是不能用，而是「同一组线程走不同分支」会降低效率。初学阶段可以先写清楚，再逐步把形状和动画改写成连续函数。</p>
+
+    <h3><span class="h3num">03</span>WebGL 是什么，不是什么</h3>
+    <p>WebGL 是浏览器里的底层图形 API，大致对应 OpenGL ES 2.0（WebGL 1）与 ES 3.0（WebGL 2）。它只负责「把顶点和片元程序交给 GPU」这件事，不提供场景图、相机、模型加载、光照系统。</p>
+    <p>Three.js、Babylon.js、PlayCanvas 这些库都建立在 WebGL 之上；它们帮你管理场景和材质，但最终仍然要编译 GLSL、发 draw call。学会原生 WebGL，再换框架就只是换 API。</p>
+    <div class="callout tip">
+      <span class="callout-title">先修要求</span>
+      <p>会 JavaScript、知道什么是 canvas 就够。不需要线性代数基础：本课只用到向量加减、点积、`mix`、`sin`、`fract` 这些工具，遇到时会现场解释。</p>
+    </div>
+
+    <h3><span class="h3num">04</span>数学热身：四个够用的工具</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>工具</th><th>直觉</th><th>在 shader 里做什么</th></tr></thead>
+        <tbody>
+          <tr><td>向量 <code>vec2/vec3</code></td><td>带方向/分量的数</td><td>坐标、颜色、法线</td></tr>
+          <tr><td><code>dot(a,b)</code></td><td>两个方向的接近程度</td><td>光照、边缘、投影</td></tr>
+          <tr><td><code>mix(a,b,t)</code></td><td>按比例混合</td><td>渐变、颜色过渡</td></tr>
+          <tr><td><code>smoothstep(e0,e1,x)</code></td><td>柔和地判断「在不在范围内」</td><td>遮罩、柔边、抗锯齿</td></tr>
+          <tr><td><code>sin / fract</code></td><td>周期与小数部分</td><td>动画、重复图案</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>不要被「数学」吓到。shader 的美妙之处是：你能立刻看到公式长什么样。把 `sin` 的频率改一倍，画面就会给你反馈；这种即时反馈比推导公式更适合入门。</p>
+
+    <h3><span class="h3num">05</span>坐标系统：别在第一步迷路</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>空间</th><th>范围/含义</th><th>常见用途</th></tr></thead>
+        <tbody>
+          <tr><td>模型空间</td><td>模型自己的坐标</td><td>建模、局部图案</td></tr>
+          <tr><td>世界空间</td><td>放进场景后的坐标</td><td>光照、雾、相机</td></tr>
+          <tr><td>观察空间</td><td>以相机为原点</td><td>视线方向、深度</td></tr>
+          <tr><td>裁剪空间</td><td>x/y 约 -1..1</td><td>顶点着色器输出 <code>gl_Position</code></td></tr>
+          <tr><td>屏幕/UV</td><td>像素坐标 / 0..1</td><td>片元着色器采样、图案</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>本课程大部分例子只涉及最后两层：片元里的 UV 和像素坐标。等你写 raymarch 时，会再回到「从相机发射射线」的观察空间。</p>
+
+    <h3><span class="h3num">06</span>先建立最小心智模型</h3>
     <p>屏幕上的每个像素，最终都由 GPU 里的一小段程序决定颜色。WebGL 把这套过程拆成两个可编程阶段：<b>顶点着色器</b>决定几何体的顶点落在哪里；<b>片元着色器</b>决定每个像素最终是什么颜色。</p>
     <p>本课程大部分 Demo 都是「全屏三角形 + 片元着色器」：屏幕上每个像素都会执行一次你写的 <code class="inline-code">main()</code>。你只要根据坐标算出颜色，就能画出无限复杂的图案。</p>
     <div class="flow">
@@ -508,7 +574,7 @@ void main() {
 </code></pre>
     <p>这一小段会在屏幕每个像素上执行一次。把 <code class="inline-code">uv.x</code> 和 <code class="inline-code">uv.y</code> 分别送进红色和绿色通道，就得到一张从黑到黄、再到青的渐变图。整门课都是在这个形状上不断加东西。</p>
 
-    <h3><span class="h3num">02</span>课程地图</h3>
+    <h3><span class="h3num">07</span>课程地图</h3>
     <div class="table-wrap">
       <table>
         <thead><tr><th>阶段</th><th>章节</th><th>解决的问题</th></tr></thead>
@@ -518,11 +584,12 @@ void main() {
           <tr><td>图形</td><td>ch05–ch07</td><td>噪声、SDF、光照与 raymarch</td></tr>
           <tr><td>交互</td><td>ch08</td><td>鼠标、分辨率、性能与暂停</td></tr>
           <tr><td>结课</td><td>ch09</td><td>组合一个实时场景</td></tr>
+          <tr><td>风格化</td><td>ch10</td><td>3 渲 2：卡通光照、描边与后处理</td></tr>
         </tbody>
       </table>
     </div>
 
-    <h3><span class="h3num">03</span>不需要安装任何东西</h3>
+    <h3><span class="h3num">08</span>不需要安装任何东西</h3>
     <p>课程里的 Demo 已经在页面内运行。你只需要一个支持 WebGL 的现代浏览器，以及一个能改代码的编辑器。想自己实验，可以把页面里的 shader 代码复制到任意 WebGL Playground，或本地建一个 <code class="inline-code">index.html</code>：</p>
 <pre data-lang="html"><code>&lt;canvas id="c"&gt;&lt;/canvas&gt;
 &lt;script&gt;
@@ -540,7 +607,14 @@ const gl = document.getElementById('c').getContext('webgl');
       </div>
     </details>
 
-    <h3><span class="h3num">04</span>每章怎么读</h3>
+    <h3><span class="h3num">09</span>卡住时，先检查这四件事</h3>
+    <div class="callout warn">
+      <span class="callout-title">黑屏排查顺序</span>
+      <p>① canvas 的 CSS 宽高是否为 0；② shader 是否编译成功（看控制台报错）；③ attribute/uniform 名字是否拼错、是否被优化掉；④ 是否忘了设置 viewport 或清屏。大多数「没有画面」都不是数学错，而是状态没设对。</p>
+    </div>
+    <p>建议每写一个新 shader，先输出一个纯色，确认管线通了，再逐步加 UV、时间、图案。把「能显示」和「显示得对」分开调试，比一次性写完再猜快得多。</p>
+
+    <h3><span class="h3num">10</span>每章怎么读</h3>
     <ol class="steps">
       <li><b>先看 Demo</b>：观察画面随时间和鼠标怎么变化，猜它用了哪些输入。</li>
       <li><b>读代码</b>：把 shader 拆成「坐标 → 图案 → 颜色」三段，而不是逐行背语法。</li>
@@ -548,7 +622,7 @@ const gl = document.getElementById('c').getContext('webgl');
       <li><b>做自测</b>：至少回答一遍，确认自己不是在「看懂了」的幻觉里。</li>
     </ol>
 
-    <h3><span class="h3num">05</span>自测</h3>
+    <h3><span class="h3num">11</span>自测</h3>
     <details class="quiz">
       <summary>片元着色器每个像素执行一次，那它能读取相邻像素的颜色吗？</summary>
       <div class="answer"><p>不能。片元着色器只拿到当前片元的坐标和 uniform，无法访问邻居像素。需要邻域信息的效果通常要额外 pass、纹理或后处理。</p></div>
@@ -654,7 +728,12 @@ void main() {
       <li>把 <code class="inline-code">smoothstep(0.4, 0.0, d)</code> 改成 <code class="inline-code">smoothstep(0.2, 0.0, d) * 2.0</code>，让光斑更小更亮。</li>
     </ol>
 
-    <h3><span class="h3num">05</span>自测</h3>
+        <div class="callout insight">
+      <span class="callout-title">案例 · 登录页与音频可视化</span>
+      <p>很多登录页的背景光晕就是「UV 距离 + smoothstep」；音乐 App 的频谱则可以把音频数据作为 uniform，替换掉鼠标位置。</p>
+    </div>
+
+<h3><span class="h3num">05</span>自测</h3>
     <details class="quiz">
       <summary>为什么 UV 要乘宽高比？</summary>
       <div class="answer"><p>因为画布像素不是正方形。要让距离函数在屏幕空间保持各向同性，需要把 x 乘以 <code>width / height</code>，否则圆会被拉成椭圆。</p></div>
@@ -757,7 +836,12 @@ void main() {
       </div>
     </details>
 
-    <h3><span class="h3num">04</span>自测</h3>
+        <div class="callout insight">
+      <span class="callout-title">案例 · 低多边形渐变与 UI 按钮</span>
+      <p>低多边形插值、渐变按钮、加载进度条，底层都是「顶点属性 + 插值」。颜色从顶点传到片元，是最轻量的渐变方案。</p>
+    </div>
+
+<h3><span class="h3num">04</span>自测</h3>
     <details class="quiz">
       <summary>三个顶点分别是红、绿、蓝，三角形中心大概是什么颜色？</summary>
       <div class="answer"><p>三者的加权平均，接近灰/白。正中心重心坐标约为 (1/3,1/3,1/3)，所以 RGB 各约 0.33。</p></div>
@@ -861,7 +945,12 @@ void main() {
       <li>把 <code class="inline-code">pow(..., 8.0)</code> 改成 <code class="inline-code">4.0</code> 或 <code class="inline-code">16.0</code>，看波峰宽度如何变化。</li>
     </ol>
 
-    <h3><span class="h3num">05</span>自测</h3>
+        <div class="callout insight">
+      <span class="callout-title">案例 · Loading 波纹与频谱</span>
+      <p>加载页面的扩散圆环、音频可视化的柱状条，都可以用时间 uniform 驱动 sin/abs 函数得到。</p>
+    </div>
+
+<h3><span class="h3num">05</span>自测</h3>
     <details class="quiz">
       <summary>为什么动画时间要用 performance.now() 而不是 Date.now()？</summary>
       <div class="answer"><p>performance.now() 单调递增，不受系统时间调整影响；Date.now() 可能因为校时/时区变化跳变，导致动画跳帧。</p></div>
@@ -953,7 +1042,12 @@ void main() {
       </div>
     </details>
 
-    <h3><span class="h3num">04</span>自测</h3>
+        <div class="callout insight">
+      <span class="callout-title">案例 · 赛博扫描线与游戏地图</span>
+      <p>扫描线、网格地面、雷达 UI 都依赖 fract/step；把 UV 放大到合适频率，是控制「格子密度」的关键。</p>
+    </div>
+
+<h3><span class="h3num">04</span>自测</h3>
     <details class="quiz">
       <summary>fract(uv) 和 floor(uv) 分别给你什么信息？</summary>
       <div class="answer"><p>fract 给格子内的局部坐标（0..1）；floor 给格子的整数索引，用来判断第几个格子、奇偶等。</p></div>
@@ -1055,7 +1149,12 @@ col += vec3(0.7,0.3,0.8) * smoothstep(0.55, 0.82, f) * 0.45;
       </div>
     </details>
 
-    <h3><span class="h3num">04</span>自测</h3>
+        <div class="callout insight">
+      <span class="callout-title">案例 · 云、火、水面</span>
+      <p>FBM 是云层与地形的基础；火焰通常再叠一个向上的 UV 偏移，水面则把噪声当作法线扰动。</p>
+    </div>
+
+<h3><span class="h3num">04</span>自测</h3>
     <details class="quiz">
       <summary>hash 的作用是什么？</summary>
       <div class="answer"><p>把坐标映射成固定但看起来随机的值；同样的输入永远得到同样的输出，所以动画可复现、无需存储随机表。</p></div>
@@ -1140,7 +1239,12 @@ float d = smin(smin(d1, d2, 0.42), d3, 0.42);
       </div>
     </details>
 
-    <h3><span class="h3num">04</span>自测</h3>
+        <div class="callout insight">
+      <span class="callout-title">案例 · 图标描边与液体融合</span>
+      <p>SDF 图标可以在任意分辨率下保持边缘锐利；metaball 加载动画、液体按钮，都是 smooth min 的日常应用。</p>
+    </div>
+
+<h3><span class="h3num">04</span>自测</h3>
     <details class="quiz">
       <summary>SDF 返回负数代表什么？</summary>
       <div class="answer"><p>点在形状内部。正数在外部，零在边界；绝对值是到边界的距离。</p></div>
@@ -1237,7 +1341,12 @@ vec3 col = vec3(0.12,0.75,0.7) * diff
       </div>
     </details>
 
-    <h3><span class="h3num">04</span>自测</h3>
+        <div class="callout insight">
+      <span class="callout-title">案例 · 手办展示与角色转面</span>
+      <p>产品页的手办/角色展示需要稳定的法线与高光；raymarch 让「转动视角」不需要重导模型。</p>
+    </div>
+
+<h3><span class="h3num">04</span>自测</h3>
     <details class="quiz">
       <summary>raymarch 每一步前进多少距离？</summary>
       <div class="answer"><p>前进当前点到最近表面的 SDF 距离。因为这段距离内不会撞到任何表面，所以是安全的步长。</p></div>
@@ -1338,7 +1447,12 @@ document.addEventListener("visibilitychange", () =&gt; {
       </div>
     </details>
 
-    <h3><span class="h3num">05</span>自测</h3>
+        <div class="callout insight">
+      <span class="callout-title">案例 · 鼠标跟随展台</span>
+      <p>指针涟漪、跟随光斑、可拖拽的 3D 展台，都是把交互数据变成 uniform，再交给 shader 做视觉反馈。</p>
+    </div>
+
+<h3><span class="h3num">05</span>自测</h3>
     <details class="quiz">
       <summary>为什么鼠标 y 坐标要 1.0 - normalizedY？</summary>
       <div class="answer"><p>浏览器坐标原点在左上、y 向下；WebGL/UV 通常原点在左下、y 向上。翻转后才能让鼠标位置与画面一致。</p></div>
@@ -1431,7 +1545,12 @@ col += vec3(0.3,0.15,0.5) * smoothstep(0.8, 0.0, length(uv));
       </div>
     </details>
 
-    <h3><span class="h3num">04</span>自测</h3>
+        <div class="callout insight">
+      <span class="callout-title">案例 · 组合场景</span>
+      <p>游戏加载页、产品 hero、音乐可视化背景，往往就是「几个 SDF/噪声 + 光照 + 背景」的组合。</p>
+    </div>
+
+<h3><span class="h3num">04</span>自测</h3>
     <details class="quiz">
       <summary>两个 SDF 用 min 组合，表示什么？</summary>
       <div class="answer"><p>表示两个形状的并集：空间中任意点到「最近的任一表面」的距离。raymarch 用这个距离安全前进。</p></div>
@@ -1454,6 +1573,120 @@ col += vec3(0.3,0.15,0.5) * smoothstep(0.8, 0.0, length(uv));
 
 <nav class="chapter-nav" aria-label="章节导航">
 <a class="prev" href="#ch08"><span class="dir">← 上一讲</span><span class="name">交互与性能：鼠标、分辨率、暂停</span></a>
+<a class="next" href="#ch10"><span class="dir">下一讲 →</span><span class="name">3 渲 2：把 3D 变成动画截图</span></a>
+</nav>
+</section>
+
+<section id="ch10" class="chapter">
+  <p class="chapter-kicker">第 10 讲 · 风格化</p>
+  <h2 class="chapter-title">3 渲 2：把 3D 变成动画截图<small>卡通光照、轮廓线、半调点、速度线——把连续的 3D 画面压成二维动画语言</small>
+  </h2>
+  <p class="chapter-lede">最后一讲做一个「看起来很动画」的 shader：同一个 3D 形状，不追求真实，而是主动丢掉连续明暗，只留下色阶、线条和节奏。这就是 3D 渲染成 2D 动画风格（3 渲 2 / cel shading）的核心。</p>
+  <p class="source-line">
+    <span>Demo 10 · toon / cel shading</span>
+    <span>关键词 <code>cel</code> · <code>outline</code> · <code>halftone</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>把连续光照量化成 3 档色阶，做出卡通明暗</li>
+    <li>用法线/视线夹角画轮廓线，用屏幕空间图案做半调与速度线</li>
+    <li>知道把真实 3D 模型（OBJ / glTF）接进风格化 shader 的基本路径</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>3 渲 2 不是加一个滤镜</h3>
+    <p>它是一套「主动做减法」的渲染策略：几何还是 3D，光照还是点积，但最后呈现时把连续亮度压成几档、把轮廓描出来、把阴影换成网点或排线。观众看到的不是「真实的 3D」，而是「动画里的 3D」。</p>
+    <div class="demo" data-demo="toon" data-label="DEMO 10 · toon / cel" data-cap="移动鼠标：绕星球旋转；观察色阶、描边、半调点与速度线"></div>
+    <div class="flow">
+      <div class="flow-node"><b>3D</b>几何 / 法线</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>Light</b>点积亮度</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>Cel</b>量化 3 档</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>Ink</b>轮廓 / 网点</div>
+    </div>
+
+    <div class="analogy">
+      <span class="analogy-title">像动画师给赛璐璐片上色</span>
+      <p>真实光照有无数层灰；赛璐璐动画只留「亮、中、暗」几块颜色，再用黑线勾边。shader 里的 cel shading 就是把这个手工流程写成数学：`floor` 负责分层，`smoothstep` 负责勾线。</p>
+      <p><b>类比到哪为止：</b>动画师会按镜头手工调整色块；shader 是按像素自动算，所以需要额外处理描边粗细、锯齿和镜头运动。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>卡通光照：把亮度切成 3 档</h3>
+    <p>先算普通的 Lambert 亮度，再把 0..1 的连续值量化到 0 / 0.5 / 1 三档。注意加一点 `smoothstep` 过渡，否则移动镜头时色阶边缘会严重锯齿。</p>
+<pre data-lang="glsl"><code>float ndl = dot(n, l);
+float tone = clamp(ndl * 0.5 + 0.5, 0.0, 1.0);
+float cel = floor(tone * 3.0) / 2.0;   // 0.0 / 0.5 / 1.0
+vec3 col = mix(shadowColor, baseColor, cel);</code></pre>
+    <p>再叠一个硬高光：`pow(dot(n, halfDir), 48)` 超过阈值才显示，形成动画里常见的「一块白」。高光不要柔，柔了就像塑料而不是赛璐璐。</p>
+
+    <h3><span class="h3num">03</span>描边：轮廓与细节线</h3>
+    <p>最简单的外轮廓来自菲涅尔：视线越贴近表面切线，`1 - dot(n, -rd)` 越接近 1，把它压成一条暗边。它不需要第二个 pass，成本低，适合实时。</p>
+<pre data-lang="glsl"><code>float rim = 1.0 - max(dot(n, -rd), 0.0);
+float outline = smoothstep(0.55, 0.8, rim);
+col = mix(col, vec3(0.02, 0.02, 0.05), outline * 0.9);
+col += vec3(0.3, 0.85, 1.0) * pow(rim, 3.0) * 0.45;</code></pre>
+    <p>星球条纹、环轨、卫星这类「内部装饰」不是几何轮廓，需要在材质阶段按局部坐标画；Demo 里的条纹和卫星就是根据命中点的位置直接上色。</p>
+
+    <h3><span class="h3num">04</span>屏幕空间：半调与速度线</h3>
+    <p>把 UV 放大成网点，只在暗部叠加，就是漫画里的半调阴影；把极坐标角度做成放射线，再乘一个径向遮罩，就是速度线。它们不是 3D 几何，而是「贴在镜头上的动画语言」。</p>
+    <pre data-lang="glsl"><code>vec2 hp = fract(vUv * vec2(aspect, 1.0) * 120.0);
+float dots = step(0.35, length(hp - 0.5));
+float shadowMask = 1.0 - smoothstep(0.2, 0.8, cel);
+col *= 1.0 - dots * shadowMask * 0.25;
+
+float ang = atan(sp.y, sp.x);
+float speed = pow(0.5 + 0.5 * sin(ang * 60.0 + uTime * 1.8), 18.0)
+            * smoothstep(0.1, 1.1, length(sp));
+</code></pre>
+
+    <div class="callout insight">
+      <span class="callout-title">真实案例 · 动画与游戏里的卡通渲染</span>
+      <p>卡通渲染常见于动画电影、二次元游戏和风格化广告：角色用 cel shading，场景用轮廓线，特效叠半调/速度线。很多看起来「像手绘」的镜头，底层仍是 3D 模型 + 多 pass 后处理。</p>
+    </div>
+
+    <h3><span class="h3num">05</span>如果模型是 OBJ / glTF 呢？</h3>
+    <p>本课 Demo 用 SDF 生成角色，所以一切在片元里完成。真实项目里，3D 模型通常来自 Blender/OBJ/glTF，由 Three.js 或引擎加载，再用自定义材质替换默认光照：</p>
+    <ol class="steps">
+      <li>拿到模型的 <b>法线</b>、<b>世界坐标</b>和<b>深度</b>，作为 varying/uniform 传给 shader。</li>
+      <li>在片元里做 cel 量化，而不是用引擎默认的 PBR。</li>
+      <li>轮廓线用「背面外扩」第二 pass，或基于深度的边缘检测；菲涅尔描边只是最便宜的近似。</li>
+      <li>半调/速度线放在后处理 pass，不要塞进模型材质。</li>
+    </ol>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么风格化比写实更考验审美？</summary>
+      <div class="deep-body">
+        <p>写实渲染有物理参照，方向相对明确；风格化要主动决定「丢掉什么、保留什么」：色阶分几档、线多粗、高光多大、阴影用什么图案。这些选择没有唯一正确答案，只能靠大量看片和对比。</p>
+        <p>技术上，3 渲 2 往往需要多 pass（模型、描边、后处理）和稳定的帧率；先把单 pass 的 cel + 菲涅尔描边做顺，再考虑更复杂的管线。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">06</span>自测</h3>
+    <details class="quiz">
+      <summary>cel shading 里为什么要用 floor 而不是直接用 sin？</summary>
+      <div class="answer"><p>floor 把连续亮度切成离散的几档，形成「赛璐璐」色块；sin 是连续周期变化，会得到平滑渐变，不是卡通分层。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>菲涅尔描边为什么在物体边缘最明显？</summary>
+      <div class="answer"><p>边缘处法线与视线接近垂直，<code>dot(n,-rd)</code> 接近 0，<code>1-dot</code> 接近 1；中心处法线朝向相机，值接近 0。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>真实 glTF 模型的描边，为什么常用背面外扩 pass？</summary>
+      <div class="answer"><p>菲涅尔描边只能画「朝向相机的轮廓」，对内部折角/遮挡边界不够稳定；背面外扩沿法线扩大模型再画背面，能得到更均匀、可控粗细的轮廓。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>3 渲 2 = 几何 + 量化光照 + 轮廓线 + 屏幕空间图案。它不是「真实感的降级」，而是一套独立的视觉语言。你现在可以把任意 3D 场景压成动画截图，也可以继续往多 pass 和后处理走。</p>
+      <p class="next"><b>课程结束：</b>挑一个你喜欢的模型，先用 cel + 描边跑起来，再决定要不要加半调、速度线或色差。风格是你自己选的。</p>
+    </div>
+  </div>
+
+<nav class="chapter-nav" aria-label="章节导航">
+<a class="prev" href="#ch09"><span class="dir">← 上一讲</span><span class="name">结课：组合一个 shader 场景</span></a>
 </nav>
 </section>
     </div>
@@ -1955,6 +2188,87 @@ col += vec3(0.3,0.15,0.5) * smoothstep(0.8, 0.0, length(uv));
         "  vec3 col=vec3(0.015,0.03,0.08);",
         "  if(t<9.0){ vec3 n=calcNormal(p); vec3 l=normalize(vec3(0.5,0.9,0.3)); float diff=max(dot(n,l),0.0); float rim=pow(1.0-max(dot(n,-rd),0.0),2.5); col=vec3(0.1,0.8,0.7)*diff + vec3(0.9,0.35,0.9)*rim*0.8 + vec3(0.02,0.03,0.07); }",
         "  col += vec3(0.3,0.15,0.5)*smoothstep(0.8,0.0,length(uv));",
+        "  gl_FragColor=vec4(col,1.0);",
+        "}",
+      ].join("\n"),
+    },
+    toon: {
+      fs: [
+        "precision highp float;",
+        "varying vec2 vUv;",
+        "uniform vec2 uRes;",
+        "uniform vec2 uMouse;",
+        "uniform float uTime;",
+        "mat2 rot(float a){ return mat2(cos(a),-sin(a),sin(a),cos(a)); }",
+        "float sdTorus(vec3 p, vec2 t){ return length(vec2(length(p.xz)-t.x,p.y))-t.y; }",
+        "float hash(vec2 p){ p=fract(p*vec2(123.34,345.45)); p+=dot(p,p+34.345); return fract(p.x*p.y); }",
+        "float map(vec3 p){",
+        "  float planet=length(p)-1.0;",
+        "  float ring=sdTorus(p,vec2(1.72,0.085));",
+        "  float a=uTime*0.65;",
+        "  vec3 m1=vec3(cos(a)*2.35,0.55*sin(a*1.4),sin(a)*2.35);",
+        "  vec3 m2=vec3(cos(-a*1.25+2.0)*2.85,-0.35*sin(a*0.9),sin(-a*1.25+2.0)*2.85);",
+        "  float moon1=length(p-m1)-0.22;",
+        "  float moon2=length(p-m2)-0.13;",
+        "  return min(min(planet,ring),min(moon1,moon2));",
+        "}",
+        "vec3 calcNormal(vec3 p){ const vec2 e=vec2(0.001,0.0); return normalize(vec3(map(p+e.xyy)-map(p-e.xyy), map(p+e.yxy)-map(p-e.yxy), map(p+e.yyx)-map(p-e.yyx))); }",
+        "void main(){",
+        "  float aspect=uRes.x/uRes.y;",
+        "  vec2 uv=(vUv*2.0-1.0); uv.x*=aspect;",
+        "  float yaw=uTime*0.16+(uMouse.x-0.5)*1.1;",
+        "  float pitch=0.35+(uMouse.y-0.5)*0.35;",
+        "  vec3 ro=vec3(sin(yaw)*cos(pitch)*4.4,sin(pitch)*3.0+0.4,cos(yaw)*cos(pitch)*4.4);",
+        "  vec3 ta=vec3(0.0,0.0,0.0);",
+        "  vec3 ww=normalize(ta-ro);",
+        "  vec3 uu=normalize(cross(ww,vec3(0.0,1.0,0.0)));",
+        "  vec3 vv=cross(uu,ww);",
+        "  vec3 rd=normalize(uv.x*uu+uv.y*vv+2.2*ww);",
+        "  float t=0.0,hit=0.0; vec3 p;",
+        "  for(int i=0;i<96;i++){ p=ro+rd*t; float d=map(p); if(d<0.001){hit=1.0;break;} t+=d; if(t>10.0)break; }",
+        "  vec2 sp=(vUv-0.5)*vec2(aspect,1.0);",
+        "  float rad=length(sp); float ang=atan(sp.y,sp.x);",
+        "  float speed=pow(0.5+0.5*sin(ang*66.0+uTime*1.8),18.0)*smoothstep(0.1,1.1,rad);",
+        "  vec3 bg=mix(vec3(0.025,0.03,0.08),vec3(0.10,0.08,0.22),vUv.y);",
+        "  bg+=vec3(0.65,0.3,0.95)*speed*0.45;",
+        "  vec2 gp=vUv*vec2(aspect,1.0)*70.0; vec2 gid=floor(gp); vec2 gf=fract(gp)-0.5;",
+        "  float rnd=hash(gid);",
+        "  float stars=step(0.982,rnd)*smoothstep(0.18,0.0,length(gf))*(0.55+0.45*sin(uTime+rnd*30.0));",
+        "  bg+=vec3(0.75,0.85,1.0)*stars;",
+        "  vec3 col=bg;",
+        "  if(hit>0.5){",
+        "    vec3 n=calcNormal(p);",
+        "    vec3 l=normalize(vec3(-0.55,0.75,0.55));",
+        "    float ndl=dot(n,l);",
+        "    float tone=clamp(ndl*0.5+0.5,0.0,1.0);",
+        "    float cel=floor(tone*3.0)/2.0;",
+        "    vec3 planet=mix(vec3(0.07,0.25,0.36),vec3(0.72,0.94,0.85),cel);",
+        "    float band=sin(p.y*7.0+sin(p.x*2.0)*0.9);",
+        "    planet=mix(planet,vec3(0.9,0.55,0.72),smoothstep(0.35,0.75,band)*0.28);",
+        "    float ringMask=smoothstep(0.055,0.0,abs(sdTorus(p,vec2(1.72,0.085))));",
+        "    vec3 ringCol=mix(vec3(0.55,0.35,0.8),vec3(0.95,0.9,1.0),cel);",
+        "    vec3 moon1=vec3(0.95,0.6,0.3);",
+        "    vec3 moon2=vec3(0.35,0.9,0.95);",
+        "    float a=uTime*0.65;",
+        "    float m1=length(p-vec3(cos(a)*2.35,0.55*sin(a*1.4),sin(a)*2.35));",
+        "    float m2=length(p-vec3(cos(-a*1.25+2.0)*2.85,-0.35*sin(a*0.9),sin(-a*1.25+2.0)*2.85));",
+        "    col=mix(planet,ringCol,ringMask);",
+        "    col=mix(col,moon1,smoothstep(0.26,0.18,m1));",
+        "    col=mix(col,moon2,smoothstep(0.17,0.1,m2));",
+        "    vec3 h=normalize(l-rd);",
+        "    float spec=pow(max(dot(n,h),0.0),40.0);",
+        "    col+=vec3(1.0)*step(0.68,spec)*0.35;",
+        "    float rim=1.0-max(dot(n,-rd),0.0);",
+        "    float outline=smoothstep(0.55,0.8,rim);",
+        "    col=mix(col,vec3(0.02,0.02,0.06),outline*0.9);",
+        "    col+=vec3(0.25,0.9,1.0)*pow(rim,3.0)*0.55;",
+        "    vec2 hp=fract(vUv*vec2(aspect,1.0)*130.0);",
+        "    float dots=step(0.35,length(hp-0.5));",
+        "    float shadowMask=1.0-smoothstep(0.2,0.8,cel);",
+        "    col*=1.0-dots*shadowMask*0.3;",
+        "  }",
+        "  col=floor(col*7.0)/7.0;",
+        "  col*=1.0-0.25*length(vUv-0.5);",
         "  gl_FragColor=vec4(col,1.0);",
         "}",
       ].join("\n"),

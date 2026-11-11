@@ -1,22 +1,116 @@
 {
   "title": "WebGL Shader 内功课 · 从片元到画面",
-  "description": "一门在浏览器里直接写 GLSL 的 WebGL Shader 入门课：坐标系、顶点与片元、uniform、UV 图案、噪声、SDF、光照、交互与性能，每章配可直接运行的实时 Demo。",
+  "description": "一门在浏览器里直接写 GLSL 的 WebGL Shader 入门课：从 GPU 背景、坐标系与数学热身，到片元/顶点、uniform、UV 图案、噪声、SDF、光照、交互与性能，最后做 3 渲 2 卡通渲染；每章配可直接运行的实时 Demo。",
   "parts": [
-    { "id": "p0", "title": "出发之前", "note": "GPU 到底在画什么" },
-    { "id": "p1", "title": "图形管线", "note": "片元、顶点、插值、uniform" },
-    { "id": "p2", "title": "程序化图形", "note": "图案、噪声、SDF、光照" },
-    { "id": "p3", "title": "交互与结课", "note": "鼠标、性能、组合场景" }
+    {
+      "id": "p0",
+      "title": "出发之前",
+      "note": "GPU 到底在画什么"
+    },
+    {
+      "id": "p1",
+      "title": "图形管线",
+      "note": "片元、顶点、插值、uniform"
+    },
+    {
+      "id": "p2",
+      "title": "程序化图形",
+      "note": "图案、噪声、SDF、光照"
+    },
+    {
+      "id": "p3",
+      "title": "交互与结课",
+      "note": "鼠标、性能、组合场景"
+    }
   ],
   "chapters": [
-    { "id": "ch00", "num": "00", "part": "p0", "nav": "课程导览：GPU 在画什么", "title": "课程导览", "file": "00-guide.html" },
-    { "id": "ch01", "num": "01", "part": "p0", "nav": "第一个片元：坐标系与颜色", "title": "第一个片元", "file": "01-first-fragment.html" },
-    { "id": "ch02", "num": "02", "part": "p1", "nav": "顶点与插值：三角形怎么上色", "title": "顶点与插值", "file": "02-vertices.html" },
-    { "id": "ch03", "num": "03", "part": "p1", "nav": "uniform 与时间：让画面动起来", "title": "uniform 与时间", "file": "03-uniforms.html" },
-    { "id": "ch04", "num": "04", "part": "p1", "nav": "UV 图案：step、fract 与棋盘", "title": "UV 图案", "file": "04-patterns.html" },
-    { "id": "ch05", "num": "05", "part": "p2", "nav": "噪声与 FBM：程序化云层", "title": "噪声与 FBM", "file": "05-noise.html" },
-    { "id": "ch06", "num": "06", "part": "p2", "nav": "SDF：用距离函数塑造形状", "title": "SDF", "file": "06-sdf.html" },
-    { "id": "ch07", "num": "07", "part": "p2", "nav": "光照与 raymarch：球体怎么亮", "title": "光照与 raymarch", "file": "07-lighting.html" },
-    { "id": "ch08", "num": "08", "part": "p3", "nav": "交互与性能：鼠标、分辨率、暂停", "title": "交互与性能", "file": "08-interaction.html" },
-    { "id": "ch09", "num": "09", "part": "p3", "nav": "结课：组合一个 shader 场景", "title": "结课场景", "file": "09-capstone.html" }
+    {
+      "id": "ch00",
+      "num": "00",
+      "part": "p0",
+      "nav": "课程导览：GPU 在画什么",
+      "title": "课程导览",
+      "file": "00-guide.html"
+    },
+    {
+      "id": "ch01",
+      "num": "01",
+      "part": "p0",
+      "nav": "第一个片元：坐标系与颜色",
+      "title": "第一个片元",
+      "file": "01-first-fragment.html"
+    },
+    {
+      "id": "ch02",
+      "num": "02",
+      "part": "p1",
+      "nav": "顶点与插值：三角形怎么上色",
+      "title": "顶点与插值",
+      "file": "02-vertices.html"
+    },
+    {
+      "id": "ch03",
+      "num": "03",
+      "part": "p1",
+      "nav": "uniform 与时间：让画面动起来",
+      "title": "uniform 与时间",
+      "file": "03-uniforms.html"
+    },
+    {
+      "id": "ch04",
+      "num": "04",
+      "part": "p1",
+      "nav": "UV 图案：step、fract 与棋盘",
+      "title": "UV 图案",
+      "file": "04-patterns.html"
+    },
+    {
+      "id": "ch05",
+      "num": "05",
+      "part": "p2",
+      "nav": "噪声与 FBM：程序化云层",
+      "title": "噪声与 FBM",
+      "file": "05-noise.html"
+    },
+    {
+      "id": "ch06",
+      "num": "06",
+      "part": "p2",
+      "nav": "SDF：用距离函数塑造形状",
+      "title": "SDF",
+      "file": "06-sdf.html"
+    },
+    {
+      "id": "ch07",
+      "num": "07",
+      "part": "p2",
+      "nav": "光照与 raymarch：球体怎么亮",
+      "title": "光照与 raymarch",
+      "file": "07-lighting.html"
+    },
+    {
+      "id": "ch08",
+      "num": "08",
+      "part": "p3",
+      "nav": "交互与性能：鼠标、分辨率、暂停",
+      "title": "交互与性能",
+      "file": "08-interaction.html"
+    },
+    {
+      "id": "ch09",
+      "num": "09",
+      "part": "p3",
+      "nav": "结课：组合一个 shader 场景",
+      "title": "结课场景",
+      "file": "09-capstone.html"
+    },
+    {
+      "id": "ch10",
+      "num": "10",
+      "part": "p3",
+      "nav": "3 渲 2：把 3D 变成动画截图",
+      "title": "3 渲 2",
+      "file": "10-toon.html"
+    }
   ]
 }

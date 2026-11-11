@@ -79,7 +79,12 @@ void main() {
       <li>把 <code class="inline-code">smoothstep(0.4, 0.0, d)</code> 改成 <code class="inline-code">smoothstep(0.2, 0.0, d) * 2.0</code>，让光斑更小更亮。</li>
     </ol>
 
-    <h3><span class="h3num">05</span>自测</h3>
+        <div class="callout insight">
+      <span class="callout-title">案例 · 登录页与音频可视化</span>
+      <p>很多登录页的背景光晕就是「UV 距离 + smoothstep」；音乐 App 的频谱则可以把音频数据作为 uniform，替换掉鼠标位置。</p>
+    </div>
+
+<h3><span class="h3num">05</span>自测</h3>
     <details class="quiz">
       <summary>为什么 UV 要乘宽高比？</summary>
       <div class="answer"><p>因为画布像素不是正方形。要让距离函数在屏幕空间保持各向同性，需要把 x 乘以 <code>width / height</code>，否则圆会被拉成椭圆。</p></div>

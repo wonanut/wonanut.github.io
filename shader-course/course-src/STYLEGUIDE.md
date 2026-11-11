@@ -1,6 +1,6 @@
 # WebGL Shader 课程写作规范
 
-目标：10 个 fragment 拼成一份风格统一的单页 shader 课。输出是 `shader-course/index.html`，源文件在 `shader-course/course-src/`。
+目标：11 个 fragment 拼成一份风格统一的单页 shader 课。输出是 `shader-course/index.html`，源文件在 `shader-course/course-src/`。
 
 ## 定位
 

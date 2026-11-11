@@ -64,7 +64,12 @@ void main() {
       </div>
     </details>
 
-    <h3><span class="h3num">04</span>自测</h3>
+        <div class="callout insight">
+      <span class="callout-title">案例 · 赛博扫描线与游戏地图</span>
+      <p>扫描线、网格地面、雷达 UI 都依赖 fract/step；把 UV 放大到合适频率，是控制「格子密度」的关键。</p>
+    </div>
+
+<h3><span class="h3num">04</span>自测</h3>
     <details class="quiz">
       <summary>fract(uv) 和 floor(uv) 分别给你什么信息？</summary>
       <div class="answer"><p>fract 给格子内的局部坐标（0..1）；floor 给格子的整数索引，用来判断第几个格子、奇偶等。</p></div>
