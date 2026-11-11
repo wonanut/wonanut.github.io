@@ -1,0 +1,121 @@
+<section id="ch08" class="chapter">
+  <p class="chapter-kicker">第 8 讲 · 落地与超越</p>
+  <h2 class="chapter-title">运行接口：TUI、print、JSON、RPC 与 SDK
+    <small>同一个 agent + session 核心，五种消费者，事件是它们共同的语言</small>
+  </h2>
+  <p class="chapter-lede">Pi 不只是一个终端应用。你可以把它当交互式 TUI 用，也可以在脚本里一次调用、在进程间用 JSONL 控制，或直接用 TypeScript SDK 嵌入自己的应用。理解这些接口，才知道 Pi 的「核心」到底在哪一层。</p>
+  <p class="source-line">
+    <span>源码 <code>packages/coding-agent/src/main.ts</code> · <code>src/modes/</code> · <code>src/core/sdk.ts</code></span>
+    <span>文档 <a href="https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md">cli.md</a> · <a href="https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/sdk.md">sdk.md</a></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>根据场景选择 TUI、print、JSON、RPC 或 SDK，而不是默认选最重的那个</li>
+    <li>用 SDK 创建一个会话并订阅流式事件</li>
+    <li>说清 project trust、会话 cwd 与扩展权限之间的关系</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>五种接口，一套核心</h3>
+    <p>Pi 的交互方式由两个维度决定：<b>是否一次性执行</b>（print）与<b>输出协议</b>（text / json / rpc / sdk）。但它们共享同一套 AgentSession、工具与会话管理。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>接口</th><th>启动方式</th><th>典型场景</th></tr></thead>
+        <tbody>
+          <tr><td>TUI</td><td><code>pi</code></td><td>人类交互、查看工具过程</td></tr>
+          <tr><td>Print</td><td><code>pi -p "..."</code></td><td>脚本里只要最终答复</td></tr>
+          <tr><td>JSON</td><td><code>pi --mode json "..."</code></td><td>消费完整事件流、做可视化/审计</td></tr>
+          <tr><td>RPC</td><td><code>pi --mode rpc</code></td><td>其他语言的宿主进程控制 Pi</td></tr>
+          <tr><td>SDK</td><td><code>createAgentSession()</code></td><td>在自己的 Node/Bun 应用内嵌入 Pi</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="analogy">
+      <span class="analogy-title">像同一台服务器，不同的客户端</span>
+      <p>数据库本身只有一套存储与查询逻辑；命令行、GUI、API 只是不同客户端。Pi 的 TUI、print、JSON、RPC、SDK 也是这样：换的是「怎么发起请求、怎么看结果」，不换核心。</p>
+      <p><b>类比到哪为止：</b>客户端可以隐藏或聚合过程；Pi 的事件流对每个接口都保留，只是有的接口选择不展示。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>CLI：最短的三条命令</h3>
+<pre data-lang="bash"><code>pi --print "总结这个仓库的架构"
+git diff | pi --print "review 这次改动"
+pi --mode json "检查当前目录" &gt; events.jsonl
+</code></pre>
+    <p><code class="inline-code">--print</code> 只输出最终回答；<code class="inline-code">--mode json</code> 输出逐条事件，适合被程序消费。两者共享同一套工具与会话，只是输出层不同。注意 JSON 与 RPC 模式会占用 stdout 作为协议通道，不能混入其他打印。</p>
+
+    <h3><span class="h3num">03</span>SDK：把 Pi 嵌进应用</h3>
+    <p>如果宿主本身就是 TypeScript，SDK 是最直接的方式。它创建一个 <code class="inline-code">AgentSession</code>，你负责 prompt、订阅事件、最后 dispose。</p>
+<pre data-lang="ts"><code>import { createAgentSession } from "@earendil-works/pi-coding-agent";
+
+const { session } = await createAgentSession();
+
+const unsubscribe = session.subscribe((event) =&gt; {
+  if (event.type === "message_update" &amp;&amp; event.assistantMessageEvent.type === "text_delta") {
+    process.stdout.write(event.assistantMessageEvent.delta);
+  }
+});
+
+try {
+  await session.prompt("解释这个仓库的入口");
+} finally {
+  unsubscribe();
+  session.dispose();
+}
+</code></pre>
+    <p><code class="inline-code">prompt()</code> 在 run 结束后 resolve；流式输出靠订阅事件，而不是把回调塞进 prompt。若 prompt 在流式过程中到达，必须明确要 steer 还是 follow-up，不能靠猜。</p>
+
+    <h3><span class="h3num">04</span>安全边界：trust、cwd 与进程权限</h3>
+    <p>Pi 的信任模型很直接：先决定项目是否 trust，再加载项目级设置、扩展与资源；trust 之后再加载 context files。扩展运行在 Pi 进程内，拥有与宿主相同的 OS 权限；工具也使用进程权限。Pi 本身不是沙箱。</p>
+    <div class="callout warn">
+      <span class="callout-title">不要把「极简」误读成「安全隔离」</span>
+      <p>Pi 的核心代码少，不等于它运行在受限环境里。要隔离，需要容器、虚拟机或操作系统级沙箱；扩展与工具默认都能接触真实文件与凭据。</p>
+    </div>
+    <p>会话 cwd 在创建时固定，工具与 <code class="inline-code">@path</code> 都相对它解析；这保证了同一会话的行为可复现，也避免了「打开另一个目录的会话却改错仓库」。</p>
+
+    <h3><span class="h3num">05</span>什么时候选哪一种</h3>
+    <div class="card-grid">
+      <div class="card">
+        <h4>人用</h4>
+        <p>选 TUI。你需要看工具调用、diff、确认与中断，这些过程信息比最终文本更重要。</p>
+      </div>
+      <div class="card">
+        <h4>脚本/CI</h4>
+        <p>选 print 或 JSON。只要结果用 print；要审计过程、做可视化或回放，用 JSON 事件流。</p>
+      </div>
+      <div class="card">
+        <h4>宿主应用</h4>
+        <p>进程内用 SDK，跨语言/隔离用 RPC。两者都能拿到事件，但 RPC 多了序列化与进程边界。</p>
+      </div>
+    </div>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么 SDK 的 prompt() 不直接返回流式回调？</summary>
+      <div class="deep-body">
+        <p>因为一次 run 可能包含多次模型调用与工具执行，最终答案只是其中一部分。把过程做成事件流，宿主可以按需处理文本 delta、工具状态、压缩和重试；prompt() 只承诺「run 结束」。这也是 TUI、JSON、RPC 与 SDK 能共享核心的原因。</p>
+        <p>另外，steering 与 follow-up 的语义要求宿主明确消息进入的时机；一个简单的回调参数无法表达这种队列语义。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">06</span>自测</h3>
+    <details class="quiz">
+      <summary>CI 里只要最终文本，应该用哪个接口？</summary>
+      <div class="answer"><p><code>pi --print</code>（或 <code>-p</code>）。它运行一次并只输出最终 assistant 文本，适合脚本取结果；需要过程就用 <code>--mode json</code>。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么 JSON 和 RPC 模式不能混入普通日志打印？</summary>
+      <div class="answer"><p>因为 stdout 被保留为协议通道，混入普通文本会破坏 JSONL 解析。日志应走 stderr 或宿主自己的日志系统。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>Pi 的核心小，是否意味着扩展是安全的？</summary>
+      <div class="answer"><p>不是。扩展在 Pi 进程内运行，拥有相同的系统权限，能读凭据、文件与会话。安全来自信任来源与外部沙箱，而不是核心代码量。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>接口只是消费者：TUI、print、JSON、RPC、SDK 共享同一个 AgentSession 与事件流。选型看场景，安全看信任边界；不要因为 Pi 小就误以为它默认隔离。</p>
+      <p class="next"><b>下一讲：</b>最后，把 Pi 与 Claude Code 放在一起比较：极简核心与集成产品，各自适合什么样的工作流？</p>
+    </div>
+  </div>
+</section>

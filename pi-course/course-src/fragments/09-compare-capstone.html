@@ -1,0 +1,152 @@
+<section id="ch09" class="chapter">
+  <p class="chapter-kicker">第 9 讲 · 落地与超越</p>
+  <h2 class="chapter-title">对比 Claude Code，然后造一个自己的扩展
+    <small>极简核心 vs 集成产品：不是谁更强，而是能力放在哪一层</small>
+  </h2>
+  <p class="chapter-lede">读到这里，你已经拆过 Pi 的循环、工具、会话、压缩与扩展。最后一讲把 Pi 放回产品谱系里：和 Claude Code 这类集成产品相比，它的优势与代价分别是什么？然后用一个可交付的小项目收尾。</p>
+  <p class="source-line">
+    <span>对照 <a href="https://github.com/earendil-works/pi">earendil-works/pi</a> · <a href="https://www.anthropic.com/claude-code">Claude Code</a></span>
+    <span>建议先读 <code>docs/how-pi-works.md</code> 与 <code>packages/coding-agent/docs/extensions.md</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>用「能力放在哪」解释 Pi 与 Claude Code 的设计差异</li>
+    <li>判断一个团队/场景该选极简 harness 还是集成产品</li>
+    <li>完成一个能运行的 Pi 扩展或小工具，作为结课项目</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>先给差异一个准确的框架</h3>
+    <p>不要说「Pi 是开源的 Claude Code」——它们解决的是同一个问题，但组织方式不同。Pi 把能力做成<b>可插拔扩展</b>，Claude Code 把常用能力做成<b>内建体验</b>。前者把选择权交给使用者，后者把默认体验做到开箱即用。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>维度</th><th>Pi</th><th>Claude Code</th></tr></thead>
+        <tbody>
+          <tr><td>核心边界</td><td>循环、工具、会话、上下文；其余扩展</td><td>更完整的内建工作流与产品体验</td></tr>
+          <tr><td>能力扩展</td><td>TypeScript 扩展、Skills、packages</td><td>内建工具、hooks、MCP、skills、子代理</td></tr>
+          <tr><td>典型优势</td><td>可读、可改、可替换；核心小</td><td>开箱即用；团队协作与生态成熟</td></tr>
+          <tr><td>典型代价</td><td>需要自己组装工作流</td><td>内部行为更复杂，改造受产品边界约束</td></tr>
+          <tr><td>会话模型</td><td>JSONL 树、分支、压缩、branch summary</td><td>以产品体验为中心，细节随版本演进</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>这张表不是裁判，而是选型工具：你越需要「审计每一条消息、替换每一层、把 Agent 嵌进自己的系统」，越适合 Pi；你越需要「今天就让团队用起来、少踩坑」，越适合成熟集成产品。</p>
+
+    <div class="analogy">
+      <span class="analogy-title">像买车与组装车</span>
+      <p>买整车：提车即开，维修保养有成熟体系，但每个零件长什么样你未必清楚。组装车：你可以选发动机、悬挂与电控，代价是得自己调校、自己排障。</p>
+      <p><b>类比到哪为止：</b>车最终都要上路；Agent 的「路况」是具体业务，选整车还是组装车，取决于你是否愿意维护那套调校能力。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>能力放在哪：三个判断问题</h3>
+    <ol class="steps">
+      <li><b>这件事需要新的执行能力吗？</b>需要 → 扩展/工具；只是知识与流程 → Skill。</li>
+      <li><b>它需要跨会话保存状态吗？</b>需要 → custom entry 或外部存储；只影响当前上下文 → custom message / context 注入。</li>
+      <li><b>它必须在副作用前拦截吗？</b>是 → tool_call 事件；事后补偿 → 其他生命周期事件。</li>
+    </ol>
+
+    <h3><span class="h3num">03</span>结课项目：给 Pi 加一个「写前确认」扩展</h3>
+    <p>目标：在模型执行 write/edit 之前，对匹配敏感路径的修改弹确认；拒绝时返回错误结果，让模型知道被阻止。这个项目覆盖了本课最重要的三块：事件、工具 schema、UI。</p>
+<pre data-lang="ts"><code>import type { ExtensionAPI, isToolCallEventType } from "@earendil-works/pi-coding-agent";
+
+export default function (pi: ExtensionAPI) {
+  const protectedPaths = [".env", ".git/", "node_modules/"];
+
+  pi.on("tool_call", async (event, ctx) =&gt; {
+    const tool = event.toolName;
+    if (tool !== "write" &amp;&amp; tool !== "edit") return;
+
+    const path = String(event.input?.path ?? "");
+    if (!protectedPaths.some((p) =&gt; path.includes(p))) return;
+
+    const ok = await ctx.ui.confirm(
+      "受保护路径",
+      `${tool} 将修改 ${path}，确认继续？`,
+    );
+    if (!ok) return { block: true, reason: "受保护路径被拒绝" };
+  });
+}
+</code></pre>
+    <p>把它放到 <code class="inline-code">~/.pi/agent/extensions/guard.ts</code>，重启 Pi 或执行 <code class="inline-code">/reload</code>。再让模型尝试写 <code class="inline-code">.env</code>，观察确认框与拒绝后的工具结果。最后把「哪些路径受保护」做成设置项，理解扩展如何读取配置并与 UI 协作。</p>
+<pre data-lang="bash"><code>mkdir -p ~/.pi/agent/extensions
+# 将 guard.ts 放到该目录
+pi
+# 在会话里执行：
+/reload
+# 然后让模型尝试修改 .env，观察确认与阻止
+</code></pre>
+
+    <h3><span class="h3num">04</span>源码阅读顺序</h3>
+    <p>如果你准备继续深挖，按依赖从薄到厚读，最不容易迷路：</p>
+    <ol class="steps">
+      <li><b>消息与类型</b>：<code class="inline-code">packages/ai/src/types.ts</code>、<code class="inline-code">packages/agent/src/types.ts</code>，先弄清一个 turn 的数据形状。</li>
+      <li><b>循环</b>：<code class="inline-code">packages/agent/src/agent-loop.ts</code>，重点看工具批次、消息转换、事件发射。</li>
+      <li><b>产品层</b>：<code class="inline-code">packages/coding-agent/src/core/agent-session.ts</code>，看它如何把工具、会话、压缩、扩展装配进通用循环。</li>
+      <li><b>工具与存储</b>：<code class="inline-code">src/core/tools/</code> 与 <code class="inline-code">src/core/session-manager.ts</code>，最后再看 CLI 与 TUI。</li>
+    </ol>
+
+    <h3><span class="h3num">05</span>进阶方向</h3>
+    <div class="card-grid">
+      <div class="card">
+        <h4>做会话可视化</h4>
+        <p>消费 JSON 事件流，把 turn、工具调用与压缩画成时间线。你会被迫理解事件顺序与 session entry。</p>
+      </div>
+      <div class="card">
+        <h4>做团队 Skill 包</h4>
+        <p>把团队代码规范、发布流程、评审清单写成 Skills，通过 package 分发，观察「知识加载」与「代码执行」的边界。</p>
+      </div>
+      <div class="card">
+        <h4>替换模型/provider</h4>
+        <p>通过扩展注册本地 provider，验证 Pi 的统一模型接口是否真的把厂商差异隔离在适配层。</p>
+      </div>
+    </div>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么说「极简」本身不是卖点？</summary>
+      <div class="deep-body">
+        <p>代码少不等于好。极简的价值在于：你能完整理解它、验证它、替换它；代价是很多能力要自己组装。如果一个团队没有维护 harness 的意愿，极简反而会变成负担。</p>
+        <p>所以选型时不要问「谁更先进」，要问「谁把复杂度放在了我们能承受的地方」。Pi 把复杂度放在扩展与集成层，Claude Code 把复杂度收进产品内部——两种都合理，取决于你的团队。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">06</span>面试速查：十个问题</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>问题</th><th>一句话答案</th></tr></thead>
+        <tbody>
+          <tr><td>Pi 的核心职责是什么？</td><td>循环、工具、会话、上下文；其余扩展。</td></tr>
+          <tr><td>为什么有 8 个工具却说 4 个？</td><td>8 个是全部内置工具，4 个是 coding 四件套。</td></tr>
+          <tr><td>tool result 为什么要和 toolCall 绑定？</td><td>模型需要配对理解，压缩切点也不能落在 tool result。</td></tr>
+          <tr><td>会话为什么是树？</td><td>回退不删历史，分支可恢复、可总结。</td></tr>
+          <tr><td>压缩为什么不删原消息？</td><td>只改变模型投影，保留审计与导航。</td></tr>
+          <tr><td>扩展为什么危险？</td><td>进程内运行，拥有宿主权限。</td></tr>
+          <tr><td>Skill 和扩展的区别？</td><td>知识 vs 可执行能力。</td></tr>
+          <tr><td>为什么 write 要 per-file 队列？</td><td>同文件串行保证一致性，不同文件并行。</td></tr>
+          <tr><td>SDK 和 RPC 怎么选？</td><td>进程内 TypeScript 用 SDK，跨语言/隔离用 RPC。</td></tr>
+          <tr><td>Pi 适合什么样的团队？</td><td>愿意维护自己的 harness、需要审计与改造的团队。</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3><span class="h3num">07</span>自测</h3>
+    <details class="quiz">
+      <summary>Pi 与 Claude Code 的核心差异，应该怎么表述才准确？</summary>
+      <div class="answer"><p>不是「开源 vs 闭源」或「强 vs 弱」，而是能力放置位置：Pi 把非核心能力放到扩展与资源层，Claude Code 把常用能力收进内建产品体验。前者换取可改造性，后者换开箱即用。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>团队没有维护扩展的意愿，还适合 Pi 吗？</summary>
+      <div class="answer"><p>未必。Pi 的价值依赖「有人组装与维护工作流」。如果团队更看重稳定、开箱即用，成熟集成产品可能更合适。选型要看组织能力，而不是只看架构优雅。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>结课项目里，为什么拒绝写操作要返回 block，而不是直接抛异常？</summary>
+      <div class="answer"><p>因为需要让模型看到「这次调用被阻止了，以及原因」，从而调整策略。返回 block + reason 会变成工具错误结果进入循环；抛未处理异常可能中断整个 run。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>Pi 教的不是「如何复制一个 Claude Code」，而是「如何把 Agent 的复杂度放到你能掌控的位置」。当你能独立设计循环、工具、会话与扩展边界，选什么产品就只是工程判断，而不是信仰。</p>
+      <p class="next"><b>课程结束：</b>回到 ch02 的循环图，试着自己画一遍 Pi 的完整数据流；能画出来，就说明你真的读懂了。</p>
+    </div>
+  </div>
+</section>

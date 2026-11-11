@@ -1,0 +1,110 @@
+<section id="ch03" class="chapter">
+  <p class="chapter-kicker">第 3 讲 · 运行时核心</p>
+  <h2 class="chapter-title">工具引擎：8 个工具背后的工程细节
+    <small>模型看到的是 schema，真正难的是截断、精确匹配、并发与退出码</small>
+  </h2>
+  <p class="chapter-lede">工具不是「把函数暴露给模型」这么简单。一个能长期干活的工具，必须处理大文件、并发写、路径解析、超时、截断与错误语义。Pi 的工具实现把这层工程细节写得非常克制，值得逐块读。</p>
+  <p class="source-line">
+    <span>源码 <code>packages/coding-agent/src/core/tools/</code></span>
+    <span>关键文件 <code>read.ts</code> · <code>edit.ts</code> · <code>write.ts</code> · <code>bash.ts</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>说清 read 的 2000 行 / 50KB 截断为何是「先到先得」</li>
+    <li>理解 edit 为什么要求 oldText 精确且唯一，以及多段编辑如何避免重叠</li>
+    <li>解释同一文件的写操作为什么要排队，而不同文件可以并行</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>工具定义：schema 是给模型的合同</h3>
+    <p>每个工具都用一个 TypeBox schema 描述参数，再暴露 <code class="inline-code">name</code>、<code class="inline-code">description</code>、<code class="inline-code">parameters</code>、<code class="inline-code">execute</code>。description 不是注释，而是模型决定「什么时候用它」的主要依据。</p>
+<pre data-lang="ts"><code>const editSchema = Type.Object({
+  path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
+  edits: Type.Array(Type.Object({
+    oldText: Type.String({ description: "Exact text for one targeted replacement..." }),
+    newText: Type.String({ description: "Replacement text for this targeted edit." }),
+  })),
+});
+</code></pre>
+    <p>注意 <code class="inline-code">edits</code> 是数组：一次调用可以改同一文件的多个不连续位置。但每个 <code class="inline-code">oldText</code> 必须<b>唯一且不重叠</b>，并且都针对原始文件匹配——不是「改完第一处再匹配第二处」。这避免了增量修改带来的位置漂移。</p>
+
+    <div class="analogy">
+      <span class="analogy-title">像给模型配一个分拣台</span>
+      <p>分拣台不会把整仓库的货一次倒给工人，而是按批次、按目的地送出；同一目的地的包裹还要排队，避免两件货同时塞进一个格口。工具层做的就是这套分拣与限流。</p>
+      <p><b>类比到哪为止：</b>分拣台只负责出库；模型仍要自己决定「下一批拿什么」。工具只提供能力与边界，不替模型规划。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>read：先到先得的截断</h3>
+    <p>read 不是把文件整段塞给模型。默认上限是两个独立约束：2000 行或 50KB，谁先到就按谁截断。截断只保留完整行，避免把多字节字符切成半个。</p>
+<pre data-lang="ts"><code>export const DEFAULT_MAX_LINES = 2000;
+export const DEFAULT_MAX_BYTES = 50 * 1024;
+
+// 输出会附带 next offset，提示模型继续读
+[Showing lines 1-2000 of 4312. Use offset=2001 to continue.]
+</code></pre>
+    <p>这不是「省 token」的小优化，而是让模型形成「分段读文件」的习惯：大文件不会被一次性展开，模型可以按需继续。图片文件则走另一条路径，作为附件发送。</p>
+
+    <h3><span class="h3num">03</span>write 与 edit：同一文件的写必须排队</h3>
+    <p>两个工具都通过 <code class="inline-code">withFileMutationQueue</code> 包住实际写入。队列按文件的 realpath 建立：同一个文件的操作串行，不同文件的操作并行。</p>
+<pre data-lang="ts"><code>const fileMutationQueues = new Map&lt;string, Promise&lt;void&gt;&gt;();
+
+export async function withFileMutationQueue&lt;T&gt;(
+  filePath: string,
+  fn: () =&gt; Promise&lt;T&gt;,
+): Promise&lt;T&gt; {
+  const key = await getMutationQueueKey(filePath); // realpath
+  const current = fileMutationQueues.get(key) ?? Promise.resolve();
+  // ...排队，执行 fn，最后释放
+}
+</code></pre>
+    <p>为什么不用一把全局锁？因为两个工具同时改不同文件是安全的，全局锁会把并行变成串行，拖慢整个 agent。为什么不用「文件不存在就跳过」？因为 realpath 失败时仍要回退到解析后的路径，避免同一个尚未创建的文件被两个操作同时写。</p>
+    <div class="callout warn">
+      <span class="callout-title">abort 时不要提前释放锁</span>
+      <p>write 的实现没有在 abort 监听器里直接 reject，而是在每个 await 之后检查 <code>signal.aborted</code>。否则队列会在文件操作还没结束时被释放，另一个写操作可能插进来，造成半写或覆盖。</p>
+    </div>
+
+    <h3><span class="h3num">04</span>bash：退出码、超时与截断</h3>
+    <p>bash 的工程细节集中在「失败如何表达」。非零退出码不是抛异常，而是返回带 <code>isError: true</code> 的工具结果，让模型看到错误并自行修复；超时则是一个可选的、有上限的设置。</p>
+    <p>输出同样会被截断。bash 的尾部截断有一个边界：如果最后一行本身不完整，可能需要特殊处理；这也是为什么工具层不直接返回原始字符串，而是返回结构化的内容块。</p>
+    <p>超时参数以秒为单位，有最大值上限；超时不是简单 kill，而是把「超时」表达成一次失败的工具结果，附带已经积累的输出。这样模型能看到「跑到哪一步超时」，而不是只收到一个空错误。</p>
+
+    <h3><span class="h3num">05</span>路径与只读发现工具</h3>
+    <p>所有文件工具都通过 <code class="inline-code">resolveToCwd</code> 把相对路径解析到当前会话的工作目录，而不是进程启动目录。这让同一个 Pi 进程可以安全地打开不同 cwd 的会话。</p>
+    <p>grep、find、ls 是只读发现工具：它们不做修改，因此不需要 mutation queue，但仍受输出截断与路径解析约束。powershell 则是 Windows 上的 bash 等价物，接口形状保持一致。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么 edit 的多个 oldText 不允许重叠？</summary>
+      <div class="deep-body">
+        <p>如果允许重叠，两个替换可能互相影响同一段原文，最终结果取决于执行顺序；而模型给出的 edits 是一个集合，没有可靠顺序。Pi 直接禁止重叠，让每次编辑都可以独立地在原始内容上定位，结果确定且可验证。</p>
+        <p>相近的修改应该合并成一个更大的 edit，而不是拆成多个相邻片段。这条约束写在工具 description 里，也是模型需要学会的「工具使用习惯」。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">06</span>动手实验</h3>
+    <ol class="steps">
+      <li><b>制造截断</b>：让 Pi 读一个超过 2000 行的文件，观察结果末尾的提示，再用 <code class="inline-code">offset</code> 继续读。记录每次返回的行数。</li>
+      <li><b>并发写</b>：写一个扩展或测试，同时触发对同一文件的两个 edit，观察它们是否串行；再改成不同文件，观察是否并行。</li>
+    </ol>
+
+    <h3><span class="h3num">07</span>自测</h3>
+    <details class="quiz">
+      <summary>read 的截断为什么必须「只保留完整行」？</summary>
+      <div class="answer"><p>因为半个多字节字符或半个语法结构会误导模型，也可能让后续编辑的 oldText 无法匹配。只保留完整行能保证输出是可读、可引用的文本单元。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>同一文件的两个 edit 并发时，Pi 用什么保证结果确定？</summary>
+      <div class="answer"><p>用按 realpath 建立的 per-file mutation queue。两个操作排队执行，后一个看到的是前一个完成后的文件状态；不同文件仍然可以并行。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>bash 非零退出为什么不算「工具崩溃」？</summary>
+      <div class="answer"><p>因为命令失败是 agent 工作流的一部分：编译报错、测试失败都需要模型看到输出并修复。Pi 把它表达为带 error 标记的工具结果，而不是中断循环的异常。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>工具的质量不在「能调用」，而在边界：截断保证上下文可控，精确匹配保证编辑可验证，队列保证并发安全，错误语义保证循环能继续。读懂这些，你才能写出不会把仓库改坏的 Agent。</p>
+      <p class="next"><b>下一讲：</b>工具结果写回之后，它们如何被持久化成可分支、可恢复的会话树？</p>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,109 @@
+<section id="ch01" class="chapter">
+  <p class="chapter-kicker">第 1 讲 · 出发之前</p>
+  <h2 class="chapter-title">Pi 是什么：一台刻意做小的 Agent Harness
+    <small>核心只保留循环、工具、会话与 TUI，其余能力交给扩展</small>
+  </h2>
+  <p class="chapter-lede">大多数 Agent 产品把「能力」放进核心，Pi 反其道而行：核心只提供最小、最中性的运行时，把子代理、计划模式、权限门禁、MCP 等能力留给扩展。理解这个取舍，才看得懂后面每一层代码为什么长成这样。</p>
+  <p class="source-line">
+    <span>源码 <code>packages/coding-agent/src</code> · <code>packages/agent/src</code></span>
+    <span>文档 <a href="https://github.com/earendil-works/pi/blob/main/README.md">README</a> · <a href="https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/how-pi-works.md">How Pi Works</a></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>用一句话说清 Pi 的核心边界：哪些东西属于 harness，哪些不属于</li>
+    <li>分清「8 个内置工具」与「4 个 coding 工具」这两个容易混淆的说法</li>
+    <li>知道 Pi 的四个关键包各自负责什么，以及它们如何拼成一条请求链</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>先看 Pi 自己怎么说</h3>
+    <p>Pi 的 README 第一句是：<b>“Pi is a minimal, extensible agent harness that you can make your own.”</b> 这句话里有三个关键词：minimal（小）、extensible（可扩展）、harness（运行时框架）。它不是「更聪明的模型」，也不是「一键生成应用的平台」，而是模型与真实环境之间的那层壳。</p>
+    <p>它明确接受一个结果：<b>子代理、计划模式这类能力默认不内置</b>。你要，就自己写扩展，或者安装一个按你的方式实现的 package。这个选择不是「还没做完」，而是产品哲学——核心越小，你能读懂、验证和替换的部分就越多。</p>
+
+    <div class="analogy">
+      <span class="analogy-title">像一台可换零件的相机</span>
+      <p>有些相机把镜头、滤镜、闪光灯全部焊死，开机就能拍；Pi 更像一台可换镜头的机身：机身只负责快门、传感器和卡口，拍什么、怎么拍，由你装上去的镜头和附件决定。</p>
+      <p><b>类比到哪为止：</b>相机换镜头不会改变机身逻辑；Pi 的扩展可以直接拦截工具调用、注入上下文，能力比「附件」更深。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>四层包结构</h3>
+    <p>Pi 是一个 monorepo。对理解 harness 最重要的四个包是：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>包</th><th>职责</th><th>你应该先读什么</th></tr></thead>
+        <tbody>
+          <tr><td><code>packages/ai</code></td><td>统一的多 provider LLM API：消息、内容块、流式事件、模型目录</td><td><code>src/types.ts</code>、provider 适配层</td></tr>
+          <tr><td><code>packages/agent</code></td><td>通用 agent 运行时：循环、工具执行、事件流、AgentMessage</td><td><code>src/agent-loop.ts</code>、<code>src/agent.ts</code></td></tr>
+          <tr><td><code>packages/coding-agent</code></td><td>编码 Agent 产品层：工具、会话、压缩、扩展、CLI、TUI</td><td><code>src/core/agent-session.ts</code>、<code>src/core/tools/</code></td></tr>
+          <tr><td><code>packages/tui</code></td><td>终端 UI 组件与渲染</td><td>只在需要自定义界面时读</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>这四层的关系不是「层层封装到看不见」。相反，边界很清楚：<code class="inline-code">agent</code> 只认识 AgentMessage 与工具接口，不认识文件、终端或模型厂商；<code class="inline-code">coding-agent</code> 把具体的工具、会话和 CLI 装进这个通用运行时；<code class="inline-code">ai</code> 负责把统一请求翻译成各家 API 的格式。</p>
+
+    <h3><span class="h3num">03</span>8 个工具，还是 4 个工具？</h3>
+    <p>面试里常见的混淆点：Pi 到底有几个工具？源码里的 <code class="inline-code">ToolName</code> 联合类型一共声明了 8 个：</p>
+<pre data-lang="ts"><code>export type ToolName =
+  | "read" | "bash" | "powershell"
+  | "edit" | "write"
+  | "grep" | "find" | "ls";
+
+export function createCodingToolDefinitions(cwd: string) {
+  return [
+    createReadToolDefinition(cwd),
+    createBashToolDefinition(cwd),
+    createEditToolDefinition(cwd),
+    createWriteToolDefinition(cwd),
+  ];
+}
+</code></pre>
+    <p>所谓「Pi 的核心四件套」指的是 <b>coding 四件套</b>：read、bash、edit、write。另外 4 个是只读发现工具（grep、find、ls）与 Windows 的 powershell。它们同样通过工具注册表暴露给模型，只是职责更窄。</p>
+
+    <div class="callout key">
+      <span class="callout-title">关键结论</span>
+      <p>Pi 的「小」不是工具数量少，而是<b>核心机制少</b>：没有内建的计划模式、子代理编排、权限门禁、MCP 管理。它把「多工具」与「多能力」区分开了。</p>
+    </div>
+
+    <h3><span class="h3num">04</span>一台 Pi 是怎么被使用的</h3>
+    <p>同一个 agent/session 核心，被包进不同的接口。你可以在终端里交互，也可以让脚本以 print / JSON 模式调用它，甚至用 SDK 在自己的进程里创建会话：</p>
+<pre data-lang="bash"><code>pi                         # TUI 交互模式
+pi -p "解释这个仓库"        # 打印最终回复
+pi --mode json -p "..."    # 输出 JSONL 事件
+pi --mode rpc              # 通过 JSONL 命令控制
+</code></pre>
+    <p>接口不同，底层机制相同：消息进入 active branch、构造请求、流式响应、执行工具、回填结果、必要时压缩。第 8 章会把这几条接口逐一展开。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：Pi 为什么不内置「计划模式」和「子代理」？</summary>
+      <div class="deep-body">
+        <p>因为这两类能力高度依赖工作流与团队约定。计划模式在什么时机触发、计划写到哪个文件、是否强制人工确认；子代理用什么模型、上下文如何隔离、结果如何合并——每个团队都有自己的答案。把它们做成核心，等于把一种工作流强加给所有人。</p>
+        <p>Pi 的做法是提供稳定的扩展点：工具、事件、命令、UI、会话条目。需要时，用扩展把这些能力装上去；不需要时，核心不会为它们付出复杂度与理解成本。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">05</span>常见误区</h3>
+    <p><b>误区一：极简就是功能弱。</b>Pi 的核心确实小，但它通过扩展与 package 可以接入任意工具、provider、命令和 TUI 组件。功能上限由扩展生态决定，而不是核心代码量。</p>
+    <p><b>误区二：工具越多，Agent 越强。</b>工具多了，模型的选择空间也变大，错误调用与上下文开销随之上升。Pi 把常用工具做精，把长尾能力放到扩展里，反而让默认行为更可预测。</p>
+
+    <h3><span class="h3num">06</span>自测</h3>
+    <details class="quiz">
+      <summary>说 Pi 有「8 个工具」和「4 个工具」分别指什么？</summary>
+      <div class="answer"><p>8 个是 <code>ToolName</code> 声明的全部内置工具：read、bash、powershell、edit、write、grep、find、ls。4 个是 <code>createCodingToolDefinitions</code> 返回的 coding 四件套：read、bash、edit、write。前者是工具注册表的全集，后者是默认编码工作流的核心集。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>Pi 的扩展为什么能改变「核心行为」，而不只是加一个函数？</summary>
+      <div class="answer"><p>因为扩展订阅的是生命周期事件，可以拦截工具调用、修改上下文、注册工具和命令、接管 UI。它运行在 Pi 进程内，拥有与宿主相同的权限，因此能力边界远大于普通的插件回调。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>如果只读一个文件来理解 Pi 的架构，应该读哪个？</summary>
+      <div class="answer"><p>先读 <code>packages/coding-agent/docs/how-pi-works.md</code>，再读 <code>packages/agent/src/agent-loop.ts</code>。前者给全局数据流，后者给循环的真实控制结构。具体工具实现可以稍后再看。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>Pi 是一台把核心职责与可插拔能力分开的 harness：核心保留循环、工具、会话、上下文，其余用扩展补。它的小不是缺失，而是把复杂度推到了你真正需要它的地方。</p>
+      <p class="next"><b>下一讲：</b>进入运行时核心，看一个 prompt 如何变成「模型响应 → 工具执行 → 结果回填」的循环。</p>
+    </div>
+  </div>
+</section>

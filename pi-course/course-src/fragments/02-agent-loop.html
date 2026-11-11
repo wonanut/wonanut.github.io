@@ -1,0 +1,137 @@
+<section id="ch02" class="chapter">
+  <p class="chapter-kicker">第 2 讲 · 运行时核心</p>
+  <h2 class="chapter-title">Agent Loop：循环、事件与消息边界
+    <small>packages/agent 用两个 while 处理「工具调用」与「排队消息」</small>
+  </h2>
+  <p class="chapter-lede">Loop 的骨架只有一件事：调用模型，如果响应里有 toolCall，就执行工具、把结果回填，再调用模型。真正复杂的是边界：什么时候停、消息从哪来、流式事件如何暴露给 UI、被截断的工具调用还能不能执行。</p>
+  <p class="source-line">
+    <span>源码 <code>packages/agent/src/agent-loop.ts</code></span>
+    <span>类型 <code>packages/agent/src/types.ts</code></span>
+    <span>产品层 <code>packages/coding-agent/src/core/agent-session.ts</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>画出一次 prompt 从进入到结束的事件序列</li>
+    <li>说清 AgentMessage 与 LLM Message 为什么要在边界处转换</li>
+    <li>解释 steering、follow-up 与 abort 分别改变循环的哪一部分</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>两个循环，而不是一个</h3>
+    <p>直觉上的 agent loop 是一个 while：有工具调用就继续，没有就停。Pi 的 <code class="inline-code">runLoop</code> 确实有这个内层循环，但外面还有一层：当 agent 本来要停下时，如果队列里来了 follow-up 消息，它要重新进入内层，把新消息当作下一轮的输入。</p>
+<pre data-lang="ts"><code>while (true) {
+  let hasMoreToolCalls = true;
+
+  while (hasMoreToolCalls || pendingMessages.length &gt; 0) {
+    const message = await streamAssistantResponse(...);
+    const toolCalls = message.content.filter(c =&gt; c.type === "toolCall");
+
+    const batch = await executeToolCalls(currentContext, message, config, signal, emit);
+    hasMoreToolCalls = !batch.terminate;
+
+    // 把 toolResult 追加进上下文，然后进入下一轮
+  }
+
+  const followUps = await config.getFollowUpMessages?.() || [];
+  if (followUps.length &gt; 0) { pendingMessages = followUps; continue; }
+  break;
+}
+</code></pre>
+    <p>内层处理「这一轮要不要继续调工具」，外层处理「agent 本该停下，但用户又排了消息」。steering 消息则在当前 assistant turn 之后、下一次模型调用之前插入——它改变的是「接下来这一轮看什么」，而不是另起一个 run。</p>
+
+    <div class="analogy">
+      <span class="analogy-title">像厨师与传菜口的双循环</span>
+      <p>内层是「做一道菜」：厨师看订单、做一步、把半成品放回台面、再看下一张订单。外层是「打烊前的最后一单」：本来准备关火了，前台又递来一张单，厨房重新开火。</p>
+      <p><b>类比到哪为止：</b>厨房的订单不会改变厨师的训练；Pi 的模型固定，循环只改变「给模型看什么、让它做什么」。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>消息边界：AgentMessage 不是 LLM Message</h3>
+    <p>Pi 的运行时使用 <code class="inline-code">AgentMessage</code>，它比 LLM 认识的 user/assistant/toolResult 更宽：可以包含 UI 专用消息、扩展注入的 custom message、系统消息等。真正调用模型前，必须经过两道转换：</p>
+    <div class="flow">
+      <div class="flow-node"><b>AgentMessage[]</b>运行时状态</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>transformContext</b>可选：裁剪/注入</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>convertToLlm</b>过滤/转换</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>LLM Message[]</b>发给 provider</div>
+    </div>
+    <p><code class="inline-code">transformContext</code> 用来做上下文工程（裁剪旧消息、注入外部资料），<code class="inline-code">convertToLlm</code> 是必需步骤：它把运行时专有的消息类型过滤掉，或转换成模型能理解的 user/assistant/toolResult。这个边界让 agent 核心不必知道「UI 想显示什么」，也让扩展可以安全地往状态里加东西。</p>
+
+    <h3><span class="h3num">03</span>事件流：UI 看到的是过程，不是结果</h3>
+    <p><code class="inline-code">agentLoop</code> 返回一个 <code class="inline-code">EventStream</code>，把内部状态变化逐条推给调用方。典型序列是：</p>
+<pre data-lang="text"><code>agent_start
+turn_start
+message_start (user)
+message_end   (user)
+message_start (assistant, partial)
+message_update (text_delta / toolcall_delta ...)
+message_end   (assistant)
+tool_execution_start
+tool_execution_end
+turn_end
+agent_end
+</code></pre>
+    <p>TUI 之所以能边生成边显示、边执行边更新工具状态，就是因为它消费这些事件；SDK 与 RPC 模式也复用同一套事件，只是序列化方式不同。核心循环本身不渲染任何东西。</p>
+    <p>工具批次还有一个容易忽略的分支：并行还是串行。Pi 默认并行执行同一批 toolCall，但只要某个工具的 <code class="inline-code">executionMode</code> 是 <code class="inline-code">sequential</code>，整批就退化为串行，避免有状态工具互相踩踏。并行结果仍按原调用顺序回填，模型看到的 toolResult 顺序与 toolCall 顺序一致。</p>
+<pre data-lang="ts"><code>const hasSequential = toolCalls.some(
+  tc =&gt; currentContext.tools?.find(t =&gt; t.name === tc.name)?.executionMode === "sequential"
+);
+
+if (config.toolExecution === "sequential" || hasSequential) {
+  return executeToolCallsSequential(...);
+}
+return executeToolCallsParallel(...);
+</code></pre>
+    <p>并行执行不是「把 Promise.all 包一层」就结束：每个 toolCall 先做参数校验与准备，再并发执行；任一时刻 abort，未开始的任务直接产生取消错误，已经开始的工具仍需自己观察 signal。最终 <code class="inline-code">Promise.all</code> 按数组顺序收口，保证消息序稳定。</p>
+
+    <h3><span class="h3num">04</span>三个容易忽略的边界</h3>
+    <div class="callout warn">
+      <span class="callout-title">被截断的 toolCall 不能执行</span>
+      <p>如果模型因为输出 token 上限而提前结束（<code>stopReason: "length"</code>），流式解析出的工具参数可能是「能解析但被截断」的。Pi 的处理是：这一批工具调用全部失败，要求模型重新发出完整调用，而不是冒险执行半个参数。</p>
+    </div>
+    <div class="callout insight">
+      <span class="callout-title">abort 不是 kill -9</span>
+      <p>AbortSignal 会中止当前 run，但正在执行的工具需要自己观察 signal；文件写入这类操作还要保证锁释放前不破坏状态。第 3 章会看到 write/edit 如何用「检查 signal + 队列」避免半写。</p>
+    </div>
+    <div class="callout tip">
+      <span class="callout-title">steering 与 follow-up 的时机不同</span>
+      <p>steering 在 turn 之间插入，适合「纠正当前方向」；follow-up 在 agent 即将结束时才取，适合「追加下一件事」。把两者混用，会让 Agent 的行为变得难以预测。</p>
+    </div>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么事件流要用 async generator 风格的 EventStream？</summary>
+      <div class="deep-body">
+        <p>因为循环是长时间运行的，而 UI 需要在中间状态上做响应：文本 delta、工具开始/结束、turn 边界。一次性返回最终消息会丢失这些信息，回调又容易把 UI 逻辑耦合进核心。EventStream 把「过程」变成可迭代的数据，调用方可以选择消费、转发或忽略，核心保持干净。</p>
+        <p>这也解释了为什么 TUI、print、JSON、RPC、SDK 能共用同一套机制：它们只是对事件的消费者不同。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">05</span>动手实验</h3>
+    <ol class="steps">
+      <li><b>读事件序列</b>：运行 <code class="inline-code">pi --mode json -p "列出当前目录"</code>，把输出按事件类型分类。找到 <code class="inline-code">tool_execution_start</code> 与 <code class="inline-code">tool_execution_end</code> 之间差了哪些字段。</li>
+      <li><b>改停止条件</b>：在阅读 <code class="inline-code">runLoop</code> 时，试着用注释标出「内层继续」与「外层继续」分别由哪个变量决定；再预测如果 <code class="inline-code">getFollowUpMessages</code> 永远返回空，会发生什么。</li>
+    </ol>
+
+    <h3><span class="h3num">06</span>自测</h3>
+    <details class="quiz">
+      <summary>为什么循环要分内层和外层，一个 while 不够吗？</summary>
+      <div class="answer"><p>一个 while 只能表达「工具调用没结束就继续」。外层还要处理「本来应该结束，但排队消息在结束后到达」的情况。两者触发条件不同：内层看 toolCalls，外层看 follow-up 队列。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>AgentMessage 直接发给模型会怎样？</summary>
+      <div class="answer"><p>可能包含 provider 不认识的类型（UI 消息、扩展 custom message），请求会失败或被错误解析。所以必须在边界处调用 <code>convertToLlm</code>，过滤/转换成 user、assistant、toolResult 三种 LLM 消息。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>模型返回了带 toolCall 的 length 截断消息，Pi 为什么不让工具执行？</summary>
+      <div class="answer"><p>因为工具参数可能被截断，虽然 JSON 能解析，但语义不完整。执行它可能造成误删、误写。Pi 把这一批调用全部标记为错误，提示模型重新发出完整调用，优先保证安全与可恢复。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>Agent loop 的本质是「模型响应驱动的状态机」：内层处理工具，外层处理排队消息，边界处做消息转换，过程通过事件暴露。记住这四个位置，比记住任何一行代码都重要。</p>
+      <p class="next"><b>下一讲：</b>循环把工具调用交出去之后，工具本身如何执行？read、edit、write、bash 各自在防什么事故？</p>
+    </div>
+  </div>
+</section>

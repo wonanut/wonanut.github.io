@@ -1,0 +1,124 @@
+<section id="ch00" class="chapter">
+  <div class="hero">
+    <p class="eyebrow">Pi · Minimal Agent Harness</p>
+    <h1 class="chapter-title">把 Pi 拆到零件，理解一台极简 Agent</h1>
+    <p class="chapter-lede">这不是一份 Pi 使用说明，而是一趟源码阅读：从一个 while 循环、四个核心工具和一个 JSONL 会话文件开始，看一台「刻意做小」的 Agent Harness 如何被组装起来，又为什么把其余能力交给扩展。</p>
+    <div class="hero-meta">
+      <span class="pill accent">中文 · 单页可离线阅读</span>
+      <span class="pill">10 章 · 约 4 小时精读</span>
+      <span class="pill">主干通俗 + 源码折叠</span>
+      <span class="pill">每章带实验与自测</span>
+    </div>
+  </div>
+
+  <p class="source-line">
+    <span>源码依据 <a href="https://github.com/earendil-works/pi">earendil-works/pi</a> · coding-agent 1.5.2</span>
+    <span>代码对照 <code>packages/agent</code> 与 <code>packages/coding-agent/src</code></span>
+    <span>课程给「为什么」，源码给「到底怎么做」</span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">读完这门课，你会</li>
+    <li>说清一台 Agent Harness 的最小职责边界：循环、工具、会话、上下文</li>
+    <li>沿着 Pi 的真实 TypeScript 源码，读懂 agent loop、工具执行与会话树</li>
+    <li>理解扩展、Skills、prompt templates 为什么能把「能力」留在核心之外</li>
+    <li>能判断什么时候该选 Pi 这种极简 harness，什么时候该选 Claude Code 这类集成产品</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>为什么值得读 Pi</h3>
+    <p>大多数 Agent 产品是黑盒：功能很多，但你很难回答三个基本问题——它每一轮到底给模型发了什么？工具结果如何回填？上下文满了以后，旧消息去了哪里？</p>
+    <p>Pi 的选择相反。它把核心压到可以完整读一遍的规模：一个通用的 agent 循环（<code class="inline-code">packages/agent</code>），一个统一的模型适配层（<code class="inline-code">packages/ai</code>），一个带 TUI、工具和会话管理的 coding agent（<code class="inline-code">packages/coding-agent</code>），以及一个终端 UI 库（<code class="inline-code">packages/tui</code>）。读完这条链，你对任何 Agent 框架都不会再陌生。</p>
+
+    <div class="analogy">
+      <span class="analogy-title">像读一台拆开的小发动机</span>
+      <p>有些产品是整车：坐进去就能开，但发动机盖焊死了。Pi 更像一台放在工作台上的小发动机：零件不多，每根管线都看得见，你甚至能换掉某个零件再点火。</p>
+      <p><b>类比到哪为止：</b>发动机不会自己决定去哪；Pi 的「智能」来自模型，课程讲的是承载智能的那副骨架。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>课程地图：四层，一条主线</h3>
+    <p>整门课按「运行时核心 → 上下文与扩展 → 落地接口」推进。前四章回答「一台 Agent 怎么跑起来」，中间三章回答「它怎么长期跑、怎么被改造」，最后两章回答「它怎么被使用、和别的产品差在哪」。</p>
+    <div class="flow">
+      <div class="flow-node"><b>Agent Loop</b>模型调用与工具回填</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>Tools</b>read / bash / edit / write</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>Session</b>JSONL 会话树与分支</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>Compaction</b>摘要接管旧历史</div>
+    </div>
+    <div class="flow">
+      <div class="flow-node"><b>Extensions</b>事件、工具、命令</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>Skills</b>按需加载指令</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>Interfaces</b>TUI / print / JSON / RPC / SDK</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>Trade-offs</b>与 Claude Code 对比</div>
+    </div>
+
+    <h3><span class="h3num">03</span>怎么读：三种路线</h3>
+    <div class="card-grid">
+      <div class="card">
+        <h4>① 想快速建立直觉</h4>
+        <p>读 ch01 → ch02 → ch03 → ch04，跳过所有折叠区。目标是能画出一轮完整 turn 的流程图，并说清工具结果如何进入下一轮。</p>
+      </div>
+      <div class="card">
+        <h4>② 想改造 Pi</h4>
+        <p>直接读 ch06（扩展）与 ch07（Skills），再回看 ch02 的事件序列。扩展能挂在哪里、不能挂在哪里，取决于你多熟悉 loop 的生命周期。</p>
+      </div>
+      <div class="card">
+        <h4>③ 想选型或面试</h4>
+        <p>读 ch01、ch04、ch05、ch09。重点不是记住 API，而是能解释「极简核心 + 可插拔能力」在可控性、启动成本与生态上的取舍。</p>
+      </div>
+    </div>
+
+    <h3><span class="h3num">04</span>环境与源码版本</h3>
+    <p>Pi 要求 Node.js 22.19 或更高版本。安装和启动都很短：</p>
+<pre data-lang="bash"><code>curl -fsSL https://pi.dev/install.sh | sh
+cd /path/to/project
+pi
+</code></pre>
+    <p>课程引用的源码来自 <code class="inline-code">earendil-works/pi</code> 的 <code class="inline-code">packages/agent</code>、<code class="inline-code">packages/coding-agent/src/core</code> 与 <code class="inline-code">packages/coding-agent/docs</code>。代码会随版本演进；读源码时优先看函数边界与数据结构，不要死记行号。</p>
+<pre data-lang="text"><code>packages/
+├── ai/              # 统一 LLM API 与 provider 适配
+├── agent/           # 通用 agent loop / event stream
+├── coding-agent/    # 工具、会话、压缩、扩展、CLI、TUI
+└── tui/             # 终端 UI 组件
+</code></pre>
+    <p>没有 API Key 也能读完：每章的实验都设计成「读代码、改参数、预测行为」，真正需要模型才能观察的部分会明确标注。</p>
+
+    <div class="callout insight">
+      <span class="callout-title">这门课不做什么</span>
+      <p>不教你写提示词、不评测模型能力，也不复述 Pi 的安装文档。它只关心一件事：一个模型、工具与会话状态，如何被组织成一台你能读懂、能修改的运行时。</p>
+    </div>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么课程从源码读起，而不是从命令读起？</summary>
+      <div class="deep-body">
+        <p>命令会变，数据结构更稳定。Pi 的 CLI 参数、TUI 快捷键和扩展 API 都在演进，但几件事长期不变：一轮 turn 由模型响应与工具结果组成；会话是带 <code>parentId</code> 的树；上下文压缩用摘要替换旧消息；扩展通过事件挂进生命周期。</p>
+        <p>从这些结构出发，你读任何版本都不容易迷路。具体命令只作为「如何触发某个结构」的入口。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">05</span>先自测：你对 Agent 的判断准不准</h3>
+    <details class="quiz">
+      <summary>一个 Agent 产品的能力，主要由模型决定还是由 Harness 决定？</summary>
+      <div class="answer"><p>两者分工不同。模型决定「能不能想出下一步、会不会用工具」；Harness 决定「下一步能不能被执行、结果能不能回到模型、状态能不能跨轮次保存」。Pi 的哲学是：智能来自模型训练，Harness 只负责把智能接进环境。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么 Pi 只内置少量工具，却仍然能覆盖很多工作流？</summary>
+      <div class="answer"><p>因为工具是可执行能力的边界，不是产品能力的全部。Pi 把核心工具做得稳定、可审计，其余能力通过扩展、Skills、prompt templates 与 package 注入。核心越小，越容易验证与替换。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>读源码时，最应该先找哪类信息？</summary>
+      <div class="answer"><p>先找数据流与状态边界：消息如何进入上下文、工具结果如何回填、会话如何持久化、上下文何时被压缩。函数名与行号只是入口，数据形状才是骨架。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>Pi 值得读，不是因为它功能少，而是因为它的每个核心职责都露在外面：循环、工具、会话、上下文。理解这四件事，你就理解了 Agent Harness 的最小骨架。</p>
+      <p class="next"><b>下一讲：</b>先不碰代码，先看 Pi 到底把哪些东西放进核心、又把哪些东西故意留在核心之外。</p>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,111 @@
+<section id="ch04" class="chapter">
+  <p class="chapter-kicker">第 4 讲 · 运行时核心</p>
+  <h2 class="chapter-title">会话树：一个 JSONL 文件里的分支与恢复
+    <small>会话不是消息数组，而是带 parentId 的树；active branch 才进入模型上下文</small>
+  </h2>
+  <p class="chapter-lede">如果 Agent 只会「接着上一句说」，它永远无法安全地回到过去。Pi 把会话存成一棵可以分支的树：每次探索都是新路径，旧路径不删除；压榨上下文时也只替换「模型看到的部分」，原始记录仍在磁盘上。</p>
+  <p class="source-line">
+    <span>源码 <code>packages/coding-agent/src/core/session-manager.ts</code></span>
+    <span>格式 <a href="https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/session-format.md">session-format.md</a></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>读懂一行 JSONL 里的 <code class="inline-code">id</code> / <code class="inline-code">parentId</code> 如何构成树</li>
+    <li>说清「active branch」为什么不等于「整个会话文件」</li>
+    <li>解释压缩条目为什么不会删掉原始消息</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>为什么不是消息数组</h3>
+    <p>线性消息数组的隐含假设是：你永远只会沿着一条路往下走。但真实工作里，人经常想「回到刚才那个点，换一种做法」。如果直接截断数组，被放弃的方案就丢失了；如果复制整个会话，又会得到一堆互不相关的文件。</p>
+    <p>Pi 的选择是树：每个条目有唯一 <code class="inline-code">id</code>，并记录 <code class="inline-code">parentId</code>；从根到当前叶子的路径就是 active branch。回到旧节点再提交，会从那个节点长出一条新分支，旧分支原地保留。</p>
+
+    <div class="analogy">
+      <span class="analogy-title">像 Git 的提交图，而不是一条时间线</span>
+      <p>Git 允许你从旧提交开新分支，旧提交不会消失。Pi 的会话树也是这样：<code>parentId</code> 是「从哪来」，<code>id</code> 是「现在在哪」。模型每次只看到当前分支，但你可以随时切回另一条。</p>
+      <p><b>类比到哪为止：</b>Git 合并分支；Pi 不自动合并，切分支时可以选择把旧分支总结成一段 branch summary，再带进新分支。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>文件长什么样</h3>
+    <p>会话文件是 JSONL：第一行是 header，之后每行一个树节点。版本 3 使用 <code class="inline-code">id</code>/<code class="inline-code">parentId</code> 表达树结构。</p>
+<pre data-lang="json"><code>{"type":"session","version":3,"id":"uuid","timestamp":"...","cwd":"/project"}
+{"type":"message","id":"a0b1c2d3","parentId":null,"timestamp":"...","message":{"role":"user","content":"Hello",...}}
+{"type":"message","id":"b2c3d4e5","parentId":"a0b1c2d3","timestamp":"...","message":{"role":"assistant",...}}
+{"type":"compaction","id":"f6g7h8i9","parentId":"e5f6g7h8","timestamp":"...","summary":"...","firstKeptEntryId":"c3d4e5f6"}
+</code></pre>
+    <p>除了普通 message，还有 model_change、thinking_level_change、usage、context_edit、branch_summary、custom、custom_message 等条目。它们有的参与模型上下文，有的只用于 UI/统计，有的只用于扩展状态。读文件时先看 <code class="inline-code">type</code>，再看它是否进入 active branch。</p>
+
+    <h3><span class="h3num">03</span>SessionManager 负责什么</h3>
+    <p><code class="inline-code">SessionManager</code> 不是简单的 append-only 日志：它维护树、当前叶子、分支切换、压缩与导出。对使用者而言，几个命令对应几个动作：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>命令</th><th>动作</th><th>结果</th></tr></thead>
+        <tbody>
+          <tr><td><code>pi --continue</code></td><td>打开当前目录最近会话</td><td>沿用原文件</td></tr>
+          <tr><td><code>pi --resume</code></td><td>打开会话选择器</td><td>可切换到任意会话</td></tr>
+          <tr><td><code>/tree</code></td><td>在当前文件内移动</td><td>从旧节点长出新分支</td></tr>
+          <tr><td><code>/fork</code></td><td>从某条用户消息复制到新文件</td><td>新会话 ID</td></tr>
+          <tr><td><code>/clone</code></td><td>复制 active branch</td><td>独立副本</td></tr>
+        </tbody>
+      </table>
+    </div>
+<pre data-lang="ts"><code>import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
+
+const { session } = await createAgentSession({
+  sessionManager: SessionManager.inMemory(), // 或持久化 manager
+});
+
+console.log(session.messages);   // 当前 active branch 的消息
+await session.prompt("继续上一轮的工作");
+</code></pre>
+    <p>会话的工作目录在创建时固定，之后不随进程 cwd 改变。这一点很关键：工具、<code class="inline-code">@path</code> 引用、项目配置和 context files 都相对会话 cwd 解析。打开另一个目录的会话时，要么继续使用原 cwd，要么 fork 到当前目录。</p>
+    <p>在实现层，<code class="inline-code">SessionManager</code> 的核心操作只有几个：<code class="inline-code">appendMessage()</code> 追加消息、<code class="inline-code">branch(id)</code> 把 leaf 移到旧节点、<code class="inline-code">branchWithSummary()</code> 在移动的同时写一条 branch summary、<code class="inline-code">appendCompaction()</code> 追加压缩条目。<b>append-only</b> 是它的基本约定：已有条目从不原地修改，所有变化都是新节点。</p>
+<pre data-lang="ts"><code>class SessionManager {
+  appendMessage(message: Message): string;
+  branch(branchFromId: string): void;          // leaf 移回旧节点
+  branchWithSummary(fromId: string | null, summary: string): void;
+  appendCompaction(firstKeptEntryId: string | null, summary: string): string;
+  appendContextEdit(targetId: string, replacement: string | null): string;
+  getActiveBranch(): SessionEntry[];
+}
+</code></pre>
+    <p><code class="inline-code">context_edit</code> 特别值得注意：它不修改目标消息，而是在当前分支追加一个「未来请求里如何处理该消息」的编辑。target 为 <code class="inline-code">replacement: null</code> 表示在后续上下文中省略它；非空则替换内容。原始条目和元数据保持不变，导出/审计仍能看到原貌。</p>
+
+    <h3><span class="h3num">04</span>压缩与会话树的关系</h3>
+    <p>压缩不是删除旧节点，而是在当前分支上追加一个 <code class="inline-code">CompactionEntry</code>。它保存摘要和 <code class="inline-code">firstKeptEntryId</code>：重建上下文时，摘要替换更早的消息，从 <code class="inline-code">firstKeptEntryId</code> 开始保留。原始条目仍然在文件里，可用于导出、审计或未来的 context_edit。</p>
+    <p>切换分支时，Pi 还可以生成 <code class="inline-code">BranchSummaryEntry</code>，把被放弃路径的工作总结后挂到新分支上。这样既保留了「另一条路试过什么」，又不会把整条旧分支塞回上下文。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么压缩条目要带 firstKeptEntryId，而不是直接存一个新的消息数组？</summary>
+      <div class="deep-body">
+        <p>因为会话树需要保持可导航。如果压缩直接写一个新的消息数组，就丢失了「旧条目与保留条目之间的父子关系」，也无法在 UI 里回到压缩前的位置。用 <code>firstKeptEntryId</code> 标记保留边界，压缩就只是「在树上追加一个读法」，而不是「重写历史」。</p>
+        <p>重复压缩时，新的 summarized span 会从上次的保留边界开始，而不是从压缩条目本身开始，这样之前幸存的消息还会被再次纳入摘要，不会出现「压缩边界之前的内容永远丢失」。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">05</span>常见误区</h3>
+    <p><b>「会话文件就是模型上下文」。</b>不是。模型只看到 active branch 经转换/压缩后的投影；文件里有大量不参与上下文的内容，例如 usage、custom entry、被 context_edit 省略的消息。</p>
+    <p><b>「切分支会丢消息」。</b>不会。旧分支仍在树里，只是不在当前 active branch；你可以切回去，也可以选择生成摘要带走。</p>
+
+    <h3><span class="h3num">06</span>自测</h3>
+    <details class="quiz">
+      <summary>一个会话文件里有 10 条消息，模型这次会看到几条？</summary>
+      <div class="answer"><p>不一定 10 条。模型只收到 active branch 的投影：可能经过 context_edit 省略、compaction 摘要替换，以及 convertToLlm 过滤。文件里的条目数不等于上下文里的消息数。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么会话的 cwd 要在创建时固定？</summary>
+      <div class="answer"><p>因为工具、路径解析、项目配置与 context files 都依赖它。如果 cwd 随进程变化，同一个会话在不同时刻可能读写不同目录，导致结果不可复现、甚至改错仓库。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>压缩之后，原始旧消息还在吗？</summary>
+      <div class="answer"><p>还在。压缩只是追加一个 CompactionEntry，原始条目保留在 JSONL 中；重建上下文时旧消息被摘要替换，但文件、导出与审计仍然能看到它们。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>会话树是 Pi 的「长期记忆」：它用 id/parentId 保存所有探索，用 active branch 决定模型看到什么，用压缩条目在不删历史的前提下控制上下文。理解这棵树，才能理解 Pi 的恢复、分支与审计。</p>
+      <p class="next"><b>下一讲：</b>当 active branch 太长时，压缩到底如何选择摘要边界、如何让摘要接管旧历史？</p>
+    </div>
+  </div>
+</section>

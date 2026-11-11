@@ -1,0 +1,108 @@
+{
+  "title": "Pi 内功课 · 极简 Agent Harness 源码课",
+  "description": "一门读 Pi 源码、理解极简 Agent Harness 的中文工程课：从 agent loop、工具系统、会话树，到压缩、扩展、Skills 与运行接口，沿着真实 TypeScript 源码把一台可改造的 Agent 拆开。",
+  "parts": [
+    {
+      "id": "p0",
+      "title": "出发之前",
+      "note": "先建立对 Pi 的直觉"
+    },
+    {
+      "id": "p1",
+      "title": "运行时核心",
+      "note": "循环、工具、会话"
+    },
+    {
+      "id": "p2",
+      "title": "上下文与扩展",
+      "note": "压缩、扩展、Skills"
+    },
+    {
+      "id": "p3",
+      "title": "落地与超越",
+      "note": "接口、对比与结课"
+    }
+  ],
+  "chapters": [
+    {
+      "id": "ch00",
+      "num": "00",
+      "part": "p0",
+      "nav": "课程导览：怎么读源码最有效",
+      "title": "课程导览",
+      "file": "00-guide.html"
+    },
+    {
+      "id": "ch01",
+      "num": "01",
+      "part": "p0",
+      "nav": "Pi 是什么：极简 harness 的取舍",
+      "title": "Pi 是什么",
+      "file": "01-what-is-pi.html"
+    },
+    {
+      "id": "ch02",
+      "num": "02",
+      "part": "p1",
+      "nav": "Agent Loop：循环、事件与消息边界",
+      "title": "Agent Loop",
+      "file": "02-agent-loop.html"
+    },
+    {
+      "id": "ch03",
+      "num": "03",
+      "part": "p1",
+      "nav": "工具引擎：8 个工具背后的工程细节",
+      "title": "工具引擎",
+      "file": "03-tools.html"
+    },
+    {
+      "id": "ch04",
+      "num": "04",
+      "part": "p1",
+      "nav": "会话树：JSONL 里的分支与恢复",
+      "title": "会话树",
+      "file": "04-sessions.html"
+    },
+    {
+      "id": "ch05",
+      "num": "05",
+      "part": "p2",
+      "nav": "上下文压缩：摘要如何接管旧历史",
+      "title": "上下文压缩",
+      "file": "05-compaction.html"
+    },
+    {
+      "id": "ch06",
+      "num": "06",
+      "part": "p2",
+      "nav": "扩展系统：在进程内改造 Pi",
+      "title": "扩展系统",
+      "file": "06-extensions.html"
+    },
+    {
+      "id": "ch07",
+      "num": "07",
+      "part": "p2",
+      "nav": "Skills 与资源：按需加载的知识",
+      "title": "Skills 与资源",
+      "file": "07-skills.html"
+    },
+    {
+      "id": "ch08",
+      "num": "08",
+      "part": "p3",
+      "nav": "运行接口：TUI、print、JSON、RPC、SDK",
+      "title": "运行接口",
+      "file": "08-interfaces.html"
+    },
+    {
+      "id": "ch09",
+      "num": "09",
+      "part": "p3",
+      "nav": "对比 Claude Code 与结课项目",
+      "title": "对比与结课",
+      "file": "09-compare-capstone.html"
+    }
+  ]
+}

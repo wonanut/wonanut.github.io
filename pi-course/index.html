@@ -751,6 +751,17 @@ turn_end
 agent_end
 </code></pre>
     <p>TUI 之所以能边生成边显示、边执行边更新工具状态，就是因为它消费这些事件；SDK 与 RPC 模式也复用同一套事件，只是序列化方式不同。核心循环本身不渲染任何东西。</p>
+    <p>工具批次还有一个容易忽略的分支：并行还是串行。Pi 默认并行执行同一批 toolCall，但只要某个工具的 <code class="inline-code">executionMode</code> 是 <code class="inline-code">sequential</code>，整批就退化为串行，避免有状态工具互相踩踏。并行结果仍按原调用顺序回填，模型看到的 toolResult 顺序与 toolCall 顺序一致。</p>
+<pre data-lang="ts"><code>const hasSequential = toolCalls.some(
+  tc =&gt; currentContext.tools?.find(t =&gt; t.name === tc.name)?.executionMode === "sequential"
+);
+
+if (config.toolExecution === "sequential" || hasSequential) {
+  return executeToolCallsSequential(...);
+}
+return executeToolCallsParallel(...);
+</code></pre>
+    <p>并行执行不是「把 Promise.all 包一层」就结束：每个 toolCall 先做参数校验与准备，再并发执行；任一时刻 abort，未开始的任务直接产生取消错误，已经开始的工具仍需自己观察 signal。最终 <code class="inline-code">Promise.all</code> 按数组顺序收口，保证消息序稳定。</p>
 
     <h3><span class="h3num">04</span>三个容易忽略的边界</h3>
     <div class="callout warn">
@@ -875,6 +886,7 @@ export async function withFileMutationQueue&lt;T&gt;(
     <h3><span class="h3num">04</span>bash：退出码、超时与截断</h3>
     <p>bash 的工程细节集中在「失败如何表达」。非零退出码不是抛异常，而是返回带 <code>isError: true</code> 的工具结果，让模型看到错误并自行修复；超时则是一个可选的、有上限的设置。</p>
     <p>输出同样会被截断。bash 的尾部截断有一个边界：如果最后一行本身不完整，可能需要特殊处理；这也是为什么工具层不直接返回原始字符串，而是返回结构化的内容块。</p>
+    <p>超时参数以秒为单位，有最大值上限；超时不是简单 kill，而是把「超时」表达成一次失败的工具结果，附带已经积累的输出。这样模型能看到「跑到哪一步超时」，而不是只收到一个空错误。</p>
 
     <h3><span class="h3num">05</span>路径与只读发现工具</h3>
     <p>所有文件工具都通过 <code class="inline-code">resolveToCwd</code> 把相对路径解析到当前会话的工作目录，而不是进程启动目录。这让同一个 Pi 进程可以安全地打开不同 cwd 的会话。</p>
@@ -982,6 +994,17 @@ console.log(session.messages);   // 当前 active branch 的消息
 await session.prompt("继续上一轮的工作");
 </code></pre>
     <p>会话的工作目录在创建时固定，之后不随进程 cwd 改变。这一点很关键：工具、<code class="inline-code">@path</code> 引用、项目配置和 context files 都相对会话 cwd 解析。打开另一个目录的会话时，要么继续使用原 cwd，要么 fork 到当前目录。</p>
+    <p>在实现层，<code class="inline-code">SessionManager</code> 的核心操作只有几个：<code class="inline-code">appendMessage()</code> 追加消息、<code class="inline-code">branch(id)</code> 把 leaf 移到旧节点、<code class="inline-code">branchWithSummary()</code> 在移动的同时写一条 branch summary、<code class="inline-code">appendCompaction()</code> 追加压缩条目。<b>append-only</b> 是它的基本约定：已有条目从不原地修改，所有变化都是新节点。</p>
+<pre data-lang="ts"><code>class SessionManager {
+  appendMessage(message: Message): string;
+  branch(branchFromId: string): void;          // leaf 移回旧节点
+  branchWithSummary(fromId: string | null, summary: string): void;
+  appendCompaction(firstKeptEntryId: string | null, summary: string): string;
+  appendContextEdit(targetId: string, replacement: string | null): string;
+  getActiveBranch(): SessionEntry[];
+}
+</code></pre>
+    <p><code class="inline-code">context_edit</code> 特别值得注意：它不修改目标消息，而是在当前分支追加一个「未来请求里如何处理该消息」的编辑。target 为 <code class="inline-code">replacement: null</code> 表示在后续上下文中省略它；非空则替换内容。原始条目和元数据保持不变，导出/审计仍能看到原貌。</p>
 
     <h3><span class="h3num">04</span>压缩与会话树的关系</h3>
     <p>压缩不是删除旧节点，而是在当前分支上追加一个 <code class="inline-code">CompactionEntry</code>。它保存摘要和 <code class="inline-code">firstKeptEntryId</code>：重建上下文时，摘要替换更早的消息，从 <code class="inline-code">firstKeptEntryId</code> 开始保留。原始条目仍然在文件里，可用于导出、审计或未来的 context_edit。</p>
@@ -1085,6 +1108,15 @@ await session.prompt("继续上一轮的工作");
 }
 </code></pre>
     <p>其中 <code class="inline-code">firstKeptEntryId</code> 是重建上下文的关键：它之前的消息被摘要替代，它之后的消息原样保留。保留边界可能落在一条助手消息上（当一个用户消息 span 本身超预算时），这时 Pi 会分别总结「更早历史」和「当前 span 的前半段」，再合并。</p>
+    <p>实现上分成两步：<code class="inline-code">prepareCompaction()</code> 负责找切点、估算 token、收集待摘要消息；<code class="inline-code">compact()</code> 负责调用模型生成摘要、写入 <code class="inline-code">CompactionEntry</code>，并记录本次摘要的 usage 与文件追踪信息。摘要生成走 <code class="inline-code">generateSummaryWithUsage()</code>，因此压缩本身也会计入会话 token/cost。</p>
+<pre data-lang="text"><code>prepareCompaction(session, settings)
+  -&gt; { messagesToSummarize, turnPrefixMessages, firstKeptEntryId, isSplitTurn }
+
+compact(...)
+  -&gt; generateSummaryWithUsage(...)
+  -&gt; append CompactionEntry(summary, firstKeptEntryId, tokensBefore, usage, details)
+</code></pre>
+    <p>默认的 <code class="inline-code">details</code> 会累积 readFiles 与 modifiedFiles，这样压缩之后仍能告诉模型「哪些文件被读过/改过」。扩展可以替换压缩逻辑，并把自己的 details 结构写进同一个条目。</p>
 
     <h3><span class="h3num">04</span>压缩失败与溢出恢复</h3>
     <p>压缩本身也是一次 LLM 调用，可能失败。Pi 不会因此丢掉会话：失败时保留原始上下文，提示用户修正 provider 或稍后重试。对于 provider 的 context-overflow 错误，或提前出现的 <code class="inline-code">stopReason: "length"</code>，Pi 还有一次「压缩后重试」的恢复机会。</p>
@@ -1211,6 +1243,8 @@ pi -e ./my-extension.ts            # 临时测试
 /reload                            # 热重载自动发现目录中的扩展
 </code></pre>
     <p>项目级扩展只有在项目被 trust 之后才会加载，这是安全模型的一部分：扩展能读文件、执行命令，不能对不受信任的仓库自动放权。</p>
+    <p>事件不是「通知」，而是有顺序的钩子链：启动期有 <code class="inline-code">project_trust</code>、<code class="inline-code">session_start</code>、<code class="inline-code">resources_discover</code>；运行期有 <code class="inline-code">turn_start</code> / <code class="inline-code">turn_end</code>、<code class="inline-code">tool_call</code> / <code class="inline-code">tool_result</code>、<code class="inline-code">message_*</code>、<code class="inline-code">session_before_compact</code> 等。多个 handler 按注册顺序组合，返回值（如 <code class="inline-code">block</code>、修改后的参数或上下文）会继续传给后续 handler 与核心循环。</p>
+    <p>写扩展时最容易犯的错，是在 <code class="inline-code">tool_call</code> 里做耗时 I/O 却没有处理取消；Pi 的 run 可能被用户 abort，扩展也应观察 <code class="inline-code">signal</code>，否则会把整个会话卡住。事件处理应当短小、可重入，把重活交给工具或后台任务。</p>
 
     <h3><span class="h3num">04</span>状态：custom entry 与 custom message</h3>
     <p>扩展如果需要在会话里保存状态，可以用 <code class="inline-code">pi.appendEntry()</code> 写入 custom entry。它会被持久化到 JSONL，但不参与模型上下文。若需要注入模型可见的内容，则使用 custom message；后者会经过 convertToLlm，成为模型输入的一部分。</p>
@@ -1565,7 +1599,16 @@ pi
 # 然后让模型尝试修改 .env，观察确认与阻止
 </code></pre>
 
-    <h3><span class="h3num">04</span>进阶方向</h3>
+    <h3><span class="h3num">04</span>源码阅读顺序</h3>
+    <p>如果你准备继续深挖，按依赖从薄到厚读，最不容易迷路：</p>
+    <ol class="steps">
+      <li><b>消息与类型</b>：<code class="inline-code">packages/ai/src/types.ts</code>、<code class="inline-code">packages/agent/src/types.ts</code>，先弄清一个 turn 的数据形状。</li>
+      <li><b>循环</b>：<code class="inline-code">packages/agent/src/agent-loop.ts</code>，重点看工具批次、消息转换、事件发射。</li>
+      <li><b>产品层</b>：<code class="inline-code">packages/coding-agent/src/core/agent-session.ts</code>，看它如何把工具、会话、压缩、扩展装配进通用循环。</li>
+      <li><b>工具与存储</b>：<code class="inline-code">src/core/tools/</code> 与 <code class="inline-code">src/core/session-manager.ts</code>，最后再看 CLI 与 TUI。</li>
+    </ol>
+
+    <h3><span class="h3num">05</span>进阶方向</h3>
     <div class="card-grid">
       <div class="card">
         <h4>做会话可视化</h4>
@@ -1589,7 +1632,7 @@ pi
       </div>
     </details>
 
-    <h3><span class="h3num">05</span>面试速查：十个问题</h3>
+    <h3><span class="h3num">06</span>面试速查：十个问题</h3>
     <div class="table-wrap">
       <table>
         <thead><tr><th>问题</th><th>一句话答案</th></tr></thead>
@@ -1608,7 +1651,7 @@ pi
       </table>
     </div>
 
-    <h3><span class="h3num">06</span>自测</h3>
+    <h3><span class="h3num">07</span>自测</h3>
     <details class="quiz">
       <summary>Pi 与 Claude Code 的核心差异，应该怎么表述才准确？</summary>
       <div class="answer"><p>不是「开源 vs 闭源」或「强 vs 弱」，而是能力放置位置：Pi 把非核心能力放到扩展与资源层，Claude Code 把常用能力收进内建产品体验。前者换取可改造性，后者换开箱即用。</p></div>

@@ -1,0 +1,115 @@
+<section id="ch05" class="chapter">
+  <p class="chapter-kicker">第 5 讲 · 上下文与扩展</p>
+  <h2 class="chapter-title">上下文压缩：摘要如何接管旧历史
+    <small>不是删消息，而是在会话树上追加一个「从哪开始看」的边界</small>
+  </h2>
+  <p class="chapter-lede">上下文窗口是稀缺资源。Pi 的策略不是简单截断，而是把「较早的历史」压成结构化摘要，保留最近一段原始消息，并在会话树里记录保留边界。这样模型看到的是压缩后的投影，原始证据仍在磁盘上。</p>
+  <p class="source-line">
+    <span>源码 <code>packages/coding-agent/src/core/compaction/</code></span>
+    <span>文档 <a href="https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/compaction.md">compaction.md</a></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>写出自动压缩的触发条件，并解释 reserveTokens 与 keepRecentTokens 的区别</li>
+    <li>说清 CompactionEntry 的 firstKeptEntryId 如何决定「模型从哪继续读」</li>
+    <li>理解压缩失败、溢出恢复与 branch summary 的关系</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>什么时候压？</h3>
+    <p>Pi 的自动压缩触发条件很直接：</p>
+<pre data-lang="text"><code>contextTokens &gt; contextWindow - reserveTokens
+
+默认 reserveTokens   = 16384
+默认 keepRecentTokens = 20000
+</code></pre>
+    <p><code class="inline-code">reserveTokens</code> 是留给「下一步还要输出」的空间，不是保留的历史；<code class="inline-code">keepRecentTokens</code> 才是压缩时尽量保留的最近消息预算。两者名字相近，作用完全不同。触发点在一轮工具结束、结果追加之后，下一次模型调用之前检查——因为工具结果往往是把上下文撑爆的最后一根稻草。</p>
+
+    <div class="analogy">
+      <span class="analogy-title">像给行李箱做减量打包</span>
+      <p>行李箱装不下时，你不会把最近要用的东西扔掉；你会把早期衣物压缩成收纳袋，留下最近几天要穿的。压缩摘要就是那个收纳袋，保留边界就是「从哪件衣服开始不压缩」。</p>
+      <p><b>类比到哪为止：</b>收纳袋里的东西仍能打开查看；Pi 的原始消息也仍在会话树里，只是不再进入下一轮模型请求。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>怎么压：从后往前找切点</h3>
+    <p>压缩不是「取前 N 条总结」。它从当前投影的末尾往前走，累计 token，直到达到 <code class="inline-code">keepRecentTokens</code>；切点只能落在用户消息、助手消息、bash 执行或 custom message 上，<b>不能落在 tool result</b>，因为工具结果必须和它的调用待在一起。</p>
+    <div class="flow">
+      <div class="flow-node"><b>旧历史</b>被摘要替换</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>CompactionEntry</b>summary + firstKeptEntryId</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>最近消息</b>从保留边界开始</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>下一轮请求</b>system + summary + 最近消息</div>
+    </div>
+
+    <h3><span class="h3num">03</span>压缩条目长什么样</h3>
+    <p>压缩的结果不是一段拼接文本，而是一个有结构的会话条目：</p>
+<pre data-lang="ts"><code>interface CompactionEntry {
+  type: "compaction";
+  id: string;
+  parentId: string | null;
+  summary: string;
+  firstKeptEntryId: string;
+  tokensBefore: number;
+  usage?: Usage;
+  details?: CompactionDetails;
+}
+</code></pre>
+    <p>其中 <code class="inline-code">firstKeptEntryId</code> 是重建上下文的关键：它之前的消息被摘要替代，它之后的消息原样保留。保留边界可能落在一条助手消息上（当一个用户消息 span 本身超预算时），这时 Pi 会分别总结「更早历史」和「当前 span 的前半段」，再合并。</p>
+    <p>实现上分成两步：<code class="inline-code">prepareCompaction()</code> 负责找切点、估算 token、收集待摘要消息；<code class="inline-code">compact()</code> 负责调用模型生成摘要、写入 <code class="inline-code">CompactionEntry</code>，并记录本次摘要的 usage 与文件追踪信息。摘要生成走 <code class="inline-code">generateSummaryWithUsage()</code>，因此压缩本身也会计入会话 token/cost。</p>
+<pre data-lang="text"><code>prepareCompaction(session, settings)
+  -&gt; { messagesToSummarize, turnPrefixMessages, firstKeptEntryId, isSplitTurn }
+
+compact(...)
+  -&gt; generateSummaryWithUsage(...)
+  -&gt; append CompactionEntry(summary, firstKeptEntryId, tokensBefore, usage, details)
+</code></pre>
+    <p>默认的 <code class="inline-code">details</code> 会累积 readFiles 与 modifiedFiles，这样压缩之后仍能告诉模型「哪些文件被读过/改过」。扩展可以替换压缩逻辑，并把自己的 details 结构写进同一个条目。</p>
+
+    <h3><span class="h3num">04</span>压缩失败与溢出恢复</h3>
+    <p>压缩本身也是一次 LLM 调用，可能失败。Pi 不会因此丢掉会话：失败时保留原始上下文，提示用户修正 provider 或稍后重试。对于 provider 的 context-overflow 错误，或提前出现的 <code class="inline-code">stopReason: "length"</code>，Pi 还有一次「压缩后重试」的恢复机会。</p>
+    <div class="callout warn">
+      <span class="callout-title">压缩请求不写 prompt cache</span>
+      <p>摘要请求通常是一次性的，不太可能复用。Pi 在压缩请求中禁用 cache write，避免为一次性的摘要付出缓存写入成本。</p>
+    </div>
+
+    <h3><span class="h3num">05</span>branch summary：换条路时带走经验</h3>
+    <p>压缩解决「当前分支太长」，branch summary 解决「我要离开当前分支，但不想丢掉这段工作」。用 <code class="inline-code">/tree</code> 切到另一条路径时，Pi 可以总结被放弃的分支，把摘要挂到新分支上。它和压缩共用结构化摘要与文件追踪，但触发场景不同。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么压缩不直接生成一堆新消息，而是只追加一个 entry？</summary>
+      <div class="deep-body">
+        <p>因为会话是树，树需要保留导航能力。如果压缩重写消息数组，就无法再从压缩前的节点切回旧分支，也无法审计「模型当时到底看到了什么」。只追加一个 entry，并把「模型从哪开始读」编码进 <code>firstKeptEntryId</code>，压缩就变成一次可逆的读法变化。</p>
+        <p>重复压缩时，新的摘要从上次保留边界开始，而不是从压缩条目本身开始，避免把之前幸存的消息永久排除在摘要之外。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">06</span>动手实验</h3>
+    <ol class="steps">
+      <li><b>手动压缩</b>：在一个长会话里执行 <code class="inline-code">/compact 保留所有关于认证的决策</code>，然后查看会话 JSONL，找到新增的 compaction entry 与 <code>firstKeptEntryId</code>。</li>
+      <li><b>制造溢出</b>：用一个大文件把上下文推过阈值，观察自动压缩发生在工具结果之后还是下一次 prompt 之前；再对比关闭自动压缩时的行为。</li>
+    </ol>
+
+    <h3><span class="h3num">07</span>自测</h3>
+    <details class="quiz">
+      <summary>reserveTokens 是「保留的历史」吗？</summary>
+      <div class="answer"><p>不是。reserveTokens 是为下一次模型输出预留的空间，触发条件是「已用上下文 + reserve 超过窗口」。保留多少历史由 keepRecentTokens 控制。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么切点不能落在 tool result 上？</summary>
+      <div class="answer"><p>tool result 必须紧跟对应的 toolCall 才能被模型正确理解。切在 tool result 上会导致保留的消息以一条孤立的工具结果开头，模型无法把它和调用关联起来。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>压缩后原始消息还能找回吗？</summary>
+      <div class="answer"><p>能。原始 entry 保留在 JSONL 树中；压缩只是改变后续请求的投影。UI、导出、审计仍可访问旧条目，context_edit 也可以对它们做后续处理。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>压缩不是「删历史」，而是「在树上增加一个读法」：摘要替换旧消息，firstKeptEntryId 标记保留起点，原始证据不动。理解这一点，你才能安全地设计长跑 Agent 的上下文策略。</p>
+      <p class="next"><b>下一讲：</b>Pi 如何把「新能力」挂进这个运行时？扩展系统允许你在不 fork 核心的情况下拦截工具、注入上下文、添加命令。</p>
+    </div>
+  </div>
+</section>

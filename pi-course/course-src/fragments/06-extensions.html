@@ -1,0 +1,117 @@
+<section id="ch06" class="chapter">
+  <p class="chapter-kicker">第 6 讲 · 上下文与扩展</p>
+  <h2 class="chapter-title">扩展系统：在进程内改造 Pi
+    <small>扩展不是沙箱插件，而是能订阅生命周期、注册工具与命令的 TypeScript 模块</small>
+  </h2>
+  <p class="chapter-lede">Pi 的「极简」能成立，靠的是扩展系统：核心不内置的权限门禁、计划模式、子代理、外部集成，都可以在扩展里实现。代价是扩展拥有与 Pi 相同的系统权限——这既是能力，也是信任边界。</p>
+  <p class="source-line">
+    <span>源码 <code>packages/coding-agent/src/extensions/</code> · <code>src/core/extensions/types.ts</code></span>
+    <span>文档 <a href="https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md">extensions.md</a></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>写一个能拦截工具调用、注册工具与命令的最小扩展</li>
+    <li>说清扩展的加载位置、热重载与安全边界</li>
+    <li>知道扩展如何持久化自己的状态，而不污染模型上下文</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>扩展是什么</h3>
+    <p>扩展是一个导出默认工厂函数的 TypeScript/JavaScript 模块，工厂收到 <code class="inline-code">ExtensionAPI</code>。它在 Pi 进程内运行，通过 <code class="inline-code">pi.on(...)</code> 订阅生命周期事件，通过 <code class="inline-code">pi.registerTool()</code>、<code class="inline-code">registerCommand()</code>、<code class="inline-code">registerShortcut()</code> 添加能力。</p>
+<pre data-lang="ts"><code>import { type ExtensionAPI, isToolCallEventType } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+
+export default function (pi: ExtensionAPI) {
+  pi.on("tool_call", async (event, ctx) =&gt; {
+    if (isToolCallEventType("bash", event) &amp;&amp; event.input.command.includes("rm -rf")) {
+      const ok = await ctx.ui.confirm("危险命令", "允许执行 rm -rf？");
+      if (!ok) return { block: true, reason: "用户拒绝" };
+    }
+  });
+
+  pi.registerTool({
+    name: "greet",
+    label: "Greet",
+    description: "Greet someone by name",
+    parameters: Type.Object({ name: Type.String() }),
+    async execute(_id, params) {
+      return { content: [{ type: "text", text: `Hello, ${params.name}!` }] };
+    },
+  });
+}
+</code></pre>
+    <p>这段代码同时展示了两种扩展点：<b>拦截</b>（tool_call 事件可以阻止或修改调用）与<b>新增</b>（注册一个模型可调用的工具）。权限门禁、路径保护、git checkpoint 都属于前者；自定义工具、外部系统连接属于后者。</p>
+
+    <div class="analogy">
+      <span class="analogy-title">像给笔记本接扩展坞</span>
+      <p>笔记本本身只保留核心接口；需要网口、读卡器、外接屏时，通过扩展坞接入。扩展坞不是笔记本的一部分，但能直接使用同一套电源与总线。</p>
+      <p><b>类比到哪为止：</b>扩展坞通常受硬件隔离；Pi 的扩展与宿主同进程、同权限，所以「信任来源」比接口本身更重要。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>扩展能挂在哪里</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>能力</th><th>API</th><th>典型用途</th></tr></thead>
+        <tbody>
+          <tr><td>生命周期事件</td><td><code>pi.on(event, handler)</code></td><td>拦截工具、注入上下文、监听会话开始/结束</td></tr>
+          <tr><td>自定义工具</td><td><code>pi.registerTool()</code></td><td>连接内部 API、数据库、工单系统</td></tr>
+          <tr><td>命令 / 快捷键</td><td><code>registerCommand</code> / <code>registerShortcut</code></td><td><code>/review</code>、一键切换模式</td></tr>
+          <tr><td>UI</td><td><code>ctx.ui.confirm / select / input / notify</code></td><td>危险操作确认、状态提示、自定义面板</td></tr>
+          <tr><td>持久化</td><td><code>pi.appendEntry()</code></td><td>保存扩展状态，不进入模型上下文</td></tr>
+          <tr><td>Provider / MCP</td><td><code>registerProvider</code> 等</td><td>接入本地模型、外部 MCP server</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3><span class="h3num">03</span>加载位置与热重载</h3>
+    <p>扩展可以放在全局目录、项目目录，或通过 <code class="inline-code">pi -e ./path.ts</code> 临时加载：</p>
+<pre data-lang="text"><code>~/.pi/agent/extensions/*.ts        # 全局，所有项目
+&lt;project&gt;/.pi/extensions/*.ts      # 项目级，项目被信任后才加载
+pi -e ./my-extension.ts            # 临时测试
+/reload                            # 热重载自动发现目录中的扩展
+</code></pre>
+    <p>项目级扩展只有在项目被 trust 之后才会加载，这是安全模型的一部分：扩展能读文件、执行命令，不能对不受信任的仓库自动放权。</p>
+    <p>事件不是「通知」，而是有顺序的钩子链：启动期有 <code class="inline-code">project_trust</code>、<code class="inline-code">session_start</code>、<code class="inline-code">resources_discover</code>；运行期有 <code class="inline-code">turn_start</code> / <code class="inline-code">turn_end</code>、<code class="inline-code">tool_call</code> / <code class="inline-code">tool_result</code>、<code class="inline-code">message_*</code>、<code class="inline-code">session_before_compact</code> 等。多个 handler 按注册顺序组合，返回值（如 <code class="inline-code">block</code>、修改后的参数或上下文）会继续传给后续 handler 与核心循环。</p>
+    <p>写扩展时最容易犯的错，是在 <code class="inline-code">tool_call</code> 里做耗时 I/O 却没有处理取消；Pi 的 run 可能被用户 abort，扩展也应观察 <code class="inline-code">signal</code>，否则会把整个会话卡住。事件处理应当短小、可重入，把重活交给工具或后台任务。</p>
+
+    <h3><span class="h3num">04</span>状态：custom entry 与 custom message</h3>
+    <p>扩展如果需要在会话里保存状态，可以用 <code class="inline-code">pi.appendEntry()</code> 写入 custom entry。它会被持久化到 JSONL，但不参与模型上下文。若需要注入模型可见的内容，则使用 custom message；后者会经过 convertToLlm，成为模型输入的一部分。</p>
+    <div class="callout key">
+      <span class="callout-title">区分「给 UI 的状态」与「给模型的上下文」</span>
+      <p>把扩展状态都塞进模型上下文，会浪费 token 并干扰推理；反过来，把该让模型知道的信息只存 UI，也会让它失去关键上下文。Pi 用两种 entry 把这两件事分开。</p>
+    </div>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么扩展能「阻止」工具调用，而不是只能在执行后补救？</summary>
+      <div class="deep-body">
+        <p>因为 <code>tool_call</code> 事件发生在真正执行之前。扩展可以返回 <code>{ block: true, reason }</code>，Pi 会把这次调用变成错误结果回填给模型，而不是执行工具。这样权限门禁、路径保护、危险命令确认都能在副作用发生前生效。</p>
+        <p>代价是扩展拥有了很大的权力：它可以放行、拒绝、修改参数。Pi 的应对不是沙箱（扩展仍在同一进程），而是 trust 机制与「只加载可信来源」的约定。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">05</span>常见误区</h3>
+    <p><b>「扩展是安全的沙箱插件」。</b>不是。扩展运行在 Pi 进程内，拥有同样的 OS 权限，能读凭据、会话与文件。只加载你信任的扩展。</p>
+    <p><b>「扩展只能加工具」。</b>它还能拦截事件、注册命令、控制 UI、注册 provider 与 MCP server、持久化状态。工具只是其中一种能力。</p>
+
+    <h3><span class="h3num">06</span>自测</h3>
+    <details class="quiz">
+      <summary>想阻止对 .env 的写入，应该挂哪个事件？</summary>
+      <div class="answer"><p>挂 <code>tool_call</code>，判断是否为 edit/write 且路径指向 .env，然后返回 <code>{ block: true, reason }</code>。这样在文件被改之前就阻止，而不是事后恢复。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>扩展状态应该存 custom entry 还是 custom message？</summary>
+      <div class="answer"><p>取决于模型是否需要看到。只需要持久化给扩展自己/UI 用的状态，用 custom entry；需要进入模型上下文的，用 custom message。前者不影响 token，后者会参与请求。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么项目级扩展要等 trust 之后才加载？</summary>
+      <div class="answer"><p>因为扩展能执行任意代码、读取凭据和文件。如果打开一个不受信任的仓库就自动加载它的扩展，等于让仓库作者在你的机器上执行代码。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>扩展系统是 Pi「极简核心」的另一半：核心提供稳定的生命周期与注册点，扩展把能力装进去。理解事件顺序与两种 entry，你就能在不修改核心的情况下改造 Pi，同时清楚它的信任边界。</p>
+      <p class="next"><b>下一讲：</b>扩展之外，Pi 还有更轻量的能力注入方式——Skills 与 prompt templates，它们只加载「需要的那部分知识」。</p>
+    </div>
+  </div>
+</section>

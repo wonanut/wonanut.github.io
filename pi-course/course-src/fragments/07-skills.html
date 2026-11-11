@@ -1,0 +1,97 @@
+<section id="ch07" class="chapter">
+  <p class="chapter-kicker">第 7 讲 · 上下文与扩展</p>
+  <h2 class="chapter-title">Skills 与资源：只加载需要的那部分知识
+    <small>SKILL.md 先给模型看「目录」，真正需要时才展开全文</small>
+  </h2>
+  <p class="chapter-lede">不是所有能力都需要写成代码。有些知识是一套流程、一份格式说明、一组脚本——Pi 用 Skills 承载它们：启动时只把名称、描述和路径放进系统提示，等任务真的需要，再读取完整 SKILL.md。这是上下文工程里最划算的「延迟加载」。</p>
+  <p class="source-line">
+    <span>技能 <code>packages/coding-agent/src/core/skills.ts</code></span>
+    <span>文档 <a href="https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md">skills.md</a> · <a href="https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md">packages.md</a></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>写一个符合 Agent Skills 规范的 SKILL.md，并说清 description 的路由作用</li>
+    <li>解释「只加载描述、不加载全文」如何节省上下文</li>
+    <li>知道 Skills、prompt templates、packages、themes 各自解决什么问题</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>Skill 不是一个函数，而是一份说明书</h3>
+    <p>Skill 是一个目录，核心是 <code class="inline-code">SKILL.md</code>：YAML frontmatter 加正文。前面可以放脚本、参考文档、模板等支持文件。模型看到的不是全文，而是名称、描述和路径；需要时再读。</p>
+<pre data-lang="text"><code>---
+name: pdf-tools
+description: Extract text and tables from PDF files. Use when reading, converting, or inspecting PDFs.
+---
+
+# PDF tools
+
+Read `references/formats.md` before converting a document.
+Run scripts relative to this skill directory.
+</code></pre>
+    <p><code class="inline-code">description</code> 是最重要的字段：它决定模型在什么时候会想起这个 Skill。写「Helps with PDFs」几乎没有路由信息；写清「做什么 + 什么时候用」，才有机会被正确加载。</p>
+
+    <div class="analogy">
+      <span class="analogy-title">像图书馆的索引卡，而不是把书全搬来</span>
+      <p>Skills 启动时只给模型看索引卡：书名（name）、简介（description）、书架位置（path）。模型需要时再按位置取书，读完把关键内容带回工作台。</p>
+      <p><b>类比到哪为止：</b>图书馆不会因为你看过索引就自动把书打开；Pi 需要模型主动读取 SKILL.md，或用 <code>/skill:name</code> 强制加载。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>发现与加载</h3>
+    <p>Pi 扫描用户级与项目级目录，把每个 Skill 的名称、描述、路径加入系统提示；完整指令只在任务匹配时读取。常用位置包括：</p>
+<pre data-lang="text"><code>~/.pi/agent/skills/
+&lt;project&gt;/.pi/skills/
+~/.agents/skills/
+&lt;project&gt;/.agents/skills/
+</code></pre>
+    <p>项目级 Skills 会从当前工作目录向上查找，直到仓库根；它们同样受 trust 约束。手动强制加载用 <code class="inline-code">/skill:name</code>，后面的参数会作为用户请求追加到指令之后。</p>
+
+    <h3><span class="h3num">03</span>Skills 之外：prompt templates 与 packages</h3>
+    <div class="card-grid">
+      <div class="card">
+        <h4>Prompt template</h4>
+        <p>一段可复用的消息文本，适合「每次都要用同样的话开头」的场景。它在输入阶段展开，不涉及工具执行。</p>
+      </div>
+      <div class="card">
+        <h4>Pi package</h4>
+        <p>把 extensions、skills、templates、themes 打包，通过 npm 或 git 分发。适合团队共享一整套工作方式。</p>
+      </div>
+      <div class="card">
+        <h4>Theme</h4>
+        <p>只影响终端配色与显示，不改变 Agent 行为。它和 Skills 一样，是「资源」而不是「运行时机制」。</p>
+      </div>
+    </div>
+    <p>三者的共同点是：都不需要改 Pi 核心。区别在于注入点不同——template 改输入，skill 改知识上下文，package 负责分发。</p>
+
+    <h3><span class="h3num">04</span>什么时候不该用 Skill</h3>
+    <p>如果一件事需要新的可执行能力（调用内部 API、写数据库、注册工具），它应该写成扩展，而不是 Skill。Skill 适合「需要一套知识/流程/脚本」但不需要新工具注册的场景。判断标准：模型缺的是「知道怎么做」，还是「有办法做」？</p>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么 Skill 的 description 比正文还重要？</summary>
+      <div class="deep-body">
+        <p>因为正文只有在被选中后才会加载。启动时模型看到的只有 name、description、path；它必须根据 description 判断「这个任务是否属于该 Skill 的适用范围」。描述写得太泛，会导致该加载时没加载；写得太窄，会导致误判。</p>
+        <p>这也是为什么规范建议描述里同时写「能力」与「触发条件」，并避免「Helps with X」这类没有路由信息的表述。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">05</span>自测</h3>
+    <details class="quiz">
+      <summary>Skill 启动时会把 SKILL.md 全文放进系统提示吗？</summary>
+      <div class="answer"><p>不会。启动时只加入名称、描述和路径；完整指令在任务匹配时由模型读取，或用 <code>/skill:name</code> 手动加载。这正是它节省上下文的原因。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>需要让模型调用公司内部工单 API，应该用 Skill 还是扩展？</summary>
+      <div class="answer"><p>扩展。因为它需要一个新的可执行工具与认证/网络逻辑；Skill 只能提供知识与流程，不能替模型注册并执行新工具。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么项目级 Skill 也要等项目被信任？</summary>
+      <div class="answer"><p>因为 Skill 可以指示模型运行脚本、读取文件，支持文件也可能包含可执行内容。不受信任的仓库不应自动把这种指令注入 Agent。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>Skills 是「按需加载的知识」，不是新工具。它把「知道怎么做」与「有办法做」分开：需要新执行能力找扩展，需要流程与参考资料找 Skill，需要复用打包找 package。</p>
+      <p class="next"><b>下一讲：</b>最后一层是「怎么使用」：同一个核心如何被 TUI、print、JSON、RPC 与 SDK 分别驱动。</p>
+    </div>
+  </div>
+</section>
