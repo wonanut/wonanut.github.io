@@ -26,6 +26,8 @@ python3 course-src/build.py --stats  # 每章中文字数 / 代码块 / 折叠�
 
 Demo 不用额外文件：章节里写 `<div class="demo" data-demo="gradient"></div>`，`template.html` 底部的 runtime 会创建 canvas、编译 shader、处理时间/鼠标/尺寸/可见性暂停。
 
+每个 Demo 底部都带一条 **30 秒循环的播放进度条**：播放/暂停、拖拽 seek、键盘左右键；时间和 canvas 的 `uTime` 共用同一个本地时钟。
+
 可用 `data-demo`：
 
 `gradient` · `triangle` · `pulse` · `pattern` · `noise` · `sdf` · `raymarch` · `ripple` · `scene` · `toon`
