@@ -1,0 +1,1928 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pi 内功课 · 极简 Agent Harness 源码课</title>
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="canonical" href="https://wonanut.github.io/pi-course/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Pi 内功课 · 极简 Agent Harness 源码课">
+<meta property="og:description" content="一门读 Pi 源码、理解极简 Agent Harness 的中文工程课：从 agent loop、工具系统、会话树，到压缩、扩展、Skills 与运行接口，沿着真实 TypeScript 源码把一台可改造的 Agent 拆开。">
+<meta property="og:url" content="https://wonanut.github.io/pi-course/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="description" content="一门读 Pi 源码、理解极简 Agent Harness 的中文工程课：从 agent loop、工具系统、会话树，到压缩、扩展、Skills 与运行接口，沿着真实 TypeScript 源码把一台可改造的 Agent 拆开。">
+<style>
+:root{
+  --bg:#ffffff; --bg-soft:#f6f7f9; --bg-sink:#eef0f4;
+  --text:#1c2027; --text-soft:#3d4450; --muted:#6a7280; --faint:#9aa2b1;
+  --border:#e4e7ec; --border-strong:#d3d8e0;
+  --accent:#4f46e5; --accent-soft:#eef0ff; --accent-strong:#4338ca;
+  --green:#0f766e; --green-soft:#ecfdf5; --green-border:#99f6e4;
+  --amber:#b45309; --amber-soft:#fffbeb; --amber-border:#fde68a;
+  --rose:#be123c; --rose-soft:#fff1f2; --rose-border:#fecdd3;
+  --code-bg:#0f1729; --code-text:#e6edf7; --code-border:#1e293b;
+  --shadow:0 1px 2px rgba(16,24,40,.06),0 8px 24px -12px rgba(16,24,40,.18);
+  --radius:14px;
+  --sidebar-w:300px;
+  --maxw:880px;
+  --sans:system-ui,-apple-system,"Segoe UI","PingFang SC","Hiragino Sans GB","Noto Sans SC","Microsoft YaHei",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+}
+html[data-theme="dark"]{
+  --bg:#0f1218; --bg-soft:#151a22; --bg-sink:#1b212b;
+  --text:#e6e9ef; --text-soft:#c3c9d4; --muted:#8d96a5; --faint:#5f6876;
+  --border:#252c38; --border-strong:#333c4a;
+  --accent:#8b93ff; --accent-soft:#1d2140; --accent-strong:#a5abff;
+  --green:#5eead4; --green-soft:#0d2b28; --green-border:#155e56;
+  --amber:#fbbf24; --amber-soft:#2a2110; --amber-border:#5c4511;
+  --rose:#fb7185; --rose-soft:#2a1118; --rose-border:#5f1d2b;
+  --code-bg:#0a0e16; --code-text:#dbe5f3; --code-border:#1c2432;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.6);
+}
+@media (prefers-color-scheme: dark){
+  html[data-theme="auto"]{
+    --bg:#0f1218; --bg-soft:#151a22; --bg-sink:#1b212b;
+    --text:#e6e9ef; --text-soft:#c3c9d4; --muted:#8d96a5; --faint:#5f6876;
+    --border:#252c38; --border-strong:#333c4a;
+    --accent:#8b93ff; --accent-soft:#1d2140; --accent-strong:#a5abff;
+    --green:#5eead4; --green-soft:#0d2b28; --green-border:#155e56;
+    --amber:#fbbf24; --amber-soft:#2a2110; --amber-border:#5c4511;
+    --rose:#fb7185; --rose-soft:#2a1118; --rose-border:#5f1d2b;
+    --code-bg:#0a0e16; --code-text:#dbe5f3; --code-border:#1c2432;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.6);
+  }
+}
+*,*::before,*::after{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:76px}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+  font-size:16px;line-height:1.78;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+::selection{background:var(--accent);color:#fff}
+
+/* ---------- progress ---------- */
+#reading-progress{position:fixed;top:0;left:0;height:3px;width:0;background:linear-gradient(90deg,#6366f1,#a855f7,#ec4899);z-index:60;transition:width .08s linear}
+
+/* ---------- topbar ---------- */
+.topbar{position:fixed;top:0;left:0;right:0;height:60px;z-index:50;display:flex;align-items:center;gap:12px;
+  padding:0 20px;background:color-mix(in srgb,var(--bg) 86%,transparent);backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--border)}
+.topbar .burger{display:none;border:1px solid var(--border);background:var(--bg-soft);color:var(--text);
+  border-radius:9px;width:36px;height:36px;font-size:17px;cursor:pointer;line-height:1}
+.topbar .brand{display:flex;align-items:baseline;gap:10px;min-width:0}
+.topbar .brand b{font-size:15px;letter-spacing:.2px;white-space:nowrap}
+.topbar .brand span{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.topbar .spacer{flex:1}
+.tb-btn{border:1px solid var(--border);background:var(--bg-soft);color:var(--text-soft);border-radius:9px;
+  height:34px;padding:0 11px;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+  font-family:inherit;transition:.15s}
+.tb-btn:hover{border-color:var(--border-strong);background:var(--bg-sink);color:var(--text)}
+.tb-progress{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);white-space:nowrap}
+.tb-progress .bar{width:88px;height:6px;border-radius:99px;background:var(--bg-sink);overflow:hidden}
+.tb-progress .bar i{display:block;height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,#6366f1,#a855f7);transition:width .3s}
+
+/* ---------- layout ---------- */
+.layout{display:flex;min-height:100vh;padding-top:60px}
+.sidebar{position:fixed;top:60px;bottom:0;left:0;width:var(--sidebar-w);border-right:1px solid var(--border);
+  background:var(--bg-soft);overflow-y:auto;overscroll-behavior:contain;padding:18px 12px 60px;z-index:40}
+.sidebar::-webkit-scrollbar{width:9px}
+.sidebar::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:9px;border:2px solid var(--bg-soft)}
+.back-home{display:flex;align-items:center;gap:7px;margin:0 4px 12px;padding:8px 10px;
+  border-radius:9px;text-decoration:none;color:var(--muted);font-size:12.5px;transition:.15s}
+.back-home:hover{color:var(--accent);background:var(--bg-sink)}
+.side-search{display:flex;align-items:center;gap:8px;margin:0 4px 14px;padding:0 10px;height:36px;
+  border:1px solid var(--border);border-radius:9px;background:var(--bg)}
+.side-search input{border:0;background:transparent;color:var(--text);font:inherit;font-size:13px;width:100%;outline:none}
+.side-search kbd{font-family:var(--mono);font-size:10px;color:var(--faint);border:1px solid var(--border);
+  border-radius:4px;padding:1px 5px;background:var(--bg-soft)}
+.nav-part{margin:0 0 6px}
+.nav-part-title{font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--faint);
+  margin:16px 10px 7px;font-weight:700}
+.nav-link{display:flex;align-items:flex-start;gap:9px;padding:7px 10px;border-radius:8px;text-decoration:none;
+  color:var(--text-soft);font-size:13.5px;line-height:1.45;position:relative;transition:.13s}
+.nav-link:hover{background:var(--bg-sink);color:var(--text)}
+.nav-link.active{background:var(--accent-soft);color:var(--accent-strong);font-weight:600}
+.nav-link.active::before{content:"";position:absolute;left:-12px;top:6px;bottom:6px;width:3px;border-radius:0 3px 3px 0;background:var(--accent)}
+.nav-num{font-family:var(--mono);font-size:10.5px;color:var(--faint);width:20px;flex:none;text-align:right}
+.nav-link.active .nav-num{color:var(--accent)}
+.nav-label{flex:1;min-width:0}
+.nav-check{flex:none;width:17px;height:17px;border-radius:5px;margin-top:3px;border:1.5px solid var(--border-strong);
+  display:grid;place-items:center;font-size:11px;color:transparent;background:var(--bg);transition:.15s;cursor:pointer}
+.nav-check:hover{border-color:var(--accent)}
+.nav-check[aria-checked="true"]{background:var(--green);border-color:var(--green);color:#fff}
+html[data-theme="dark"] .nav-check[aria-checked="true"]{color:#04211d}
+.side-foot{margin:22px 10px 0;padding-top:14px;border-top:1px solid var(--border);font-size:11.5px;color:var(--faint);line-height:1.7}
+.side-foot a{color:var(--muted)}
+
+.main{flex:1;min-width:0;margin-left:var(--sidebar-w);display:flex;justify-content:center}
+.main-inner{width:100%;max-width:calc(var(--maxw) + 96px);padding:40px 48px 120px}
+
+/* ---------- content typography ---------- */
+.chapter{max-width:var(--maxw);margin:0 auto;padding-bottom:76px;scroll-margin-top:80px}
+.chapter + .chapter{border-top:1px solid var(--border);padding-top:64px}
+.chapter-kicker{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:700;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--accent);margin:0 0 14px}
+.chapter-kicker::before{content:"";width:22px;height:2px;background:var(--accent);border-radius:2px}
+.chapter-title{font-size:clamp(27px,3.3vw,38px);line-height:1.24;letter-spacing:-.02em;margin:0 0 8px;font-weight:800}
+.chapter-title small{display:block;font-size:15px;font-weight:500;color:var(--muted);letter-spacing:0;margin-top:8px}
+.chapter-lede{font-size:17.5px;color:var(--text-soft);margin:14px 0 18px;line-height:1.8}
+.source-line{font-size:12.5px;color:var(--faint);margin:0 0 26px;display:flex;flex-wrap:wrap;gap:6px 14px}
+.source-line code{background:var(--bg-soft);border:1px solid var(--border);padding:1px 6px;border-radius:5px;font-size:11.5px}
+.source-line a{color:var(--muted);text-decoration:none;border-bottom:1px dashed var(--border-strong)}
+.source-line a:hover{color:var(--accent);border-color:var(--accent)}
+.objectives{list-style:none;margin:0 0 34px;padding:16px 20px;border:1px solid var(--border);border-radius:var(--radius);
+  background:var(--bg-soft);display:grid;gap:8px}
+.objectives li{position:relative;padding-left:26px;font-size:14.5px;color:var(--text-soft);line-height:1.6}
+.objectives li::before{content:"✓";position:absolute;left:0;top:0;color:var(--green);font-weight:800;font-size:13px}
+.objectives .obj-title{display:block;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);
+  font-weight:700;grid-column:1/-1}
+.chapter-body h3{font-size:22px;line-height:1.35;margin:52px 0 16px;letter-spacing:-.01em;font-weight:750}
+.chapter-body h3 .h3num{color:var(--accent);font-family:var(--mono);font-size:14px;font-weight:700;margin-right:9px;vertical-align:2px}
+.chapter-body h4{font-size:16.5px;margin:30px 0 10px;font-weight:700}
+.chapter-body p{margin:0 0 16px;color:var(--text-soft)}
+.chapter-body strong{color:var(--text);font-weight:700}
+.chapter-body a{color:var(--accent);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--accent) 35%,transparent)}
+.chapter-body a:hover{border-bottom-color:var(--accent)}
+.chapter-body ul,.chapter-body ol{margin:0 0 18px;padding-left:24px;color:var(--text-soft)}
+.chapter-body li{margin:6px 0}
+.chapter-body li::marker{color:var(--accent)}
+.chapter-body hr{border:0;border-top:1px solid var(--border);margin:40px 0}
+.inline-code{font-family:var(--mono);font-size:.88em;background:var(--bg-soft);border:1px solid var(--border);
+  padding:1.5px 6px;border-radius:6px;color:var(--text);white-space:nowrap}
+html[data-theme="dark"] .inline-code{background:var(--bg-sink)}
+
+/* ---------- components ---------- */
+.analogy{position:relative;margin:26px 0;padding:18px 22px 18px 56px;border-radius:var(--radius);
+  background:linear-gradient(135deg,var(--accent-soft),transparent 85%);border:1px solid var(--border)}
+.analogy::before{content:"🧩";position:absolute;left:18px;top:16px;font-size:22px;line-height:1}
+.analogy .analogy-title{display:block;font-weight:750;color:var(--text);margin-bottom:4px;font-size:15px}
+.analogy p{margin:0;font-size:14.5px;color:var(--text-soft)}
+.analogy p + p{margin-top:8px}
+
+.callout{margin:22px 0;padding:15px 18px 15px 48px;border-radius:12px;border:1px solid var(--border);
+  background:var(--bg-soft);position:relative;font-size:14.5px;line-height:1.72;color:var(--text-soft)}
+.callout::before{position:absolute;left:16px;top:14px;font-size:18px;line-height:1}
+.callout .callout-title{display:block;font-weight:750;color:var(--text);margin-bottom:3px;font-size:14px}
+.callout p{margin:0 0 8px;font-size:14.5px}
+.callout p:last-child{margin-bottom:0}
+.callout ul,.callout ol{margin:6px 0 0;font-size:14.5px}
+.callout.tip{background:var(--green-soft);border-color:var(--green-border)}
+.callout.tip::before{content:"💡"}
+.callout.tip .callout-title{color:var(--green)}
+.callout.warn{background:var(--amber-soft);border-color:var(--amber-border)}
+.callout.warn::before{content:"⚠️"}
+.callout.warn .callout-title{color:var(--amber)}
+.callout.insight{background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 25%,var(--border))}
+.callout.insight::before{content:"🔭"}
+.callout.insight .callout-title{color:var(--accent-strong)}
+.callout.key{background:var(--rose-soft);border-color:var(--rose-border)}
+.callout.key::before{content:"🔑"}
+.callout.key .callout-title{color:var(--rose)}
+
+.code-block{position:relative;margin:22px 0;border-radius:12px;overflow:hidden;border:1px solid var(--code-border);
+  background:var(--code-bg);box-shadow:var(--shadow)}
+.code-head{display:flex;align-items:center;gap:10px;padding:9px 14px;background:rgba(255,255,255,.04);
+  border-bottom:1px solid var(--code-border);font-family:var(--mono);font-size:11.5px;color:#93a4bd}
+.code-head .dots{display:flex;gap:5px}
+.code-head .dots i{width:9px;height:9px;border-radius:50%;background:#ff5f57;display:block}
+.code-head .dots i:nth-child(2){background:#febc2e}
+.code-head .dots i:nth-child(3){background:#28c840}
+.code-head .lang{margin-left:auto;letter-spacing:.08em;text-transform:uppercase;color:#7c8ba1}
+.copy-btn{border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.06);color:#c9d6e8;
+  border-radius:6px;font-family:var(--mono);font-size:11px;padding:3px 8px;cursor:pointer;transition:.15s}
+.copy-btn:hover{background:rgba(255,255,255,.14)}
+.copy-btn.done{color:#6ee7b7;border-color:#6ee7b7}
+.code-block pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:13px;
+  line-height:1.72;color:var(--code-text);tab-size:4}
+.code-block pre code{font-family:inherit;font-size:inherit}
+.code-block pre::-webkit-scrollbar{height:9px}
+.code-block pre::-webkit-scrollbar-thumb{background:#334155;border-radius:9px}
+.tok-kw{color:#c792ea}
+.tok-str{color:#c3e88d}
+.tok-com{color:#637777;font-style:italic}
+.tok-num{color:#f78c6c}
+.tok-fn{color:#82aaff}
+.tok-bi{color:#ffcb6b}
+.tok-op{color:#89ddff}
+.tok-prop{color:#f07178}
+
+.deep{margin:26px 0;border:1px solid var(--border);border-radius:12px;background:var(--bg-soft);overflow:hidden}
+.deep>summary{list-style:none;cursor:pointer;padding:14px 18px;font-weight:700;font-size:14.5px;color:var(--text-soft);
+  display:flex;align-items:center;gap:9px;user-select:none}
+.deep>summary::-webkit-details-marker{display:none}
+.deep>summary::before{content:"▸";color:var(--accent);font-size:13px;transition:transform .18s;display:inline-block}
+.deep[open]>summary::before{transform:rotate(90deg)}
+.deep>summary:hover{background:var(--bg-sink)}
+.deep .deep-body{padding:4px 20px 18px;border-top:1px solid var(--border);font-size:14.5px}
+.deep .deep-body h4{margin-top:18px}
+.deep-2{background:transparent;border-style:dashed}
+
+.quiz{margin:14px 0;border:1px solid var(--border);border-radius:12px;background:var(--bg-soft);overflow:hidden}
+.quiz>summary{list-style:none;cursor:pointer;padding:13px 18px;font-size:14.5px;font-weight:600;color:var(--text-soft);
+  display:flex;gap:9px;align-items:flex-start;user-select:none}
+.quiz>summary::-webkit-details-marker{display:none}
+.quiz>summary::before{content:"Q";flex:none;width:20px;height:20px;border-radius:6px;background:var(--accent);
+  color:#fff;font-family:var(--mono);font-size:11px;display:grid;place-items:center;margin-top:2px;font-weight:700}
+.quiz[open]>summary{border-bottom:1px solid var(--border)}
+.answer{padding:14px 18px;font-size:14.5px;color:var(--text-soft);background:var(--bg)}
+.answer::before{content:"参考答案";display:block;font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--green);font-weight:800;margin-bottom:6px}
+.answer p{margin:0 0 8px;font-size:14.5px}
+.answer p:last-child{margin-bottom:0}
+
+.flow{display:flex;align-items:stretch;flex-wrap:wrap;gap:8px;margin:24px 0;padding:18px;border-radius:12px;
+  background:var(--bg-soft);border:1px dashed var(--border-strong)}
+.flow-node{flex:1 1 120px;min-width:112px;background:var(--bg);border:1px solid var(--border-strong);border-radius:10px;
+  padding:10px 12px;font-size:13px;line-height:1.5;text-align:center;color:var(--text-soft);box-shadow:0 1px 0 rgba(0,0,0,.03)}
+.flow-node b{display:block;color:var(--text);font-size:13.5px;margin-bottom:2px}
+.flow-node code{font-size:11.5px}
+.flow-node.accent{background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 40%,var(--border))}
+.flow-arrow{display:grid;place-items:center;color:var(--accent);font-size:16px;font-weight:700;flex:0 0 16px}
+.flow.down{flex-direction:column}
+.flow.down .flow-arrow{transform:rotate(90deg);height:14px}
+
+.steps{counter-reset:step;list-style:none;padding:0;margin:22px 0;display:grid;gap:10px}
+.steps>li{counter-increment:step;position:relative;padding:12px 16px 12px 52px;border:1px solid var(--border);
+  border-radius:10px;background:var(--bg-soft);font-size:14.5px;color:var(--text-soft)}
+.steps>li::before{content:counter(step,decimal-leading-zero);position:absolute;left:14px;top:11px;
+  font-family:var(--mono);font-size:12px;font-weight:700;color:var(--accent);
+  background:var(--accent-soft);border-radius:6px;padding:2px 7px}
+.steps>li b{color:var(--text)}
+
+.table-wrap{overflow-x:auto;margin:22px 0;border:1px solid var(--border);border-radius:12px}
+.table-wrap table{border-collapse:collapse;width:100%;font-size:13.5px}
+.table-wrap th{background:var(--bg-soft);text-align:left;padding:10px 14px;font-size:12px;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border-strong);white-space:nowrap}
+.table-wrap td{padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text-soft);vertical-align:top}
+.table-wrap tr:last-child td{border-bottom:0}
+.table-wrap code{font-size:12px}
+
+.takeaway{margin:44px 0 0;padding:22px 24px;border-radius:var(--radius);position:relative;
+  background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 12%,var(--bg)),var(--bg) 70%);
+  border:1px solid color-mix(in srgb,var(--accent) 28%,var(--border))}
+.takeaway .tk-label{display:inline-block;font-size:11px;letter-spacing:.14em;text-transform:uppercase;font-weight:800;
+  color:var(--accent);margin-bottom:7px}
+.takeaway p{margin:0;font-size:15.5px;color:var(--text);line-height:1.7}
+.takeaway .next{margin-top:12px;padding-top:12px;border-top:1px dashed color-mix(in srgb,var(--accent) 25%,var(--border));
+  font-size:13.5px;color:var(--muted)}
+.takeaway .next b{color:var(--text-soft)}
+
+.chapter-nav{display:flex;gap:12px;margin:34px 0 0;padding-top:22px;border-top:1px solid var(--border)}
+.chapter-nav a{flex:1;display:block;padding:13px 16px;border:1px solid var(--border);border-radius:11px;
+  text-decoration:none;transition:.15s;min-width:0}
+.chapter-nav a:hover{border-color:var(--accent);background:var(--accent-soft)}
+.chapter-nav .dir{font-size:11px;color:var(--faint);letter-spacing:.08em;text-transform:uppercase;display:block;margin-bottom:2px}
+.chapter-nav .name{font-size:13.5px;color:var(--text-soft);font-weight:600;display:block;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.chapter-nav a.next{text-align:right}
+
+.kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--border-strong);border-bottom-width:2px;
+  border-radius:5px;padding:1px 6px;background:var(--bg-soft);color:var(--text-soft);white-space:nowrap}
+
+/* ---------- hero (only in ch00) ---------- */
+.hero{position:relative;margin:0 0 46px;padding:44px 40px;border-radius:20px;overflow:hidden;
+  background:radial-gradient(120% 130% at 0% 0%,color-mix(in srgb,var(--accent) 16%,var(--bg)),var(--bg) 60%);
+  border:1px solid color-mix(in srgb,var(--accent) 22%,var(--border))}
+.hero::after{content:"";position:absolute;right:-90px;bottom:-120px;width:340px;height:340px;border-radius:50%;
+  background:radial-gradient(circle,color-mix(in srgb,var(--accent) 22%,transparent),transparent 65%);pointer-events:none}
+.hero .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);font-weight:700}
+.hero h1{font-size:clamp(30px,4.4vw,46px);line-height:1.16;letter-spacing:-.025em;margin:12px 0 14px;font-weight:850}
+.hero p{font-size:17px;color:var(--text-soft);margin:0;max-width:640px;line-height:1.75}
+.hero .hero-meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:4px 11px;border-radius:99px;
+  background:var(--bg);border:1px solid var(--border-strong);color:var(--text-soft);font-weight:600}
+.pill.accent{background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 35%,var(--border));color:var(--accent-strong)}
+
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin:30px 0}
+.stat{padding:16px;border:1px solid var(--border);border-radius:12px;background:var(--bg-soft)}
+.stat b{display:block;font-size:26px;line-height:1.1;letter-spacing:-.02em;color:var(--text);font-weight:800}
+.stat span{font-size:12px;color:var(--muted)}
+
+.card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin:24px 0}
+.card{padding:18px;border:1px solid var(--border);border-radius:12px;background:var(--bg-soft)}
+.card h4{margin:0 0 6px;font-size:15px}
+.card p{margin:0;font-size:13.5px;color:var(--muted);line-height:1.65}
+
+/* ---------- misc ---------- */
+.backdrop{display:none;position:fixed;inset:0;background:rgba(15,18,24,.5);z-index:35;backdrop-filter:blur(2px)}
+.to-top{position:fixed;right:22px;bottom:22px;width:40px;height:40px;border-radius:11px;border:1px solid var(--border);
+  background:var(--bg);color:var(--text-soft);box-shadow:var(--shadow);cursor:pointer;font-size:16px;z-index:30;
+  opacity:0;pointer-events:none;transition:.2s}
+.to-top.show{opacity:1;pointer-events:auto}
+.to-top:hover{color:var(--accent);border-color:var(--accent)}
+mark.hit{background:#fde68a;color:#713f12;border-radius:3px;padding:0 2px}
+html[data-theme="dark"] mark.hit{background:#a16207;color:#fef3c7}
+.muted{color:var(--muted)}
+.center{text-align:center}
+.mt-0{margin-top:0}
+.hidden{display:none!important}
+
+@media (max-width:1100px){
+  :root{--sidebar-w:280px}
+  .main-inner{padding:32px 30px 100px}
+}
+@media (max-width:900px){
+  .topbar .burger{display:block}
+  .sidebar{transform:translateX(-100%);transition:transform .22s ease;box-shadow:var(--shadow);width:300px}
+  body.nav-open .sidebar{transform:none}
+  body.nav-open .backdrop{display:block}
+  .main{margin-left:0}
+  .main-inner{padding:26px 20px 100px}
+  .topbar .brand span{display:none}
+  .hero{padding:30px 22px}
+  .chapter+.chapter{padding-top:48px}
+  .chapter-nav{flex-direction:column}
+  .chapter-nav a.next{text-align:left}
+  .tb-progress span{display:none}
+}
+@media (max-width:560px){
+  body{font-size:15.5px}
+  .tb-progress .bar{width:52px}
+  .tb-btn{padding:0 9px}
+  .tb-btn .lbl{display:none}
+  .tb-btn .ico{font-size:14px}
+  .chapter-body h3{font-size:20px}
+  .analogy,.callout{padding-left:44px}
+  .flow{padding:12px}
+  .flow-arrow{flex-basis:100%;height:10px;transform:rotate(90deg)}
+}
+@media (prefers-reduced-motion: reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+@media print{
+  .sidebar,.topbar,.to-top,.backdrop,#reading-progress,.chapter-nav,.copy-btn{display:none!important}
+  .main{margin-left:0}
+  .main-inner{padding:0;max-width:none}
+  body{font-size:11.5pt;line-height:1.6}
+  .chapter{page-break-before:always;max-width:none;padding-bottom:20px}
+  .chapter:first-child{page-break-before:auto}
+  .deep,.quiz{border:1px solid #ccc;background:none}
+  .deep>summary::before,.quiz>summary::before{display:none}
+  .code-block{border:1px solid #bbb;box-shadow:none;break-inside:avoid}
+  .code-block pre{color:#111;background:#f6f6f6}
+  .code-block pre span{color:#111!important}
+  .code-head{background:#eee!important;color:#333!important}
+  .code-head .lang{color:#333!important}
+  .code-head .dots{display:none}
+  .analogy,.callout,.deep,.quiz,.table-wrap,.flow,.steps>li,.takeaway{break-inside:avoid}
+  a{color:#111}
+  .hero{background:none}
+  .chapter-title small{color:#444}
+}
+</style>
+</head>
+<body>
+<div id="reading-progress"></div>
+<div class="backdrop" id="backdrop"></div>
+
+<header class="topbar">
+  <button class="burger" id="burger" aria-label="打开目录" aria-expanded="false">☰</button>
+  <a class="brand" href="../" title="返回首页" style="text-decoration:none;color:inherit">
+    <b>Pi 内功课</b>
+    <span>极简 Agent Harness 源码课</span>
+  </a>
+  <div class="spacer"></div>
+  <div class="tb-progress" title="学习进度">
+    <span id="progress-text">0 / 0</span>
+    <div class="bar"><i id="progress-bar"></i></div>
+  </div>
+  <button class="tb-btn" id="theme-btn" title="切换深浅色主题"><span class="ico">◐</span><span class="lbl">主题</span></button>
+  <button class="tb-btn" id="expand-btn" title="展开/收起全部深入区块"><span class="ico">⤢</span><span class="lbl">展开</span></button>
+  <button class="tb-btn" id="print-btn" title="打印 / 导出 PDF"><span class="ico">⎙</span><span class="lbl">打印</span></button>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar">
+    <a class="back-home" href="../">← 返回 Doran 的个人首页</a>
+    <label class="side-search">
+      <span aria-hidden="true">🔍</span>
+      <input type="search" id="side-search" placeholder="搜索章节…" autocomplete="off" aria-label="搜索章节">
+      <kbd>/</kbd>
+    </label>
+    <nav id="toc" aria-label="课程目录">
+    <div class="nav-part" data-part="p0">
+      <p class="nav-part-title">出发之前</p>
+      <a class="nav-link" href="#ch00" data-ch="ch00"><span class="nav-num">00</span><span class="nav-label">课程导览：怎么读源码最有效</span><span class="nav-check" data-check="ch00" role="checkbox" aria-checked="false" tabindex="0"></span></a>
+      <a class="nav-link" href="#ch01" data-ch="ch01"><span class="nav-num">01</span><span class="nav-label">Pi 是什么：极简 harness 的取舍</span><span class="nav-check" data-check="ch01" role="checkbox" aria-checked="false" tabindex="0"></span></a>
+    </div>
+    <div class="nav-part" data-part="p1">
+      <p class="nav-part-title">运行时核心</p>
+      <a class="nav-link" href="#ch02" data-ch="ch02"><span class="nav-num">02</span><span class="nav-label">Agent Loop：循环、事件与消息边界</span><span class="nav-check" data-check="ch02" role="checkbox" aria-checked="false" tabindex="0"></span></a>
+      <a class="nav-link" href="#ch03" data-ch="ch03"><span class="nav-num">03</span><span class="nav-label">工具引擎：8 个工具背后的工程细节</span><span class="nav-check" data-check="ch03" role="checkbox" aria-checked="false" tabindex="0"></span></a>
+      <a class="nav-link" href="#ch04" data-ch="ch04"><span class="nav-num">04</span><span class="nav-label">会话树：JSONL 里的分支与恢复</span><span class="nav-check" data-check="ch04" role="checkbox" aria-checked="false" tabindex="0"></span></a>
+    </div>
+    <div class="nav-part" data-part="p2">
+      <p class="nav-part-title">上下文与扩展</p>
+      <a class="nav-link" href="#ch05" data-ch="ch05"><span class="nav-num">05</span><span class="nav-label">上下文压缩：摘要如何接管旧历史</span><span class="nav-check" data-check="ch05" role="checkbox" aria-checked="false" tabindex="0"></span></a>
+      <a class="nav-link" href="#ch06" data-ch="ch06"><span class="nav-num">06</span><span class="nav-label">扩展系统：在进程内改造 Pi</span><span class="nav-check" data-check="ch06" role="checkbox" aria-checked="false" tabindex="0"></span></a>
+      <a class="nav-link" href="#ch07" data-ch="ch07"><span class="nav-num">07</span><span class="nav-label">Skills 与资源：按需加载的知识</span><span class="nav-check" data-check="ch07" role="checkbox" aria-checked="false" tabindex="0"></span></a>
+    </div>
+    <div class="nav-part" data-part="p3">
+      <p class="nav-part-title">落地与超越</p>
+      <a class="nav-link" href="#ch08" data-ch="ch08"><span class="nav-num">08</span><span class="nav-label">运行接口：TUI、print、JSON、RPC、SDK</span><span class="nav-check" data-check="ch08" role="checkbox" aria-checked="false" tabindex="0"></span></a>
+      <a class="nav-link" href="#ch09" data-ch="ch09"><span class="nav-num">09</span><span class="nav-label">对比 Claude Code 与结课项目</span><span class="nav-check" data-check="ch09" role="checkbox" aria-checked="false" tabindex="0"></span></a>
+    </div>
+    </nav>
+    <div class="side-foot">
+      <p>本课程基于开源仓库 <a href="https://github.com/earendil-works/pi" target="_blank" rel="noopener">earendil-works/pi</a>（MIT）的 coding-agent / agent 源码编写，非官方课程。</p>
+      <p>课程内容对应 Pi 1.5.2 源码；上游实现可能继续演进，以仓库为准。</p>
+      <p>阅读进度保存在本机浏览器中 · <a href="../">返回个人首页</a></p>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="main-inner" id="content">
+<section id="ch00" class="chapter">
+  <div class="hero">
+    <p class="eyebrow">Pi · Minimal Agent Harness</p>
+    <h1 class="chapter-title">把 Pi 拆到零件，理解一台极简 Agent</h1>
+    <p class="chapter-lede">这不是一份 Pi 使用说明，而是一趟源码阅读：从一个 while 循环、四个核心工具和一个 JSONL 会话文件开始，看一台「刻意做小」的 Agent Harness 如何被组装起来，又为什么把其余能力交给扩展。</p>
+    <div class="hero-meta">
+      <span class="pill accent">中文 · 单页可离线阅读</span>
+      <span class="pill">10 章 · 约 4 小时精读</span>
+      <span class="pill">主干通俗 + 源码折叠</span>
+      <span class="pill">每章带实验与自测</span>
+    </div>
+  </div>
+
+  <p class="source-line">
+    <span>源码依据 <a href="https://github.com/earendil-works/pi">earendil-works/pi</a> · coding-agent 1.5.2</span>
+    <span>代码对照 <code>packages/agent</code> 与 <code>packages/coding-agent/src</code></span>
+    <span>课程给「为什么」，源码给「到底怎么做」</span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">读完这门课，你会</li>
+    <li>说清一台 Agent Harness 的最小职责边界：循环、工具、会话、上下文</li>
+    <li>沿着 Pi 的真实 TypeScript 源码，读懂 agent loop、工具执行与会话树</li>
+    <li>理解扩展、Skills、prompt templates 为什么能把「能力」留在核心之外</li>
+    <li>能判断什么时候该选 Pi 这种极简 harness，什么时候该选 Claude Code 这类集成产品</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>为什么值得读 Pi</h3>
+    <p>大多数 Agent 产品是黑盒：功能很多，但你很难回答三个基本问题——它每一轮到底给模型发了什么？工具结果如何回填？上下文满了以后，旧消息去了哪里？</p>
+    <p>Pi 的选择相反。它把核心压到可以完整读一遍的规模：一个通用的 agent 循环（<code class="inline-code">packages/agent</code>），一个统一的模型适配层（<code class="inline-code">packages/ai</code>），一个带 TUI、工具和会话管理的 coding agent（<code class="inline-code">packages/coding-agent</code>），以及一个终端 UI 库（<code class="inline-code">packages/tui</code>）。读完这条链，你对任何 Agent 框架都不会再陌生。</p>
+
+    <div class="analogy">
+      <span class="analogy-title">像读一台拆开的小发动机</span>
+      <p>有些产品是整车：坐进去就能开，但发动机盖焊死了。Pi 更像一台放在工作台上的小发动机：零件不多，每根管线都看得见，你甚至能换掉某个零件再点火。</p>
+      <p><b>类比到哪为止：</b>发动机不会自己决定去哪；Pi 的「智能」来自模型，课程讲的是承载智能的那副骨架。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>课程地图：四层，一条主线</h3>
+    <p>整门课按「运行时核心 → 上下文与扩展 → 落地接口」推进。前四章回答「一台 Agent 怎么跑起来」，中间三章回答「它怎么长期跑、怎么被改造」，最后两章回答「它怎么被使用、和别的产品差在哪」。</p>
+    <div class="flow">
+      <div class="flow-node"><b>Agent Loop</b>模型调用与工具回填</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>Tools</b>read / bash / edit / write</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>Session</b>JSONL 会话树与分支</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>Compaction</b>摘要接管旧历史</div>
+    </div>
+    <div class="flow">
+      <div class="flow-node"><b>Extensions</b>事件、工具、命令</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>Skills</b>按需加载指令</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>Interfaces</b>TUI / print / JSON / RPC / SDK</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>Trade-offs</b>与 Claude Code 对比</div>
+    </div>
+
+    <h3><span class="h3num">03</span>怎么读：三种路线</h3>
+    <div class="card-grid">
+      <div class="card">
+        <h4>① 想快速建立直觉</h4>
+        <p>读 ch01 → ch02 → ch03 → ch04，跳过所有折叠区。目标是能画出一轮完整 turn 的流程图，并说清工具结果如何进入下一轮。</p>
+      </div>
+      <div class="card">
+        <h4>② 想改造 Pi</h4>
+        <p>直接读 ch06（扩展）与 ch07（Skills），再回看 ch02 的事件序列。扩展能挂在哪里、不能挂在哪里，取决于你多熟悉 loop 的生命周期。</p>
+      </div>
+      <div class="card">
+        <h4>③ 想选型或面试</h4>
+        <p>读 ch01、ch04、ch05、ch09。重点不是记住 API，而是能解释「极简核心 + 可插拔能力」在可控性、启动成本与生态上的取舍。</p>
+      </div>
+    </div>
+
+    <h3><span class="h3num">04</span>环境与源码版本</h3>
+    <p>Pi 要求 Node.js 22.19 或更高版本。安装和启动都很短：</p>
+<pre data-lang="bash"><code>curl -fsSL https://pi.dev/install.sh | sh
+cd /path/to/project
+pi
+</code></pre>
+    <p>课程引用的源码来自 <code class="inline-code">earendil-works/pi</code> 的 <code class="inline-code">packages/agent</code>、<code class="inline-code">packages/coding-agent/src/core</code> 与 <code class="inline-code">packages/coding-agent/docs</code>。代码会随版本演进；读源码时优先看函数边界与数据结构，不要死记行号。</p>
+<pre data-lang="text"><code>packages/
+├── ai/              # 统一 LLM API 与 provider 适配
+├── agent/           # 通用 agent loop / event stream
+├── coding-agent/    # 工具、会话、压缩、扩展、CLI、TUI
+└── tui/             # 终端 UI 组件
+</code></pre>
+    <p>没有 API Key 也能读完：每章的实验都设计成「读代码、改参数、预测行为」，真正需要模型才能观察的部分会明确标注。</p>
+
+    <div class="callout insight">
+      <span class="callout-title">这门课不做什么</span>
+      <p>不教你写提示词、不评测模型能力，也不复述 Pi 的安装文档。它只关心一件事：一个模型、工具与会话状态，如何被组织成一台你能读懂、能修改的运行时。</p>
+    </div>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么课程从源码读起，而不是从命令读起？</summary>
+      <div class="deep-body">
+        <p>命令会变，数据结构更稳定。Pi 的 CLI 参数、TUI 快捷键和扩展 API 都在演进，但几件事长期不变：一轮 turn 由模型响应与工具结果组成；会话是带 <code>parentId</code> 的树；上下文压缩用摘要替换旧消息；扩展通过事件挂进生命周期。</p>
+        <p>从这些结构出发，你读任何版本都不容易迷路。具体命令只作为「如何触发某个结构」的入口。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">05</span>先自测：你对 Agent 的判断准不准</h3>
+    <details class="quiz">
+      <summary>一个 Agent 产品的能力，主要由模型决定还是由 Harness 决定？</summary>
+      <div class="answer"><p>两者分工不同。模型决定「能不能想出下一步、会不会用工具」；Harness 决定「下一步能不能被执行、结果能不能回到模型、状态能不能跨轮次保存」。Pi 的哲学是：智能来自模型训练，Harness 只负责把智能接进环境。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么 Pi 只内置少量工具，却仍然能覆盖很多工作流？</summary>
+      <div class="answer"><p>因为工具是可执行能力的边界，不是产品能力的全部。Pi 把核心工具做得稳定、可审计，其余能力通过扩展、Skills、prompt templates 与 package 注入。核心越小，越容易验证与替换。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>读源码时，最应该先找哪类信息？</summary>
+      <div class="answer"><p>先找数据流与状态边界：消息如何进入上下文、工具结果如何回填、会话如何持久化、上下文何时被压缩。函数名与行号只是入口，数据形状才是骨架。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>Pi 值得读，不是因为它功能少，而是因为它的每个核心职责都露在外面：循环、工具、会话、上下文。理解这四件事，你就理解了 Agent Harness 的最小骨架。</p>
+      <p class="next"><b>下一讲：</b>先不碰代码，先看 Pi 到底把哪些东西放进核心、又把哪些东西故意留在核心之外。</p>
+    </div>
+  </div>
+
+<nav class="chapter-nav" aria-label="章节导航">
+<a class="next" href="#ch01"><span class="dir">下一讲 →</span><span class="name">Pi 是什么：极简 harness 的取舍</span></a>
+</nav>
+</section>
+
+<section id="ch01" class="chapter">
+  <p class="chapter-kicker">第 1 讲 · 出发之前</p>
+  <h2 class="chapter-title">Pi 是什么：一台刻意做小的 Agent Harness
+    <small>核心只保留循环、工具、会话与 TUI，其余能力交给扩展</small>
+  </h2>
+  <p class="chapter-lede">大多数 Agent 产品把「能力」放进核心，Pi 反其道而行：核心只提供最小、最中性的运行时，把子代理、计划模式、权限门禁、MCP 等能力留给扩展。理解这个取舍，才看得懂后面每一层代码为什么长成这样。</p>
+  <p class="source-line">
+    <span>源码 <code>packages/coding-agent/src</code> · <code>packages/agent/src</code></span>
+    <span>文档 <a href="https://github.com/earendil-works/pi/blob/main/README.md">README</a> · <a href="https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/how-pi-works.md">How Pi Works</a></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>用一句话说清 Pi 的核心边界：哪些东西属于 harness，哪些不属于</li>
+    <li>分清「8 个内置工具」与「4 个 coding 工具」这两个容易混淆的说法</li>
+    <li>知道 Pi 的四个关键包各自负责什么，以及它们如何拼成一条请求链</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>先看 Pi 自己怎么说</h3>
+    <p>Pi 的 README 第一句是：<b>“Pi is a minimal, extensible agent harness that you can make your own.”</b> 这句话里有三个关键词：minimal（小）、extensible（可扩展）、harness（运行时框架）。它不是「更聪明的模型」，也不是「一键生成应用的平台」，而是模型与真实环境之间的那层壳。</p>
+    <p>它明确接受一个结果：<b>子代理、计划模式这类能力默认不内置</b>。你要，就自己写扩展，或者安装一个按你的方式实现的 package。这个选择不是「还没做完」，而是产品哲学——核心越小，你能读懂、验证和替换的部分就越多。</p>
+
+    <div class="analogy">
+      <span class="analogy-title">像一台可换零件的相机</span>
+      <p>有些相机把镜头、滤镜、闪光灯全部焊死，开机就能拍；Pi 更像一台可换镜头的机身：机身只负责快门、传感器和卡口，拍什么、怎么拍，由你装上去的镜头和附件决定。</p>
+      <p><b>类比到哪为止：</b>相机换镜头不会改变机身逻辑；Pi 的扩展可以直接拦截工具调用、注入上下文，能力比「附件」更深。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>四层包结构</h3>
+    <p>Pi 是一个 monorepo。对理解 harness 最重要的四个包是：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>包</th><th>职责</th><th>你应该先读什么</th></tr></thead>
+        <tbody>
+          <tr><td><code>packages/ai</code></td><td>统一的多 provider LLM API：消息、内容块、流式事件、模型目录</td><td><code>src/types.ts</code>、provider 适配层</td></tr>
+          <tr><td><code>packages/agent</code></td><td>通用 agent 运行时：循环、工具执行、事件流、AgentMessage</td><td><code>src/agent-loop.ts</code>、<code>src/agent.ts</code></td></tr>
+          <tr><td><code>packages/coding-agent</code></td><td>编码 Agent 产品层：工具、会话、压缩、扩展、CLI、TUI</td><td><code>src/core/agent-session.ts</code>、<code>src/core/tools/</code></td></tr>
+          <tr><td><code>packages/tui</code></td><td>终端 UI 组件与渲染</td><td>只在需要自定义界面时读</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>这四层的关系不是「层层封装到看不见」。相反，边界很清楚：<code class="inline-code">agent</code> 只认识 AgentMessage 与工具接口，不认识文件、终端或模型厂商；<code class="inline-code">coding-agent</code> 把具体的工具、会话和 CLI 装进这个通用运行时；<code class="inline-code">ai</code> 负责把统一请求翻译成各家 API 的格式。</p>
+
+    <h3><span class="h3num">03</span>8 个工具，还是 4 个工具？</h3>
+    <p>面试里常见的混淆点：Pi 到底有几个工具？源码里的 <code class="inline-code">ToolName</code> 联合类型一共声明了 8 个：</p>
+<pre data-lang="ts"><code>export type ToolName =
+  | "read" | "bash" | "powershell"
+  | "edit" | "write"
+  | "grep" | "find" | "ls";
+
+export function createCodingToolDefinitions(cwd: string) {
+  return [
+    createReadToolDefinition(cwd),
+    createBashToolDefinition(cwd),
+    createEditToolDefinition(cwd),
+    createWriteToolDefinition(cwd),
+  ];
+}
+</code></pre>
+    <p>所谓「Pi 的核心四件套」指的是 <b>coding 四件套</b>：read、bash、edit、write。另外 4 个是只读发现工具（grep、find、ls）与 Windows 的 powershell。它们同样通过工具注册表暴露给模型，只是职责更窄。</p>
+
+    <div class="callout key">
+      <span class="callout-title">关键结论</span>
+      <p>Pi 的「小」不是工具数量少，而是<b>核心机制少</b>：没有内建的计划模式、子代理编排、权限门禁、MCP 管理。它把「多工具」与「多能力」区分开了。</p>
+    </div>
+
+    <h3><span class="h3num">04</span>一台 Pi 是怎么被使用的</h3>
+    <p>同一个 agent/session 核心，被包进不同的接口。你可以在终端里交互，也可以让脚本以 print / JSON 模式调用它，甚至用 SDK 在自己的进程里创建会话：</p>
+<pre data-lang="bash"><code>pi                         # TUI 交互模式
+pi -p "解释这个仓库"        # 打印最终回复
+pi --mode json -p "..."    # 输出 JSONL 事件
+pi --mode rpc              # 通过 JSONL 命令控制
+</code></pre>
+    <p>接口不同，底层机制相同：消息进入 active branch、构造请求、流式响应、执行工具、回填结果、必要时压缩。第 8 章会把这几条接口逐一展开。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：Pi 为什么不内置「计划模式」和「子代理」？</summary>
+      <div class="deep-body">
+        <p>因为这两类能力高度依赖工作流与团队约定。计划模式在什么时机触发、计划写到哪个文件、是否强制人工确认；子代理用什么模型、上下文如何隔离、结果如何合并——每个团队都有自己的答案。把它们做成核心，等于把一种工作流强加给所有人。</p>
+        <p>Pi 的做法是提供稳定的扩展点：工具、事件、命令、UI、会话条目。需要时，用扩展把这些能力装上去；不需要时，核心不会为它们付出复杂度与理解成本。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">05</span>常见误区</h3>
+    <p><b>误区一：极简就是功能弱。</b>Pi 的核心确实小，但它通过扩展与 package 可以接入任意工具、provider、命令和 TUI 组件。功能上限由扩展生态决定，而不是核心代码量。</p>
+    <p><b>误区二：工具越多，Agent 越强。</b>工具多了，模型的选择空间也变大，错误调用与上下文开销随之上升。Pi 把常用工具做精，把长尾能力放到扩展里，反而让默认行为更可预测。</p>
+
+    <h3><span class="h3num">06</span>自测</h3>
+    <details class="quiz">
+      <summary>说 Pi 有「8 个工具」和「4 个工具」分别指什么？</summary>
+      <div class="answer"><p>8 个是 <code>ToolName</code> 声明的全部内置工具：read、bash、powershell、edit、write、grep、find、ls。4 个是 <code>createCodingToolDefinitions</code> 返回的 coding 四件套：read、bash、edit、write。前者是工具注册表的全集，后者是默认编码工作流的核心集。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>Pi 的扩展为什么能改变「核心行为」，而不只是加一个函数？</summary>
+      <div class="answer"><p>因为扩展订阅的是生命周期事件，可以拦截工具调用、修改上下文、注册工具和命令、接管 UI。它运行在 Pi 进程内，拥有与宿主相同的权限，因此能力边界远大于普通的插件回调。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>如果只读一个文件来理解 Pi 的架构，应该读哪个？</summary>
+      <div class="answer"><p>先读 <code>packages/coding-agent/docs/how-pi-works.md</code>，再读 <code>packages/agent/src/agent-loop.ts</code>。前者给全局数据流，后者给循环的真实控制结构。具体工具实现可以稍后再看。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>Pi 是一台把核心职责与可插拔能力分开的 harness：核心保留循环、工具、会话、上下文，其余用扩展补。它的小不是缺失，而是把复杂度推到了你真正需要它的地方。</p>
+      <p class="next"><b>下一讲：</b>进入运行时核心，看一个 prompt 如何变成「模型响应 → 工具执行 → 结果回填」的循环。</p>
+    </div>
+  </div>
+
+<nav class="chapter-nav" aria-label="章节导航">
+<a class="prev" href="#ch00"><span class="dir">← 上一讲</span><span class="name">课程导览：怎么读源码最有效</span></a>
+<a class="next" href="#ch02"><span class="dir">下一讲 →</span><span class="name">Agent Loop：循环、事件与消息边界</span></a>
+</nav>
+</section>
+
+<section id="ch02" class="chapter">
+  <p class="chapter-kicker">第 2 讲 · 运行时核心</p>
+  <h2 class="chapter-title">Agent Loop：循环、事件与消息边界<small>packages/agent 用两个 while 处理「工具调用」与「排队消息」</small>
+  </h2>
+  <p class="chapter-lede">Loop 的骨架只有一件事：调用模型，如果响应里有 toolCall，就执行工具、把结果回填，再调用模型。真正复杂的是边界：什么时候停、消息从哪来、流式事件如何暴露给 UI、被截断的工具调用还能不能执行。</p>
+  <p class="source-line">
+    <span>源码 <code>packages/agent/src/agent-loop.ts</code></span>
+    <span>类型 <code>packages/agent/src/types.ts</code></span>
+    <span>产品层 <code>packages/coding-agent/src/core/agent-session.ts</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>画出一次 prompt 从进入到结束的事件序列</li>
+    <li>说清 AgentMessage 与 LLM Message 为什么要在边界处转换</li>
+    <li>解释 steering、follow-up 与 abort 分别改变循环的哪一部分</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>两个循环，而不是一个</h3>
+    <p>直觉上的 agent loop 是一个 while：有工具调用就继续，没有就停。Pi 的 <code class="inline-code">runLoop</code> 确实有这个内层循环，但外面还有一层：当 agent 本来要停下时，如果队列里来了 follow-up 消息，它要重新进入内层，把新消息当作下一轮的输入。</p>
+<pre data-lang="ts"><code>while (true) {
+  let hasMoreToolCalls = true;
+
+  while (hasMoreToolCalls || pendingMessages.length &gt; 0) {
+    const message = await streamAssistantResponse(...);
+    const toolCalls = message.content.filter(c =&gt; c.type === "toolCall");
+
+    const batch = await executeToolCalls(currentContext, message, config, signal, emit);
+    hasMoreToolCalls = !batch.terminate;
+
+    // 把 toolResult 追加进上下文，然后进入下一轮
+  }
+
+  const followUps = await config.getFollowUpMessages?.() || [];
+  if (followUps.length &gt; 0) { pendingMessages = followUps; continue; }
+  break;
+}
+</code></pre>
+    <p>内层处理「这一轮要不要继续调工具」，外层处理「agent 本该停下，但用户又排了消息」。steering 消息则在当前 assistant turn 之后、下一次模型调用之前插入——它改变的是「接下来这一轮看什么」，而不是另起一个 run。</p>
+
+    <div class="analogy">
+      <span class="analogy-title">像厨师与传菜口的双循环</span>
+      <p>内层是「做一道菜」：厨师看订单、做一步、把半成品放回台面、再看下一张订单。外层是「打烊前的最后一单」：本来准备关火了，前台又递来一张单，厨房重新开火。</p>
+      <p><b>类比到哪为止：</b>厨房的订单不会改变厨师的训练；Pi 的模型固定，循环只改变「给模型看什么、让它做什么」。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>消息边界：AgentMessage 不是 LLM Message</h3>
+    <p>Pi 的运行时使用 <code class="inline-code">AgentMessage</code>，它比 LLM 认识的 user/assistant/toolResult 更宽：可以包含 UI 专用消息、扩展注入的 custom message、系统消息等。真正调用模型前，必须经过两道转换：</p>
+    <div class="flow">
+      <div class="flow-node"><b>AgentMessage[]</b>运行时状态</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>transformContext</b>可选：裁剪/注入</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>convertToLlm</b>过滤/转换</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>LLM Message[]</b>发给 provider</div>
+    </div>
+    <p><code class="inline-code">transformContext</code> 用来做上下文工程（裁剪旧消息、注入外部资料），<code class="inline-code">convertToLlm</code> 是必需步骤：它把运行时专有的消息类型过滤掉，或转换成模型能理解的 user/assistant/toolResult。这个边界让 agent 核心不必知道「UI 想显示什么」，也让扩展可以安全地往状态里加东西。</p>
+
+    <h3><span class="h3num">03</span>事件流：UI 看到的是过程，不是结果</h3>
+    <p><code class="inline-code">agentLoop</code> 返回一个 <code class="inline-code">EventStream</code>，把内部状态变化逐条推给调用方。典型序列是：</p>
+<pre data-lang="text"><code>agent_start
+turn_start
+message_start (user)
+message_end   (user)
+message_start (assistant, partial)
+message_update (text_delta / toolcall_delta ...)
+message_end   (assistant)
+tool_execution_start
+tool_execution_end
+turn_end
+agent_end
+</code></pre>
+    <p>TUI 之所以能边生成边显示、边执行边更新工具状态，就是因为它消费这些事件；SDK 与 RPC 模式也复用同一套事件，只是序列化方式不同。核心循环本身不渲染任何东西。</p>
+
+    <h3><span class="h3num">04</span>三个容易忽略的边界</h3>
+    <div class="callout warn">
+      <span class="callout-title">被截断的 toolCall 不能执行</span>
+      <p>如果模型因为输出 token 上限而提前结束（<code>stopReason: "length"</code>），流式解析出的工具参数可能是「能解析但被截断」的。Pi 的处理是：这一批工具调用全部失败，要求模型重新发出完整调用，而不是冒险执行半个参数。</p>
+    </div>
+    <div class="callout insight">
+      <span class="callout-title">abort 不是 kill -9</span>
+      <p>AbortSignal 会中止当前 run，但正在执行的工具需要自己观察 signal；文件写入这类操作还要保证锁释放前不破坏状态。第 3 章会看到 write/edit 如何用「检查 signal + 队列」避免半写。</p>
+    </div>
+    <div class="callout tip">
+      <span class="callout-title">steering 与 follow-up 的时机不同</span>
+      <p>steering 在 turn 之间插入，适合「纠正当前方向」；follow-up 在 agent 即将结束时才取，适合「追加下一件事」。把两者混用，会让 Agent 的行为变得难以预测。</p>
+    </div>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么事件流要用 async generator 风格的 EventStream？</summary>
+      <div class="deep-body">
+        <p>因为循环是长时间运行的，而 UI 需要在中间状态上做响应：文本 delta、工具开始/结束、turn 边界。一次性返回最终消息会丢失这些信息，回调又容易把 UI 逻辑耦合进核心。EventStream 把「过程」变成可迭代的数据，调用方可以选择消费、转发或忽略，核心保持干净。</p>
+        <p>这也解释了为什么 TUI、print、JSON、RPC、SDK 能共用同一套机制：它们只是对事件的消费者不同。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">05</span>动手实验</h3>
+    <ol class="steps">
+      <li><b>读事件序列</b>：运行 <code class="inline-code">pi --mode json -p "列出当前目录"</code>，把输出按事件类型分类。找到 <code class="inline-code">tool_execution_start</code> 与 <code class="inline-code">tool_execution_end</code> 之间差了哪些字段。</li>
+      <li><b>改停止条件</b>：在阅读 <code class="inline-code">runLoop</code> 时，试着用注释标出「内层继续」与「外层继续」分别由哪个变量决定；再预测如果 <code class="inline-code">getFollowUpMessages</code> 永远返回空，会发生什么。</li>
+    </ol>
+
+    <h3><span class="h3num">06</span>自测</h3>
+    <details class="quiz">
+      <summary>为什么循环要分内层和外层，一个 while 不够吗？</summary>
+      <div class="answer"><p>一个 while 只能表达「工具调用没结束就继续」。外层还要处理「本来应该结束，但排队消息在结束后到达」的情况。两者触发条件不同：内层看 toolCalls，外层看 follow-up 队列。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>AgentMessage 直接发给模型会怎样？</summary>
+      <div class="answer"><p>可能包含 provider 不认识的类型（UI 消息、扩展 custom message），请求会失败或被错误解析。所以必须在边界处调用 <code>convertToLlm</code>，过滤/转换成 user、assistant、toolResult 三种 LLM 消息。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>模型返回了带 toolCall 的 length 截断消息，Pi 为什么不让工具执行？</summary>
+      <div class="answer"><p>因为工具参数可能被截断，虽然 JSON 能解析，但语义不完整。执行它可能造成误删、误写。Pi 把这一批调用全部标记为错误，提示模型重新发出完整调用，优先保证安全与可恢复。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>Agent loop 的本质是「模型响应驱动的状态机」：内层处理工具，外层处理排队消息，边界处做消息转换，过程通过事件暴露。记住这四个位置，比记住任何一行代码都重要。</p>
+      <p class="next"><b>下一讲：</b>循环把工具调用交出去之后，工具本身如何执行？read、edit、write、bash 各自在防什么事故？</p>
+    </div>
+  </div>
+
+<nav class="chapter-nav" aria-label="章节导航">
+<a class="prev" href="#ch01"><span class="dir">← 上一讲</span><span class="name">Pi 是什么：极简 harness 的取舍</span></a>
+<a class="next" href="#ch03"><span class="dir">下一讲 →</span><span class="name">工具引擎：8 个工具背后的工程细节</span></a>
+</nav>
+</section>
+
+<section id="ch03" class="chapter">
+  <p class="chapter-kicker">第 3 讲 · 运行时核心</p>
+  <h2 class="chapter-title">工具引擎：8 个工具背后的工程细节<small>模型看到的是 schema，真正难的是截断、精确匹配、并发与退出码</small>
+  </h2>
+  <p class="chapter-lede">工具不是「把函数暴露给模型」这么简单。一个能长期干活的工具，必须处理大文件、并发写、路径解析、超时、截断与错误语义。Pi 的工具实现把这层工程细节写得非常克制，值得逐块读。</p>
+  <p class="source-line">
+    <span>源码 <code>packages/coding-agent/src/core/tools/</code></span>
+    <span>关键文件 <code>read.ts</code> · <code>edit.ts</code> · <code>write.ts</code> · <code>bash.ts</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>说清 read 的 2000 行 / 50KB 截断为何是「先到先得」</li>
+    <li>理解 edit 为什么要求 oldText 精确且唯一，以及多段编辑如何避免重叠</li>
+    <li>解释同一文件的写操作为什么要排队，而不同文件可以并行</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>工具定义：schema 是给模型的合同</h3>
+    <p>每个工具都用一个 TypeBox schema 描述参数，再暴露 <code class="inline-code">name</code>、<code class="inline-code">description</code>、<code class="inline-code">parameters</code>、<code class="inline-code">execute</code>。description 不是注释，而是模型决定「什么时候用它」的主要依据。</p>
+<pre data-lang="ts"><code>const editSchema = Type.Object({
+  path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
+  edits: Type.Array(Type.Object({
+    oldText: Type.String({ description: "Exact text for one targeted replacement..." }),
+    newText: Type.String({ description: "Replacement text for this targeted edit." }),
+  })),
+});
+</code></pre>
+    <p>注意 <code class="inline-code">edits</code> 是数组：一次调用可以改同一文件的多个不连续位置。但每个 <code class="inline-code">oldText</code> 必须<b>唯一且不重叠</b>，并且都针对原始文件匹配——不是「改完第一处再匹配第二处」。这避免了增量修改带来的位置漂移。</p>
+
+    <div class="analogy">
+      <span class="analogy-title">像给模型配一个分拣台</span>
+      <p>分拣台不会把整仓库的货一次倒给工人，而是按批次、按目的地送出；同一目的地的包裹还要排队，避免两件货同时塞进一个格口。工具层做的就是这套分拣与限流。</p>
+      <p><b>类比到哪为止：</b>分拣台只负责出库；模型仍要自己决定「下一批拿什么」。工具只提供能力与边界，不替模型规划。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>read：先到先得的截断</h3>
+    <p>read 不是把文件整段塞给模型。默认上限是两个独立约束：2000 行或 50KB，谁先到就按谁截断。截断只保留完整行，避免把多字节字符切成半个。</p>
+<pre data-lang="ts"><code>export const DEFAULT_MAX_LINES = 2000;
+export const DEFAULT_MAX_BYTES = 50 * 1024;
+
+// 输出会附带 next offset，提示模型继续读
+[Showing lines 1-2000 of 4312. Use offset=2001 to continue.]
+</code></pre>
+    <p>这不是「省 token」的小优化，而是让模型形成「分段读文件」的习惯：大文件不会被一次性展开，模型可以按需继续。图片文件则走另一条路径，作为附件发送。</p>
+
+    <h3><span class="h3num">03</span>write 与 edit：同一文件的写必须排队</h3>
+    <p>两个工具都通过 <code class="inline-code">withFileMutationQueue</code> 包住实际写入。队列按文件的 realpath 建立：同一个文件的操作串行，不同文件的操作并行。</p>
+<pre data-lang="ts"><code>const fileMutationQueues = new Map&lt;string, Promise&lt;void&gt;&gt;();
+
+export async function withFileMutationQueue&lt;T&gt;(
+  filePath: string,
+  fn: () =&gt; Promise&lt;T&gt;,
+): Promise&lt;T&gt; {
+  const key = await getMutationQueueKey(filePath); // realpath
+  const current = fileMutationQueues.get(key) ?? Promise.resolve();
+  // ...排队，执行 fn，最后释放
+}
+</code></pre>
+    <p>为什么不用一把全局锁？因为两个工具同时改不同文件是安全的，全局锁会把并行变成串行，拖慢整个 agent。为什么不用「文件不存在就跳过」？因为 realpath 失败时仍要回退到解析后的路径，避免同一个尚未创建的文件被两个操作同时写。</p>
+    <div class="callout warn">
+      <span class="callout-title">abort 时不要提前释放锁</span>
+      <p>write 的实现没有在 abort 监听器里直接 reject，而是在每个 await 之后检查 <code>signal.aborted</code>。否则队列会在文件操作还没结束时被释放，另一个写操作可能插进来，造成半写或覆盖。</p>
+    </div>
+
+    <h3><span class="h3num">04</span>bash：退出码、超时与截断</h3>
+    <p>bash 的工程细节集中在「失败如何表达」。非零退出码不是抛异常，而是返回带 <code>isError: true</code> 的工具结果，让模型看到错误并自行修复；超时则是一个可选的、有上限的设置。</p>
+    <p>输出同样会被截断。bash 的尾部截断有一个边界：如果最后一行本身不完整，可能需要特殊处理；这也是为什么工具层不直接返回原始字符串，而是返回结构化的内容块。</p>
+
+    <h3><span class="h3num">05</span>路径与只读发现工具</h3>
+    <p>所有文件工具都通过 <code class="inline-code">resolveToCwd</code> 把相对路径解析到当前会话的工作目录，而不是进程启动目录。这让同一个 Pi 进程可以安全地打开不同 cwd 的会话。</p>
+    <p>grep、find、ls 是只读发现工具：它们不做修改，因此不需要 mutation queue，但仍受输出截断与路径解析约束。powershell 则是 Windows 上的 bash 等价物，接口形状保持一致。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么 edit 的多个 oldText 不允许重叠？</summary>
+      <div class="deep-body">
+        <p>如果允许重叠，两个替换可能互相影响同一段原文，最终结果取决于执行顺序；而模型给出的 edits 是一个集合，没有可靠顺序。Pi 直接禁止重叠，让每次编辑都可以独立地在原始内容上定位，结果确定且可验证。</p>
+        <p>相近的修改应该合并成一个更大的 edit，而不是拆成多个相邻片段。这条约束写在工具 description 里，也是模型需要学会的「工具使用习惯」。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">06</span>动手实验</h3>
+    <ol class="steps">
+      <li><b>制造截断</b>：让 Pi 读一个超过 2000 行的文件，观察结果末尾的提示，再用 <code class="inline-code">offset</code> 继续读。记录每次返回的行数。</li>
+      <li><b>并发写</b>：写一个扩展或测试，同时触发对同一文件的两个 edit，观察它们是否串行；再改成不同文件，观察是否并行。</li>
+    </ol>
+
+    <h3><span class="h3num">07</span>自测</h3>
+    <details class="quiz">
+      <summary>read 的截断为什么必须「只保留完整行」？</summary>
+      <div class="answer"><p>因为半个多字节字符或半个语法结构会误导模型，也可能让后续编辑的 oldText 无法匹配。只保留完整行能保证输出是可读、可引用的文本单元。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>同一文件的两个 edit 并发时，Pi 用什么保证结果确定？</summary>
+      <div class="answer"><p>用按 realpath 建立的 per-file mutation queue。两个操作排队执行，后一个看到的是前一个完成后的文件状态；不同文件仍然可以并行。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>bash 非零退出为什么不算「工具崩溃」？</summary>
+      <div class="answer"><p>因为命令失败是 agent 工作流的一部分：编译报错、测试失败都需要模型看到输出并修复。Pi 把它表达为带 error 标记的工具结果，而不是中断循环的异常。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>工具的质量不在「能调用」，而在边界：截断保证上下文可控，精确匹配保证编辑可验证，队列保证并发安全，错误语义保证循环能继续。读懂这些，你才能写出不会把仓库改坏的 Agent。</p>
+      <p class="next"><b>下一讲：</b>工具结果写回之后，它们如何被持久化成可分支、可恢复的会话树？</p>
+    </div>
+  </div>
+
+<nav class="chapter-nav" aria-label="章节导航">
+<a class="prev" href="#ch02"><span class="dir">← 上一讲</span><span class="name">Agent Loop：循环、事件与消息边界</span></a>
+<a class="next" href="#ch04"><span class="dir">下一讲 →</span><span class="name">会话树：JSONL 里的分支与恢复</span></a>
+</nav>
+</section>
+
+<section id="ch04" class="chapter">
+  <p class="chapter-kicker">第 4 讲 · 运行时核心</p>
+  <h2 class="chapter-title">会话树：一个 JSONL 文件里的分支与恢复<small>会话不是消息数组，而是带 parentId 的树；active branch 才进入模型上下文</small>
+  </h2>
+  <p class="chapter-lede">如果 Agent 只会「接着上一句说」，它永远无法安全地回到过去。Pi 把会话存成一棵可以分支的树：每次探索都是新路径，旧路径不删除；压榨上下文时也只替换「模型看到的部分」，原始记录仍在磁盘上。</p>
+  <p class="source-line">
+    <span>源码 <code>packages/coding-agent/src/core/session-manager.ts</code></span>
+    <span>格式 <a href="https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/session-format.md">session-format.md</a></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>读懂一行 JSONL 里的 <code class="inline-code">id</code> / <code class="inline-code">parentId</code> 如何构成树</li>
+    <li>说清「active branch」为什么不等于「整个会话文件」</li>
+    <li>解释压缩条目为什么不会删掉原始消息</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>为什么不是消息数组</h3>
+    <p>线性消息数组的隐含假设是：你永远只会沿着一条路往下走。但真实工作里，人经常想「回到刚才那个点，换一种做法」。如果直接截断数组，被放弃的方案就丢失了；如果复制整个会话，又会得到一堆互不相关的文件。</p>
+    <p>Pi 的选择是树：每个条目有唯一 <code class="inline-code">id</code>，并记录 <code class="inline-code">parentId</code>；从根到当前叶子的路径就是 active branch。回到旧节点再提交，会从那个节点长出一条新分支，旧分支原地保留。</p>
+
+    <div class="analogy">
+      <span class="analogy-title">像 Git 的提交图，而不是一条时间线</span>
+      <p>Git 允许你从旧提交开新分支，旧提交不会消失。Pi 的会话树也是这样：<code>parentId</code> 是「从哪来」，<code>id</code> 是「现在在哪」。模型每次只看到当前分支，但你可以随时切回另一条。</p>
+      <p><b>类比到哪为止：</b>Git 合并分支；Pi 不自动合并，切分支时可以选择把旧分支总结成一段 branch summary，再带进新分支。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>文件长什么样</h3>
+    <p>会话文件是 JSONL：第一行是 header，之后每行一个树节点。版本 3 使用 <code class="inline-code">id</code>/<code class="inline-code">parentId</code> 表达树结构。</p>
+<pre data-lang="json"><code>{"type":"session","version":3,"id":"uuid","timestamp":"...","cwd":"/project"}
+{"type":"message","id":"a0b1c2d3","parentId":null,"timestamp":"...","message":{"role":"user","content":"Hello",...}}
+{"type":"message","id":"b2c3d4e5","parentId":"a0b1c2d3","timestamp":"...","message":{"role":"assistant",...}}
+{"type":"compaction","id":"f6g7h8i9","parentId":"e5f6g7h8","timestamp":"...","summary":"...","firstKeptEntryId":"c3d4e5f6"}
+</code></pre>
+    <p>除了普通 message，还有 model_change、thinking_level_change、usage、context_edit、branch_summary、custom、custom_message 等条目。它们有的参与模型上下文，有的只用于 UI/统计，有的只用于扩展状态。读文件时先看 <code class="inline-code">type</code>，再看它是否进入 active branch。</p>
+
+    <h3><span class="h3num">03</span>SessionManager 负责什么</h3>
+    <p><code class="inline-code">SessionManager</code> 不是简单的 append-only 日志：它维护树、当前叶子、分支切换、压缩与导出。对使用者而言，几个命令对应几个动作：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>命令</th><th>动作</th><th>结果</th></tr></thead>
+        <tbody>
+          <tr><td><code>pi --continue</code></td><td>打开当前目录最近会话</td><td>沿用原文件</td></tr>
+          <tr><td><code>pi --resume</code></td><td>打开会话选择器</td><td>可切换到任意会话</td></tr>
+          <tr><td><code>/tree</code></td><td>在当前文件内移动</td><td>从旧节点长出新分支</td></tr>
+          <tr><td><code>/fork</code></td><td>从某条用户消息复制到新文件</td><td>新会话 ID</td></tr>
+          <tr><td><code>/clone</code></td><td>复制 active branch</td><td>独立副本</td></tr>
+        </tbody>
+      </table>
+    </div>
+<pre data-lang="ts"><code>import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
+
+const { session } = await createAgentSession({
+  sessionManager: SessionManager.inMemory(), // 或持久化 manager
+});
+
+console.log(session.messages);   // 当前 active branch 的消息
+await session.prompt("继续上一轮的工作");
+</code></pre>
+    <p>会话的工作目录在创建时固定，之后不随进程 cwd 改变。这一点很关键：工具、<code class="inline-code">@path</code> 引用、项目配置和 context files 都相对会话 cwd 解析。打开另一个目录的会话时，要么继续使用原 cwd，要么 fork 到当前目录。</p>
+
+    <h3><span class="h3num">04</span>压缩与会话树的关系</h3>
+    <p>压缩不是删除旧节点，而是在当前分支上追加一个 <code class="inline-code">CompactionEntry</code>。它保存摘要和 <code class="inline-code">firstKeptEntryId</code>：重建上下文时，摘要替换更早的消息，从 <code class="inline-code">firstKeptEntryId</code> 开始保留。原始条目仍然在文件里，可用于导出、审计或未来的 context_edit。</p>
+    <p>切换分支时，Pi 还可以生成 <code class="inline-code">BranchSummaryEntry</code>，把被放弃路径的工作总结后挂到新分支上。这样既保留了「另一条路试过什么」，又不会把整条旧分支塞回上下文。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么压缩条目要带 firstKeptEntryId，而不是直接存一个新的消息数组？</summary>
+      <div class="deep-body">
+        <p>因为会话树需要保持可导航。如果压缩直接写一个新的消息数组，就丢失了「旧条目与保留条目之间的父子关系」，也无法在 UI 里回到压缩前的位置。用 <code>firstKeptEntryId</code> 标记保留边界，压缩就只是「在树上追加一个读法」，而不是「重写历史」。</p>
+        <p>重复压缩时，新的 summarized span 会从上次的保留边界开始，而不是从压缩条目本身开始，这样之前幸存的消息还会被再次纳入摘要，不会出现「压缩边界之前的内容永远丢失」。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">05</span>常见误区</h3>
+    <p><b>「会话文件就是模型上下文」。</b>不是。模型只看到 active branch 经转换/压缩后的投影；文件里有大量不参与上下文的内容，例如 usage、custom entry、被 context_edit 省略的消息。</p>
+    <p><b>「切分支会丢消息」。</b>不会。旧分支仍在树里，只是不在当前 active branch；你可以切回去，也可以选择生成摘要带走。</p>
+
+    <h3><span class="h3num">06</span>自测</h3>
+    <details class="quiz">
+      <summary>一个会话文件里有 10 条消息，模型这次会看到几条？</summary>
+      <div class="answer"><p>不一定 10 条。模型只收到 active branch 的投影：可能经过 context_edit 省略、compaction 摘要替换，以及 convertToLlm 过滤。文件里的条目数不等于上下文里的消息数。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么会话的 cwd 要在创建时固定？</summary>
+      <div class="answer"><p>因为工具、路径解析、项目配置与 context files 都依赖它。如果 cwd 随进程变化，同一个会话在不同时刻可能读写不同目录，导致结果不可复现、甚至改错仓库。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>压缩之后，原始旧消息还在吗？</summary>
+      <div class="answer"><p>还在。压缩只是追加一个 CompactionEntry，原始条目保留在 JSONL 中；重建上下文时旧消息被摘要替换，但文件、导出与审计仍然能看到它们。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>会话树是 Pi 的「长期记忆」：它用 id/parentId 保存所有探索，用 active branch 决定模型看到什么，用压缩条目在不删历史的前提下控制上下文。理解这棵树，才能理解 Pi 的恢复、分支与审计。</p>
+      <p class="next"><b>下一讲：</b>当 active branch 太长时，压缩到底如何选择摘要边界、如何让摘要接管旧历史？</p>
+    </div>
+  </div>
+
+<nav class="chapter-nav" aria-label="章节导航">
+<a class="prev" href="#ch03"><span class="dir">← 上一讲</span><span class="name">工具引擎：8 个工具背后的工程细节</span></a>
+<a class="next" href="#ch05"><span class="dir">下一讲 →</span><span class="name">上下文压缩：摘要如何接管旧历史</span></a>
+</nav>
+</section>
+
+<section id="ch05" class="chapter">
+  <p class="chapter-kicker">第 5 讲 · 上下文与扩展</p>
+  <h2 class="chapter-title">上下文压缩：摘要如何接管旧历史<small>不是删消息，而是在会话树上追加一个「从哪开始看」的边界</small>
+  </h2>
+  <p class="chapter-lede">上下文窗口是稀缺资源。Pi 的策略不是简单截断，而是把「较早的历史」压成结构化摘要，保留最近一段原始消息，并在会话树里记录保留边界。这样模型看到的是压缩后的投影，原始证据仍在磁盘上。</p>
+  <p class="source-line">
+    <span>源码 <code>packages/coding-agent/src/core/compaction/</code></span>
+    <span>文档 <a href="https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/compaction.md">compaction.md</a></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>写出自动压缩的触发条件，并解释 reserveTokens 与 keepRecentTokens 的区别</li>
+    <li>说清 CompactionEntry 的 firstKeptEntryId 如何决定「模型从哪继续读」</li>
+    <li>理解压缩失败、溢出恢复与 branch summary 的关系</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>什么时候压？</h3>
+    <p>Pi 的自动压缩触发条件很直接：</p>
+<pre data-lang="text"><code>contextTokens &gt; contextWindow - reserveTokens
+
+默认 reserveTokens   = 16384
+默认 keepRecentTokens = 20000
+</code></pre>
+    <p><code class="inline-code">reserveTokens</code> 是留给「下一步还要输出」的空间，不是保留的历史；<code class="inline-code">keepRecentTokens</code> 才是压缩时尽量保留的最近消息预算。两者名字相近，作用完全不同。触发点在一轮工具结束、结果追加之后，下一次模型调用之前检查——因为工具结果往往是把上下文撑爆的最后一根稻草。</p>
+
+    <div class="analogy">
+      <span class="analogy-title">像给行李箱做减量打包</span>
+      <p>行李箱装不下时，你不会把最近要用的东西扔掉；你会把早期衣物压缩成收纳袋，留下最近几天要穿的。压缩摘要就是那个收纳袋，保留边界就是「从哪件衣服开始不压缩」。</p>
+      <p><b>类比到哪为止：</b>收纳袋里的东西仍能打开查看；Pi 的原始消息也仍在会话树里，只是不再进入下一轮模型请求。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>怎么压：从后往前找切点</h3>
+    <p>压缩不是「取前 N 条总结」。它从当前投影的末尾往前走，累计 token，直到达到 <code class="inline-code">keepRecentTokens</code>；切点只能落在用户消息、助手消息、bash 执行或 custom message 上，<b>不能落在 tool result</b>，因为工具结果必须和它的调用待在一起。</p>
+    <div class="flow">
+      <div class="flow-node"><b>旧历史</b>被摘要替换</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>CompactionEntry</b>summary + firstKeptEntryId</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>最近消息</b>从保留边界开始</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>下一轮请求</b>system + summary + 最近消息</div>
+    </div>
+
+    <h3><span class="h3num">03</span>压缩条目长什么样</h3>
+    <p>压缩的结果不是一段拼接文本，而是一个有结构的会话条目：</p>
+<pre data-lang="ts"><code>interface CompactionEntry {
+  type: "compaction";
+  id: string;
+  parentId: string | null;
+  summary: string;
+  firstKeptEntryId: string;
+  tokensBefore: number;
+  usage?: Usage;
+  details?: CompactionDetails;
+}
+</code></pre>
+    <p>其中 <code class="inline-code">firstKeptEntryId</code> 是重建上下文的关键：它之前的消息被摘要替代，它之后的消息原样保留。保留边界可能落在一条助手消息上（当一个用户消息 span 本身超预算时），这时 Pi 会分别总结「更早历史」和「当前 span 的前半段」，再合并。</p>
+
+    <h3><span class="h3num">04</span>压缩失败与溢出恢复</h3>
+    <p>压缩本身也是一次 LLM 调用，可能失败。Pi 不会因此丢掉会话：失败时保留原始上下文，提示用户修正 provider 或稍后重试。对于 provider 的 context-overflow 错误，或提前出现的 <code class="inline-code">stopReason: "length"</code>，Pi 还有一次「压缩后重试」的恢复机会。</p>
+    <div class="callout warn">
+      <span class="callout-title">压缩请求不写 prompt cache</span>
+      <p>摘要请求通常是一次性的，不太可能复用。Pi 在压缩请求中禁用 cache write，避免为一次性的摘要付出缓存写入成本。</p>
+    </div>
+
+    <h3><span class="h3num">05</span>branch summary：换条路时带走经验</h3>
+    <p>压缩解决「当前分支太长」，branch summary 解决「我要离开当前分支，但不想丢掉这段工作」。用 <code class="inline-code">/tree</code> 切到另一条路径时，Pi 可以总结被放弃的分支，把摘要挂到新分支上。它和压缩共用结构化摘要与文件追踪，但触发场景不同。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么压缩不直接生成一堆新消息，而是只追加一个 entry？</summary>
+      <div class="deep-body">
+        <p>因为会话是树，树需要保留导航能力。如果压缩重写消息数组，就无法再从压缩前的节点切回旧分支，也无法审计「模型当时到底看到了什么」。只追加一个 entry，并把「模型从哪开始读」编码进 <code>firstKeptEntryId</code>，压缩就变成一次可逆的读法变化。</p>
+        <p>重复压缩时，新的摘要从上次保留边界开始，而不是从压缩条目本身开始，避免把之前幸存的消息永久排除在摘要之外。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">06</span>动手实验</h3>
+    <ol class="steps">
+      <li><b>手动压缩</b>：在一个长会话里执行 <code class="inline-code">/compact 保留所有关于认证的决策</code>，然后查看会话 JSONL，找到新增的 compaction entry 与 <code>firstKeptEntryId</code>。</li>
+      <li><b>制造溢出</b>：用一个大文件把上下文推过阈值，观察自动压缩发生在工具结果之后还是下一次 prompt 之前；再对比关闭自动压缩时的行为。</li>
+    </ol>
+
+    <h3><span class="h3num">07</span>自测</h3>
+    <details class="quiz">
+      <summary>reserveTokens 是「保留的历史」吗？</summary>
+      <div class="answer"><p>不是。reserveTokens 是为下一次模型输出预留的空间，触发条件是「已用上下文 + reserve 超过窗口」。保留多少历史由 keepRecentTokens 控制。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么切点不能落在 tool result 上？</summary>
+      <div class="answer"><p>tool result 必须紧跟对应的 toolCall 才能被模型正确理解。切在 tool result 上会导致保留的消息以一条孤立的工具结果开头，模型无法把它和调用关联起来。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>压缩后原始消息还能找回吗？</summary>
+      <div class="answer"><p>能。原始 entry 保留在 JSONL 树中；压缩只是改变后续请求的投影。UI、导出、审计仍可访问旧条目，context_edit 也可以对它们做后续处理。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>压缩不是「删历史」，而是「在树上增加一个读法」：摘要替换旧消息，firstKeptEntryId 标记保留起点，原始证据不动。理解这一点，你才能安全地设计长跑 Agent 的上下文策略。</p>
+      <p class="next"><b>下一讲：</b>Pi 如何把「新能力」挂进这个运行时？扩展系统允许你在不 fork 核心的情况下拦截工具、注入上下文、添加命令。</p>
+    </div>
+  </div>
+
+<nav class="chapter-nav" aria-label="章节导航">
+<a class="prev" href="#ch04"><span class="dir">← 上一讲</span><span class="name">会话树：JSONL 里的分支与恢复</span></a>
+<a class="next" href="#ch06"><span class="dir">下一讲 →</span><span class="name">扩展系统：在进程内改造 Pi</span></a>
+</nav>
+</section>
+
+<section id="ch06" class="chapter">
+  <p class="chapter-kicker">第 6 讲 · 上下文与扩展</p>
+  <h2 class="chapter-title">扩展系统：在进程内改造 Pi
+    <small>扩展不是沙箱插件，而是能订阅生命周期、注册工具与命令的 TypeScript 模块</small>
+  </h2>
+  <p class="chapter-lede">Pi 的「极简」能成立，靠的是扩展系统：核心不内置的权限门禁、计划模式、子代理、外部集成，都可以在扩展里实现。代价是扩展拥有与 Pi 相同的系统权限——这既是能力，也是信任边界。</p>
+  <p class="source-line">
+    <span>源码 <code>packages/coding-agent/src/extensions/</code> · <code>src/core/extensions/types.ts</code></span>
+    <span>文档 <a href="https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md">extensions.md</a></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>写一个能拦截工具调用、注册工具与命令的最小扩展</li>
+    <li>说清扩展的加载位置、热重载与安全边界</li>
+    <li>知道扩展如何持久化自己的状态，而不污染模型上下文</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>扩展是什么</h3>
+    <p>扩展是一个导出默认工厂函数的 TypeScript/JavaScript 模块，工厂收到 <code class="inline-code">ExtensionAPI</code>。它在 Pi 进程内运行，通过 <code class="inline-code">pi.on(...)</code> 订阅生命周期事件，通过 <code class="inline-code">pi.registerTool()</code>、<code class="inline-code">registerCommand()</code>、<code class="inline-code">registerShortcut()</code> 添加能力。</p>
+<pre data-lang="ts"><code>import { type ExtensionAPI, isToolCallEventType } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+
+export default function (pi: ExtensionAPI) {
+  pi.on("tool_call", async (event, ctx) =&gt; {
+    if (isToolCallEventType("bash", event) &amp;&amp; event.input.command.includes("rm -rf")) {
+      const ok = await ctx.ui.confirm("危险命令", "允许执行 rm -rf？");
+      if (!ok) return { block: true, reason: "用户拒绝" };
+    }
+  });
+
+  pi.registerTool({
+    name: "greet",
+    label: "Greet",
+    description: "Greet someone by name",
+    parameters: Type.Object({ name: Type.String() }),
+    async execute(_id, params) {
+      return { content: [{ type: "text", text: `Hello, ${params.name}!` }] };
+    },
+  });
+}
+</code></pre>
+    <p>这段代码同时展示了两种扩展点：<b>拦截</b>（tool_call 事件可以阻止或修改调用）与<b>新增</b>（注册一个模型可调用的工具）。权限门禁、路径保护、git checkpoint 都属于前者；自定义工具、外部系统连接属于后者。</p>
+
+    <div class="analogy">
+      <span class="analogy-title">像给笔记本接扩展坞</span>
+      <p>笔记本本身只保留核心接口；需要网口、读卡器、外接屏时，通过扩展坞接入。扩展坞不是笔记本的一部分，但能直接使用同一套电源与总线。</p>
+      <p><b>类比到哪为止：</b>扩展坞通常受硬件隔离；Pi 的扩展与宿主同进程、同权限，所以「信任来源」比接口本身更重要。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>扩展能挂在哪里</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>能力</th><th>API</th><th>典型用途</th></tr></thead>
+        <tbody>
+          <tr><td>生命周期事件</td><td><code>pi.on(event, handler)</code></td><td>拦截工具、注入上下文、监听会话开始/结束</td></tr>
+          <tr><td>自定义工具</td><td><code>pi.registerTool()</code></td><td>连接内部 API、数据库、工单系统</td></tr>
+          <tr><td>命令 / 快捷键</td><td><code>registerCommand</code> / <code>registerShortcut</code></td><td><code>/review</code>、一键切换模式</td></tr>
+          <tr><td>UI</td><td><code>ctx.ui.confirm / select / input / notify</code></td><td>危险操作确认、状态提示、自定义面板</td></tr>
+          <tr><td>持久化</td><td><code>pi.appendEntry()</code></td><td>保存扩展状态，不进入模型上下文</td></tr>
+          <tr><td>Provider / MCP</td><td><code>registerProvider</code> 等</td><td>接入本地模型、外部 MCP server</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3><span class="h3num">03</span>加载位置与热重载</h3>
+    <p>扩展可以放在全局目录、项目目录，或通过 <code class="inline-code">pi -e ./path.ts</code> 临时加载：</p>
+<pre data-lang="text"><code>~/.pi/agent/extensions/*.ts        # 全局，所有项目
+&lt;project&gt;/.pi/extensions/*.ts      # 项目级，项目被信任后才加载
+pi -e ./my-extension.ts            # 临时测试
+/reload                            # 热重载自动发现目录中的扩展
+</code></pre>
+    <p>项目级扩展只有在项目被 trust 之后才会加载，这是安全模型的一部分：扩展能读文件、执行命令，不能对不受信任的仓库自动放权。</p>
+
+    <h3><span class="h3num">04</span>状态：custom entry 与 custom message</h3>
+    <p>扩展如果需要在会话里保存状态，可以用 <code class="inline-code">pi.appendEntry()</code> 写入 custom entry。它会被持久化到 JSONL，但不参与模型上下文。若需要注入模型可见的内容，则使用 custom message；后者会经过 convertToLlm，成为模型输入的一部分。</p>
+    <div class="callout key">
+      <span class="callout-title">区分「给 UI 的状态」与「给模型的上下文」</span>
+      <p>把扩展状态都塞进模型上下文，会浪费 token 并干扰推理；反过来，把该让模型知道的信息只存 UI，也会让它失去关键上下文。Pi 用两种 entry 把这两件事分开。</p>
+    </div>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么扩展能「阻止」工具调用，而不是只能在执行后补救？</summary>
+      <div class="deep-body">
+        <p>因为 <code>tool_call</code> 事件发生在真正执行之前。扩展可以返回 <code>{ block: true, reason }</code>，Pi 会把这次调用变成错误结果回填给模型，而不是执行工具。这样权限门禁、路径保护、危险命令确认都能在副作用发生前生效。</p>
+        <p>代价是扩展拥有了很大的权力：它可以放行、拒绝、修改参数。Pi 的应对不是沙箱（扩展仍在同一进程），而是 trust 机制与「只加载可信来源」的约定。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">05</span>常见误区</h3>
+    <p><b>「扩展是安全的沙箱插件」。</b>不是。扩展运行在 Pi 进程内，拥有同样的 OS 权限，能读凭据、会话与文件。只加载你信任的扩展。</p>
+    <p><b>「扩展只能加工具」。</b>它还能拦截事件、注册命令、控制 UI、注册 provider 与 MCP server、持久化状态。工具只是其中一种能力。</p>
+
+    <h3><span class="h3num">06</span>自测</h3>
+    <details class="quiz">
+      <summary>想阻止对 .env 的写入，应该挂哪个事件？</summary>
+      <div class="answer"><p>挂 <code>tool_call</code>，判断是否为 edit/write 且路径指向 .env，然后返回 <code>{ block: true, reason }</code>。这样在文件被改之前就阻止，而不是事后恢复。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>扩展状态应该存 custom entry 还是 custom message？</summary>
+      <div class="answer"><p>取决于模型是否需要看到。只需要持久化给扩展自己/UI 用的状态，用 custom entry；需要进入模型上下文的，用 custom message。前者不影响 token，后者会参与请求。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么项目级扩展要等 trust 之后才加载？</summary>
+      <div class="answer"><p>因为扩展能执行任意代码、读取凭据和文件。如果打开一个不受信任的仓库就自动加载它的扩展，等于让仓库作者在你的机器上执行代码。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>扩展系统是 Pi「极简核心」的另一半：核心提供稳定的生命周期与注册点，扩展把能力装进去。理解事件顺序与两种 entry，你就能在不修改核心的情况下改造 Pi，同时清楚它的信任边界。</p>
+      <p class="next"><b>下一讲：</b>扩展之外，Pi 还有更轻量的能力注入方式——Skills 与 prompt templates，它们只加载「需要的那部分知识」。</p>
+    </div>
+  </div>
+
+<nav class="chapter-nav" aria-label="章节导航">
+<a class="prev" href="#ch05"><span class="dir">← 上一讲</span><span class="name">上下文压缩：摘要如何接管旧历史</span></a>
+<a class="next" href="#ch07"><span class="dir">下一讲 →</span><span class="name">Skills 与资源：按需加载的知识</span></a>
+</nav>
+</section>
+
+<section id="ch07" class="chapter">
+  <p class="chapter-kicker">第 7 讲 · 上下文与扩展</p>
+  <h2 class="chapter-title">Skills 与资源：只加载需要的那部分知识<small>SKILL.md 先给模型看「目录」，真正需要时才展开全文</small>
+  </h2>
+  <p class="chapter-lede">不是所有能力都需要写成代码。有些知识是一套流程、一份格式说明、一组脚本——Pi 用 Skills 承载它们：启动时只把名称、描述和路径放进系统提示，等任务真的需要，再读取完整 SKILL.md。这是上下文工程里最划算的「延迟加载」。</p>
+  <p class="source-line">
+    <span>技能 <code>packages/coding-agent/src/core/skills.ts</code></span>
+    <span>文档 <a href="https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md">skills.md</a> · <a href="https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md">packages.md</a></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>写一个符合 Agent Skills 规范的 SKILL.md，并说清 description 的路由作用</li>
+    <li>解释「只加载描述、不加载全文」如何节省上下文</li>
+    <li>知道 Skills、prompt templates、packages、themes 各自解决什么问题</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>Skill 不是一个函数，而是一份说明书</h3>
+    <p>Skill 是一个目录，核心是 <code class="inline-code">SKILL.md</code>：YAML frontmatter 加正文。前面可以放脚本、参考文档、模板等支持文件。模型看到的不是全文，而是名称、描述和路径；需要时再读。</p>
+<pre data-lang="text"><code>---
+name: pdf-tools
+description: Extract text and tables from PDF files. Use when reading, converting, or inspecting PDFs.
+---
+
+# PDF tools
+
+Read `references/formats.md` before converting a document.
+Run scripts relative to this skill directory.
+</code></pre>
+    <p><code class="inline-code">description</code> 是最重要的字段：它决定模型在什么时候会想起这个 Skill。写「Helps with PDFs」几乎没有路由信息；写清「做什么 + 什么时候用」，才有机会被正确加载。</p>
+
+    <div class="analogy">
+      <span class="analogy-title">像图书馆的索引卡，而不是把书全搬来</span>
+      <p>Skills 启动时只给模型看索引卡：书名（name）、简介（description）、书架位置（path）。模型需要时再按位置取书，读完把关键内容带回工作台。</p>
+      <p><b>类比到哪为止：</b>图书馆不会因为你看过索引就自动把书打开；Pi 需要模型主动读取 SKILL.md，或用 <code>/skill:name</code> 强制加载。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>发现与加载</h3>
+    <p>Pi 扫描用户级与项目级目录，把每个 Skill 的名称、描述、路径加入系统提示；完整指令只在任务匹配时读取。常用位置包括：</p>
+<pre data-lang="text"><code>~/.pi/agent/skills/
+&lt;project&gt;/.pi/skills/
+~/.agents/skills/
+&lt;project&gt;/.agents/skills/
+</code></pre>
+    <p>项目级 Skills 会从当前工作目录向上查找，直到仓库根；它们同样受 trust 约束。手动强制加载用 <code class="inline-code">/skill:name</code>，后面的参数会作为用户请求追加到指令之后。</p>
+
+    <h3><span class="h3num">03</span>Skills 之外：prompt templates 与 packages</h3>
+    <div class="card-grid">
+      <div class="card">
+        <h4>Prompt template</h4>
+        <p>一段可复用的消息文本，适合「每次都要用同样的话开头」的场景。它在输入阶段展开，不涉及工具执行。</p>
+      </div>
+      <div class="card">
+        <h4>Pi package</h4>
+        <p>把 extensions、skills、templates、themes 打包，通过 npm 或 git 分发。适合团队共享一整套工作方式。</p>
+      </div>
+      <div class="card">
+        <h4>Theme</h4>
+        <p>只影响终端配色与显示，不改变 Agent 行为。它和 Skills 一样，是「资源」而不是「运行时机制」。</p>
+      </div>
+    </div>
+    <p>三者的共同点是：都不需要改 Pi 核心。区别在于注入点不同——template 改输入，skill 改知识上下文，package 负责分发。</p>
+
+    <h3><span class="h3num">04</span>什么时候不该用 Skill</h3>
+    <p>如果一件事需要新的可执行能力（调用内部 API、写数据库、注册工具），它应该写成扩展，而不是 Skill。Skill 适合「需要一套知识/流程/脚本」但不需要新工具注册的场景。判断标准：模型缺的是「知道怎么做」，还是「有办法做」？</p>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么 Skill 的 description 比正文还重要？</summary>
+      <div class="deep-body">
+        <p>因为正文只有在被选中后才会加载。启动时模型看到的只有 name、description、path；它必须根据 description 判断「这个任务是否属于该 Skill 的适用范围」。描述写得太泛，会导致该加载时没加载；写得太窄，会导致误判。</p>
+        <p>这也是为什么规范建议描述里同时写「能力」与「触发条件」，并避免「Helps with X」这类没有路由信息的表述。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">05</span>自测</h3>
+    <details class="quiz">
+      <summary>Skill 启动时会把 SKILL.md 全文放进系统提示吗？</summary>
+      <div class="answer"><p>不会。启动时只加入名称、描述和路径；完整指令在任务匹配时由模型读取，或用 <code>/skill:name</code> 手动加载。这正是它节省上下文的原因。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>需要让模型调用公司内部工单 API，应该用 Skill 还是扩展？</summary>
+      <div class="answer"><p>扩展。因为它需要一个新的可执行工具与认证/网络逻辑；Skill 只能提供知识与流程，不能替模型注册并执行新工具。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么项目级 Skill 也要等项目被信任？</summary>
+      <div class="answer"><p>因为 Skill 可以指示模型运行脚本、读取文件，支持文件也可能包含可执行内容。不受信任的仓库不应自动把这种指令注入 Agent。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>Skills 是「按需加载的知识」，不是新工具。它把「知道怎么做」与「有办法做」分开：需要新执行能力找扩展，需要流程与参考资料找 Skill，需要复用打包找 package。</p>
+      <p class="next"><b>下一讲：</b>最后一层是「怎么使用」：同一个核心如何被 TUI、print、JSON、RPC 与 SDK 分别驱动。</p>
+    </div>
+  </div>
+
+<nav class="chapter-nav" aria-label="章节导航">
+<a class="prev" href="#ch06"><span class="dir">← 上一讲</span><span class="name">扩展系统：在进程内改造 Pi</span></a>
+<a class="next" href="#ch08"><span class="dir">下一讲 →</span><span class="name">运行接口：TUI、print、JSON、RPC、SDK</span></a>
+</nav>
+</section>
+
+<section id="ch08" class="chapter">
+  <p class="chapter-kicker">第 8 讲 · 落地与超越</p>
+  <h2 class="chapter-title">运行接口：TUI、print、JSON、RPC 与 SDK
+    <small>同一个 agent + session 核心，五种消费者，事件是它们共同的语言</small>
+  </h2>
+  <p class="chapter-lede">Pi 不只是一个终端应用。你可以把它当交互式 TUI 用，也可以在脚本里一次调用、在进程间用 JSONL 控制，或直接用 TypeScript SDK 嵌入自己的应用。理解这些接口，才知道 Pi 的「核心」到底在哪一层。</p>
+  <p class="source-line">
+    <span>源码 <code>packages/coding-agent/src/main.ts</code> · <code>src/modes/</code> · <code>src/core/sdk.ts</code></span>
+    <span>文档 <a href="https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md">cli.md</a> · <a href="https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/sdk.md">sdk.md</a></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>根据场景选择 TUI、print、JSON、RPC 或 SDK，而不是默认选最重的那个</li>
+    <li>用 SDK 创建一个会话并订阅流式事件</li>
+    <li>说清 project trust、会话 cwd 与扩展权限之间的关系</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>五种接口，一套核心</h3>
+    <p>Pi 的交互方式由两个维度决定：<b>是否一次性执行</b>（print）与<b>输出协议</b>（text / json / rpc / sdk）。但它们共享同一套 AgentSession、工具与会话管理。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>接口</th><th>启动方式</th><th>典型场景</th></tr></thead>
+        <tbody>
+          <tr><td>TUI</td><td><code>pi</code></td><td>人类交互、查看工具过程</td></tr>
+          <tr><td>Print</td><td><code>pi -p "..."</code></td><td>脚本里只要最终答复</td></tr>
+          <tr><td>JSON</td><td><code>pi --mode json "..."</code></td><td>消费完整事件流、做可视化/审计</td></tr>
+          <tr><td>RPC</td><td><code>pi --mode rpc</code></td><td>其他语言的宿主进程控制 Pi</td></tr>
+          <tr><td>SDK</td><td><code>createAgentSession()</code></td><td>在自己的 Node/Bun 应用内嵌入 Pi</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="analogy">
+      <span class="analogy-title">像同一台服务器，不同的客户端</span>
+      <p>数据库本身只有一套存储与查询逻辑；命令行、GUI、API 只是不同客户端。Pi 的 TUI、print、JSON、RPC、SDK 也是这样：换的是「怎么发起请求、怎么看结果」，不换核心。</p>
+      <p><b>类比到哪为止：</b>客户端可以隐藏或聚合过程；Pi 的事件流对每个接口都保留，只是有的接口选择不展示。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>CLI：最短的三条命令</h3>
+<pre data-lang="bash"><code>pi --print "总结这个仓库的架构"
+git diff | pi --print "review 这次改动"
+pi --mode json "检查当前目录" &gt; events.jsonl
+</code></pre>
+    <p><code class="inline-code">--print</code> 只输出最终回答；<code class="inline-code">--mode json</code> 输出逐条事件，适合被程序消费。两者共享同一套工具与会话，只是输出层不同。注意 JSON 与 RPC 模式会占用 stdout 作为协议通道，不能混入其他打印。</p>
+
+    <h3><span class="h3num">03</span>SDK：把 Pi 嵌进应用</h3>
+    <p>如果宿主本身就是 TypeScript，SDK 是最直接的方式。它创建一个 <code class="inline-code">AgentSession</code>，你负责 prompt、订阅事件、最后 dispose。</p>
+<pre data-lang="ts"><code>import { createAgentSession } from "@earendil-works/pi-coding-agent";
+
+const { session } = await createAgentSession();
+
+const unsubscribe = session.subscribe((event) =&gt; {
+  if (event.type === "message_update" &amp;&amp; event.assistantMessageEvent.type === "text_delta") {
+    process.stdout.write(event.assistantMessageEvent.delta);
+  }
+});
+
+try {
+  await session.prompt("解释这个仓库的入口");
+} finally {
+  unsubscribe();
+  session.dispose();
+}
+</code></pre>
+    <p><code class="inline-code">prompt()</code> 在 run 结束后 resolve；流式输出靠订阅事件，而不是把回调塞进 prompt。若 prompt 在流式过程中到达，必须明确要 steer 还是 follow-up，不能靠猜。</p>
+
+    <h3><span class="h3num">04</span>安全边界：trust、cwd 与进程权限</h3>
+    <p>Pi 的信任模型很直接：先决定项目是否 trust，再加载项目级设置、扩展与资源；trust 之后再加载 context files。扩展运行在 Pi 进程内，拥有与宿主相同的 OS 权限；工具也使用进程权限。Pi 本身不是沙箱。</p>
+    <div class="callout warn">
+      <span class="callout-title">不要把「极简」误读成「安全隔离」</span>
+      <p>Pi 的核心代码少，不等于它运行在受限环境里。要隔离，需要容器、虚拟机或操作系统级沙箱；扩展与工具默认都能接触真实文件与凭据。</p>
+    </div>
+    <p>会话 cwd 在创建时固定，工具与 <code class="inline-code">@path</code> 都相对它解析；这保证了同一会话的行为可复现，也避免了「打开另一个目录的会话却改错仓库」。</p>
+
+    <h3><span class="h3num">05</span>什么时候选哪一种</h3>
+    <div class="card-grid">
+      <div class="card">
+        <h4>人用</h4>
+        <p>选 TUI。你需要看工具调用、diff、确认与中断，这些过程信息比最终文本更重要。</p>
+      </div>
+      <div class="card">
+        <h4>脚本/CI</h4>
+        <p>选 print 或 JSON。只要结果用 print；要审计过程、做可视化或回放，用 JSON 事件流。</p>
+      </div>
+      <div class="card">
+        <h4>宿主应用</h4>
+        <p>进程内用 SDK，跨语言/隔离用 RPC。两者都能拿到事件，但 RPC 多了序列化与进程边界。</p>
+      </div>
+    </div>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么 SDK 的 prompt() 不直接返回流式回调？</summary>
+      <div class="deep-body">
+        <p>因为一次 run 可能包含多次模型调用与工具执行，最终答案只是其中一部分。把过程做成事件流，宿主可以按需处理文本 delta、工具状态、压缩和重试；prompt() 只承诺「run 结束」。这也是 TUI、JSON、RPC 与 SDK 能共享核心的原因。</p>
+        <p>另外，steering 与 follow-up 的语义要求宿主明确消息进入的时机；一个简单的回调参数无法表达这种队列语义。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">06</span>自测</h3>
+    <details class="quiz">
+      <summary>CI 里只要最终文本，应该用哪个接口？</summary>
+      <div class="answer"><p><code>pi --print</code>（或 <code>-p</code>）。它运行一次并只输出最终 assistant 文本，适合脚本取结果；需要过程就用 <code>--mode json</code>。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么 JSON 和 RPC 模式不能混入普通日志打印？</summary>
+      <div class="answer"><p>因为 stdout 被保留为协议通道，混入普通文本会破坏 JSONL 解析。日志应走 stderr 或宿主自己的日志系统。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>Pi 的核心小，是否意味着扩展是安全的？</summary>
+      <div class="answer"><p>不是。扩展在 Pi 进程内运行，拥有相同的系统权限，能读凭据、文件与会话。安全来自信任来源与外部沙箱，而不是核心代码量。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>接口只是消费者：TUI、print、JSON、RPC、SDK 共享同一个 AgentSession 与事件流。选型看场景，安全看信任边界；不要因为 Pi 小就误以为它默认隔离。</p>
+      <p class="next"><b>下一讲：</b>最后，把 Pi 与 Claude Code 放在一起比较：极简核心与集成产品，各自适合什么样的工作流？</p>
+    </div>
+  </div>
+
+<nav class="chapter-nav" aria-label="章节导航">
+<a class="prev" href="#ch07"><span class="dir">← 上一讲</span><span class="name">Skills 与资源：按需加载的知识</span></a>
+<a class="next" href="#ch09"><span class="dir">下一讲 →</span><span class="name">对比 Claude Code 与结课项目</span></a>
+</nav>
+</section>
+
+<section id="ch09" class="chapter">
+  <p class="chapter-kicker">第 9 讲 · 落地与超越</p>
+  <h2 class="chapter-title">对比 Claude Code，然后造一个自己的扩展<small>极简核心 vs 集成产品：不是谁更强，而是能力放在哪一层</small>
+  </h2>
+  <p class="chapter-lede">读到这里，你已经拆过 Pi 的循环、工具、会话、压缩与扩展。最后一讲把 Pi 放回产品谱系里：和 Claude Code 这类集成产品相比，它的优势与代价分别是什么？然后用一个可交付的小项目收尾。</p>
+  <p class="source-line">
+    <span>对照 <a href="https://github.com/earendil-works/pi">earendil-works/pi</a> · <a href="https://www.anthropic.com/claude-code">Claude Code</a></span>
+    <span>建议先读 <code>docs/how-pi-works.md</code> 与 <code>packages/coding-agent/docs/extensions.md</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>用「能力放在哪」解释 Pi 与 Claude Code 的设计差异</li>
+    <li>判断一个团队/场景该选极简 harness 还是集成产品</li>
+    <li>完成一个能运行的 Pi 扩展或小工具，作为结课项目</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>先给差异一个准确的框架</h3>
+    <p>不要说「Pi 是开源的 Claude Code」——它们解决的是同一个问题，但组织方式不同。Pi 把能力做成<b>可插拔扩展</b>，Claude Code 把常用能力做成<b>内建体验</b>。前者把选择权交给使用者，后者把默认体验做到开箱即用。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>维度</th><th>Pi</th><th>Claude Code</th></tr></thead>
+        <tbody>
+          <tr><td>核心边界</td><td>循环、工具、会话、上下文；其余扩展</td><td>更完整的内建工作流与产品体验</td></tr>
+          <tr><td>能力扩展</td><td>TypeScript 扩展、Skills、packages</td><td>内建工具、hooks、MCP、skills、子代理</td></tr>
+          <tr><td>典型优势</td><td>可读、可改、可替换；核心小</td><td>开箱即用；团队协作与生态成熟</td></tr>
+          <tr><td>典型代价</td><td>需要自己组装工作流</td><td>内部行为更复杂，改造受产品边界约束</td></tr>
+          <tr><td>会话模型</td><td>JSONL 树、分支、压缩、branch summary</td><td>以产品体验为中心，细节随版本演进</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>这张表不是裁判，而是选型工具：你越需要「审计每一条消息、替换每一层、把 Agent 嵌进自己的系统」，越适合 Pi；你越需要「今天就让团队用起来、少踩坑」，越适合成熟集成产品。</p>
+
+    <div class="analogy">
+      <span class="analogy-title">像买车与组装车</span>
+      <p>买整车：提车即开，维修保养有成熟体系，但每个零件长什么样你未必清楚。组装车：你可以选发动机、悬挂与电控，代价是得自己调校、自己排障。</p>
+      <p><b>类比到哪为止：</b>车最终都要上路；Agent 的「路况」是具体业务，选整车还是组装车，取决于你是否愿意维护那套调校能力。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>能力放在哪：三个判断问题</h3>
+    <ol class="steps">
+      <li><b>这件事需要新的执行能力吗？</b>需要 → 扩展/工具；只是知识与流程 → Skill。</li>
+      <li><b>它需要跨会话保存状态吗？</b>需要 → custom entry 或外部存储；只影响当前上下文 → custom message / context 注入。</li>
+      <li><b>它必须在副作用前拦截吗？</b>是 → tool_call 事件；事后补偿 → 其他生命周期事件。</li>
+    </ol>
+
+    <h3><span class="h3num">03</span>结课项目：给 Pi 加一个「写前确认」扩展</h3>
+    <p>目标：在模型执行 write/edit 之前，对匹配敏感路径的修改弹确认；拒绝时返回错误结果，让模型知道被阻止。这个项目覆盖了本课最重要的三块：事件、工具 schema、UI。</p>
+<pre data-lang="ts"><code>import type { ExtensionAPI, isToolCallEventType } from "@earendil-works/pi-coding-agent";
+
+export default function (pi: ExtensionAPI) {
+  const protectedPaths = [".env", ".git/", "node_modules/"];
+
+  pi.on("tool_call", async (event, ctx) =&gt; {
+    const tool = event.toolName;
+    if (tool !== "write" &amp;&amp; tool !== "edit") return;
+
+    const path = String(event.input?.path ?? "");
+    if (!protectedPaths.some((p) =&gt; path.includes(p))) return;
+
+    const ok = await ctx.ui.confirm(
+      "受保护路径",
+      `${tool} 将修改 ${path}，确认继续？`,
+    );
+    if (!ok) return { block: true, reason: "受保护路径被拒绝" };
+  });
+}
+</code></pre>
+    <p>把它放到 <code class="inline-code">~/.pi/agent/extensions/guard.ts</code>，重启 Pi 或执行 <code class="inline-code">/reload</code>。再让模型尝试写 <code class="inline-code">.env</code>，观察确认框与拒绝后的工具结果。最后把「哪些路径受保护」做成设置项，理解扩展如何读取配置并与 UI 协作。</p>
+<pre data-lang="bash"><code>mkdir -p ~/.pi/agent/extensions
+# 将 guard.ts 放到该目录
+pi
+# 在会话里执行：
+/reload
+# 然后让模型尝试修改 .env，观察确认与阻止
+</code></pre>
+
+    <h3><span class="h3num">04</span>进阶方向</h3>
+    <div class="card-grid">
+      <div class="card">
+        <h4>做会话可视化</h4>
+        <p>消费 JSON 事件流，把 turn、工具调用与压缩画成时间线。你会被迫理解事件顺序与 session entry。</p>
+      </div>
+      <div class="card">
+        <h4>做团队 Skill 包</h4>
+        <p>把团队代码规范、发布流程、评审清单写成 Skills，通过 package 分发，观察「知识加载」与「代码执行」的边界。</p>
+      </div>
+      <div class="card">
+        <h4>替换模型/provider</h4>
+        <p>通过扩展注册本地 provider，验证 Pi 的统一模型接口是否真的把厂商差异隔离在适配层。</p>
+      </div>
+    </div>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么说「极简」本身不是卖点？</summary>
+      <div class="deep-body">
+        <p>代码少不等于好。极简的价值在于：你能完整理解它、验证它、替换它；代价是很多能力要自己组装。如果一个团队没有维护 harness 的意愿，极简反而会变成负担。</p>
+        <p>所以选型时不要问「谁更先进」，要问「谁把复杂度放在了我们能承受的地方」。Pi 把复杂度放在扩展与集成层，Claude Code 把复杂度收进产品内部——两种都合理，取决于你的团队。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">05</span>面试速查：十个问题</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>问题</th><th>一句话答案</th></tr></thead>
+        <tbody>
+          <tr><td>Pi 的核心职责是什么？</td><td>循环、工具、会话、上下文；其余扩展。</td></tr>
+          <tr><td>为什么有 8 个工具却说 4 个？</td><td>8 个是全部内置工具，4 个是 coding 四件套。</td></tr>
+          <tr><td>tool result 为什么要和 toolCall 绑定？</td><td>模型需要配对理解，压缩切点也不能落在 tool result。</td></tr>
+          <tr><td>会话为什么是树？</td><td>回退不删历史，分支可恢复、可总结。</td></tr>
+          <tr><td>压缩为什么不删原消息？</td><td>只改变模型投影，保留审计与导航。</td></tr>
+          <tr><td>扩展为什么危险？</td><td>进程内运行，拥有宿主权限。</td></tr>
+          <tr><td>Skill 和扩展的区别？</td><td>知识 vs 可执行能力。</td></tr>
+          <tr><td>为什么 write 要 per-file 队列？</td><td>同文件串行保证一致性，不同文件并行。</td></tr>
+          <tr><td>SDK 和 RPC 怎么选？</td><td>进程内 TypeScript 用 SDK，跨语言/隔离用 RPC。</td></tr>
+          <tr><td>Pi 适合什么样的团队？</td><td>愿意维护自己的 harness、需要审计与改造的团队。</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3><span class="h3num">06</span>自测</h3>
+    <details class="quiz">
+      <summary>Pi 与 Claude Code 的核心差异，应该怎么表述才准确？</summary>
+      <div class="answer"><p>不是「开源 vs 闭源」或「强 vs 弱」，而是能力放置位置：Pi 把非核心能力放到扩展与资源层，Claude Code 把常用能力收进内建产品体验。前者换取可改造性，后者换开箱即用。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>团队没有维护扩展的意愿，还适合 Pi 吗？</summary>
+      <div class="answer"><p>未必。Pi 的价值依赖「有人组装与维护工作流」。如果团队更看重稳定、开箱即用，成熟集成产品可能更合适。选型要看组织能力，而不是只看架构优雅。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>结课项目里，为什么拒绝写操作要返回 block，而不是直接抛异常？</summary>
+      <div class="answer"><p>因为需要让模型看到「这次调用被阻止了，以及原因」，从而调整策略。返回 block + reason 会变成工具错误结果进入循环；抛未处理异常可能中断整个 run。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>Pi 教的不是「如何复制一个 Claude Code」，而是「如何把 Agent 的复杂度放到你能掌控的位置」。当你能独立设计循环、工具、会话与扩展边界，选什么产品就只是工程判断，而不是信仰。</p>
+      <p class="next"><b>课程结束：</b>回到 ch02 的循环图，试着自己画一遍 Pi 的完整数据流；能画出来，就说明你真的读懂了。</p>
+    </div>
+  </div>
+
+<nav class="chapter-nav" aria-label="章节导航">
+<a class="prev" href="#ch08"><span class="dir">← 上一讲</span><span class="name">运行接口：TUI、print、JSON、RPC、SDK</span></a>
+</nav>
+</section>
+    </div>
+  </main>
+</div>
+
+<button class="to-top" id="to-top" title="回到顶部" aria-label="回到顶部">↑</button>
+
+<script>
+(function(){
+  "use strict";
+  var STORAGE_KEY = "pi-course-progress-v1";
+  var THEME_KEY = "pi-course-theme";
+  var $ = function(s,c){return (c||document).querySelector(s)};
+  var $$ = function(s,c){return Array.prototype.slice.call((c||document).querySelectorAll(s))};
+
+  /* ---------- theme ---------- */
+  var themeBtn = $("#theme-btn");
+  var savedTheme = null;
+  try{ savedTheme = localStorage.getItem(THEME_KEY); }catch(e){}
+  function applyTheme(t){
+    document.documentElement.setAttribute("data-theme", t);
+    themeBtn.setAttribute("title","当前主题：" + (t==="dark"?"深色":t==="light"?"浅色":"跟随系统"));
+    try{ localStorage.setItem(THEME_KEY, t); }catch(e){}
+  }
+  var themeOrder = ["auto","light","dark"];
+  var currentTheme = themeOrder.indexOf(savedTheme) >= 0 ? savedTheme : "auto";
+  applyTheme(currentTheme);
+  themeBtn.addEventListener("click", function(){
+    currentTheme = themeOrder[(themeOrder.indexOf(currentTheme)+1) % themeOrder.length];
+    applyTheme(currentTheme);
+  });
+
+  /* ---------- mobile sidebar ---------- */
+  var burger = $("#burger"), backdrop = $("#backdrop"), sidebar = $("#sidebar");
+  function setNav(open){
+    document.body.classList.toggle("nav-open", open);
+    burger.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+  burger.addEventListener("click", function(){ setNav(!document.body.classList.contains("nav-open")); });
+  backdrop.addEventListener("click", function(){ setNav(false); });
+
+  /* ---------- progress ---------- */
+  var links = $$(".nav-link");
+  var checks = $$(".nav-check");
+  var progressText = $("#progress-text"), progressBar = $("#progress-bar");
+  var done = {};
+  try{ done = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}") || {}; }catch(e){ done = {}; }
+  var totalChapters = links.length;
+
+  function paintProgress(){
+    var n = 0;
+    checks.forEach(function(c){
+      var id = c.getAttribute("data-check");
+      var isDone = !!done[id];
+      c.setAttribute("aria-checked", isDone ? "true" : "false");
+      c.setAttribute("title", isDone ? "标记为未读" : "标记为已读");
+      if(isDone) n++;
+    });
+    progressText.textContent = n + " / " + totalChapters;
+    progressBar.style.width = totalChapters ? (n/totalChapters*100) + "%" : "0%";
+    try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(done)); }catch(e){}
+  }
+  checks.forEach(function(c){
+    function toggle(e){
+      e.preventDefault(); e.stopPropagation();
+      var id = c.getAttribute("data-check");
+      if(done[id]) delete done[id]; else done[id] = 1;
+      paintProgress();
+    }
+    c.addEventListener("click", toggle);
+    c.addEventListener("keydown", function(e){
+      if(e.key === " " || e.key === "Enter"){ toggle(e); }
+    });
+  });
+  paintProgress();
+
+  /* ---------- scroll spy + reading progress ---------- */
+  var chapters = $$(".chapter");
+  var activeId = null;
+  function setActive(id){
+    if(id === activeId) return;
+    activeId = id;
+    links.forEach(function(l){ l.classList.toggle("active", l.getAttribute("data-ch") === id); });
+  }
+  if("IntersectionObserver" in window){
+    var visible = {};
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(en){
+        visible[en.target.id] = en.isIntersecting ? en.boundingClientRect.top : null;
+      });
+      var best = null;
+      chapters.forEach(function(ch){
+        if(visible[ch.id] !== undefined && visible[ch.id] !== null){
+          if(best === null || visible[ch.id] < (visible[best] === undefined || visible[best] === null ? Infinity : visible[best])) best = ch.id;
+        }
+      });
+      if(best) setActive(best);
+    }, {rootMargin:"-72px 0px -66% 0px", threshold:0});
+    chapters.forEach(function(ch){ io.observe(ch); });
+  }
+  var rp = $("#reading-progress"), toTop = $("#to-top");
+  function onScroll(){
+    var h = document.documentElement;
+    var max = h.scrollHeight - h.clientHeight;
+    var pct = max > 0 ? (h.scrollTop || document.body.scrollTop) / max * 100 : 0;
+    rp.style.width = pct + "%";
+    toTop.classList.toggle("show", (h.scrollTop || document.body.scrollTop) > 900);
+    if(!("IntersectionObserver" in window)){
+      var cur = chapters[0];
+      chapters.forEach(function(ch){
+        if(ch.getBoundingClientRect().top <= 120) cur = ch;
+      });
+      if(cur) setActive(cur.id);
+    }
+  }
+  addEventListener("scroll", onScroll, {passive:true});
+  addEventListener("resize", onScroll);
+  onScroll();
+  toTop.addEventListener("click", function(){ scrollTo({top:0, behavior:"smooth"}); });
+
+  /* ---------- sidebar search ---------- */
+  var searchInput = $("#side-search");
+  function filterNav(){
+    var q = (searchInput.value || "").trim().toLowerCase();
+    var parts = $$(".nav-part");
+    parts.forEach(function(part){
+      var any = false;
+      $$(".nav-link", part).forEach(function(l){
+        var hit = !q || l.textContent.toLowerCase().indexOf(q) >= 0;
+        l.classList.toggle("hidden", !hit);
+        if(hit) any = true;
+      });
+      part.classList.toggle("hidden", !any);
+    });
+  }
+  searchInput.addEventListener("input", filterNav);
+  searchInput.addEventListener("keydown", function(e){
+    if(e.key === "Escape"){ searchInput.value = ""; filterNav(); searchInput.blur(); }
+  });
+
+  /* ---------- code blocks: language label + copy ---------- */
+  $$("pre").forEach(function(pre){
+    if(pre.closest(".code-block")) return;
+    var code = pre.querySelector("code");
+    var lang = pre.getAttribute("data-lang") || (code && code.getAttribute("data-lang")) || "text";
+    var wrap = document.createElement("div");
+    wrap.className = "code-block";
+    var head = document.createElement("div");
+    head.className = "code-head";
+    head.innerHTML = '<span class="dots"><i></i><i></i><i></i></span><span class="lang">' + lang + '</span>';
+    var btn = document.createElement("button");
+    btn.className = "copy-btn"; btn.type = "button"; btn.textContent = "复制";
+    btn.addEventListener("click", function(){
+      var text = (code || pre).innerText;
+      function ok(){ btn.textContent = "已复制"; btn.classList.add("done");
+        setTimeout(function(){ btn.textContent = "复制"; btn.classList.remove("done"); }, 1600); }
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(ok, function(){ fallback(); });
+      } else { fallback(); }
+      function fallback(){
+        var ta = document.createElement("textarea");
+        ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.select();
+        try{ document.execCommand("copy"); ok(); }catch(e){}
+        document.body.removeChild(ta);
+      }
+    });
+    head.appendChild(btn);
+    pre.parentNode.insertBefore(wrap, pre);
+    wrap.appendChild(head);
+    wrap.appendChild(pre);
+  });
+
+  /* ---------- lightweight syntax highlighting ---------- */
+  var PY_KW = /^(def|class|return|if|elif|else|for|while|in|not|and|or|is|None|True|False|import|from|as|with|try|except|finally|raise|pass|break|continue|lambda|yield|async|await|global|nonlocal|assert|del|print)$/;
+  var PY_BI = /^(self|str|int|float|bool|list|dict|set|tuple|len|range|enumerate|open|super|type|isinstance|getattr|setattr|hasattr|print|json|os|sys|time|Path|Any|Optional|List|Dict|True|False|None)$/;
+  function escapeHtml(s){
+    return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+  function highlight(codeEl){
+    if(codeEl.getAttribute("data-hl")) return;
+    codeEl.setAttribute("data-hl","1");
+    var lang = (codeEl.getAttribute("data-lang") || codeEl.parentNode.getAttribute("data-lang") || "text").toLowerCase();
+    var text = codeEl.textContent;
+    if(lang !== "python" && lang !== "py" && lang !== "bash" && lang !== "sh"){
+      codeEl.innerHTML = escapeHtml(text);
+      return;
+    }
+    if(lang === "bash" || lang === "sh"){
+      var lines = text.split("\n").map(function(line){
+        var m = line.match(/^(\s*)(#.*)$/);
+        if(m) return escapeHtml(m[1]) + '<span class="tok-com">' + escapeHtml(m[2]) + "</span>";
+        var p = line.match(/^(\s*)(\$ )?(.*)$/);
+        return escapeHtml(p[1]) + (p[2] ? '<span class="tok-op">$ </span>' : "") +
+          escapeHtml(p[3]).replace(/(&#39;[^&]*?&#39;|'[^']*'|"[^"]*")/g, '<span class="tok-str">$1</span>');
+      });
+      codeEl.innerHTML = lines.join("\n");
+      return;
+    }
+    var out = "";
+    var i = 0;
+    var n = text.length;
+    while(i < n){
+      var ch = text[i];
+      if(ch === "#"){
+        var end = text.indexOf("\n", i);
+        if(end === -1) end = n;
+        out += '<span class="tok-com">' + escapeHtml(text.slice(i,end)) + "</span>";
+        i = end; continue;
+      }
+      if(ch === '"' || ch === "'"){
+        var quote = ch, j = i + 1;
+        while(j < n){
+          if(text[j] === "\\"){ j += 2; continue; }
+          if(text[j] === quote) break;
+          j++;
+        }
+        var str = text.slice(i, Math.min(j+1, n));
+        out += '<span class="tok-str">' + escapeHtml(str) + "</span>";
+        i = i + str.length; continue;
+      }
+      if(/[0-9]/.test(ch) && !/[A-Za-z_$]/.test(text[i-1] || "")){
+        var k = i;
+        while(k < n && /[0-9._]/.test(text[k])) k++;
+        out += '<span class="tok-num">' + escapeHtml(text.slice(i,k)) + "</span>";
+        i = k; continue;
+      }
+      if(/[A-Za-z_]/.test(ch)){
+        var w = i;
+        while(w < n && /[A-Za-z0-9_]/.test(text[w])) w++;
+        var word = text.slice(i,w);
+        var cls = "";
+        if(PY_KW.test(word)) cls = "tok-kw";
+        else if(PY_BI.test(word)) cls = "tok-bi";
+        if(cls) out += '<span class="' + cls + '">' + escapeHtml(word) + "</span>";
+        else out += escapeHtml(word);
+        i = w; continue;
+      }
+      out += escapeHtml(ch);
+      i++;
+    }
+    codeEl.innerHTML = out;
+  }
+  $$("pre code").forEach(highlight);
+
+  /* ---------- expand all deep blocks ---------- */
+  var expandBtn = $("#expand-btn");
+  var expanded = false;
+  expandBtn.addEventListener("click", function(){
+    expanded = !expanded;
+    $$("details.deep").forEach(function(d){ d.open = expanded; });
+    expandBtn.querySelector(".lbl").textContent = expanded ? "收起" : "展开";
+  });
+
+  /* ---------- print ---------- */
+  $("#print-btn").addEventListener("click", function(){ window.print(); });
+  addEventListener("beforeprint", function(){
+    $$("details").forEach(function(d){ if(!d.open) d.setAttribute("data-was-closed","1"); d.open = true; });
+  });
+  addEventListener("afterprint", function(){
+    $$("details[data-was-closed]").forEach(function(d){ d.open = false; d.removeAttribute("data-was-closed"); });
+  });
+
+  /* ---------- keyboard ---------- */
+  function gotoSibling(dir){
+    var idx = links.indexOf(document.querySelector(".nav-link.active"));
+    var target = idx >= 0 ? links[idx + dir] : null;
+    if(target) location.hash = target.getAttribute("href");
+  }
+  addEventListener("keydown", function(e){
+    var tag = (e.target && e.target.tagName || "").toLowerCase();
+    var typing = tag === "input" || tag === "textarea" || e.target.isContentEditable;
+    if(e.key === "/" && !typing){ e.preventDefault(); searchInput.focus(); }
+    if(typing) return;
+    if(e.key === "[" || e.key === "ArrowLeft"){ gotoSibling(-1); }
+    if(e.key === "]" || e.key === "ArrowRight"){ gotoSibling(1); }
+  });
+  $$(".nav-link").forEach(function(l){
+    l.addEventListener("click", function(){
+      if(window.innerWidth <= 900) setNav(false);
+    });
+  });
+
+  /* ---------- mark active chapter done when scrolled past ---------- */
+  $$("section.chapter").forEach(function(sec){
+    sec.addEventListener("dblclick", function(){
+      var cb = document.querySelector('.nav-check[data-check="' + sec.id + '"]');
+      if(cb) cb.click();
+    });
+  });
+})();
+</script>
+</body>
+</html>
