@@ -564,19 +564,21 @@
     "uniform float uTime;",
     "uniform vec2 uPointer;",
     "uniform float uShift;",
+    "uniform float uBurst;",
     "varying vec3 vCol;",
     "varying float vAlpha;",
     "void main(){",
     "  vec3 p = aPos;",
     "  p.x += uShift;",
-    "  p.x += sin(uTime * 0.22 + aMeta.y * 6.28) * 0.55 + uPointer.x * 0.4;",
-    "  p.y += cos(uTime * 0.18 + aMeta.y * 5.0) * 0.38 - uPointer.y * 0.25;",
-    "  p.z += sin(uTime * 0.14 + aMeta.y * 3.0) * 0.5;",
+    "  float kick = 1.0 + uBurst * 2.2;",
+    "  p.x += sin(uTime * 0.22 + aMeta.y * 6.28) * 0.55 * kick + uPointer.x * 0.4;",
+    "  p.y += cos(uTime * 0.18 + aMeta.y * 5.0) * 0.38 * kick - uPointer.y * 0.25;",
+    "  p.z += sin(uTime * 0.14 + aMeta.y * 3.0) * 0.5 * kick;",
     "  vec4 mv = uView * vec4(p, 1.0);",
     "  gl_Position = uProj * mv;",
-    "  gl_PointSize = aMeta.x * (150.0 / max(1.0, -mv.z));",
+    "  gl_PointSize = aMeta.x * (150.0 / max(1.0, -mv.z)) * (1.0 + uBurst * 0.6);",
     "  vCol = aCol;",
-    "  vAlpha = 0.18 + 0.42 * (0.5 + 0.5 * sin(uTime * 1.4 + aMeta.y * 9.0));",
+    "  vAlpha = (0.18 + 0.42 * (0.5 + 0.5 * sin(uTime * 1.4 + aMeta.y * 9.0))) * (1.0 + uBurst * 0.5);",
     "}",
   ].join("\n");
 
@@ -588,6 +590,47 @@
     "  float r = length(gl_PointCoord - 0.5);",
     "  float a = smoothstep(0.5, 0.0, r) * vAlpha;",
     "  gl_FragColor = vec4(vCol * a, a);",
+    "}",
+  ].join("\n");
+
+  var MORPH_VS = [
+    "attribute vec3 aPos;",
+    "attribute vec3 aCol;",
+    "attribute vec2 aMeta;",
+    "uniform mat4 uProj;",
+    "uniform mat4 uView;",
+    "uniform float uTime;",
+    "uniform float uShift;",
+    "uniform float uRot;",
+    "uniform float uBurst;",
+    "uniform vec3 uCenter;",
+    "varying vec3 vCol;",
+    "varying float vAlpha;",
+    "void main(){",
+    "  vec3 p = aPos - uCenter;",
+    "  float c = cos(uRot), s = sin(uRot);",
+    "  p = vec3(c * p.x - s * p.z, p.y, s * p.x + c * p.z);",
+    "  p *= 1.0 + uBurst * 0.06;",
+    "  p += uCenter;",
+    "  p.x += uShift;",
+    "  p.x += sin(uTime * 0.7 + aMeta.y * 6.28) * 0.018;",
+    "  p.y += cos(uTime * 0.6 + aMeta.y * 5.0) * 0.018;",
+    "  vec4 mv = uView * vec4(p, 1.0);",
+    "  gl_Position = uProj * mv;",
+    "  gl_PointSize = aMeta.x * (90.0 / max(1.0, -mv.z)) * (1.0 + uBurst * 0.7);",
+    "  vCol = aCol;",
+    "  vAlpha = 0.28 + 0.18 * sin(uTime * 2.1 + aMeta.y * 12.0) + uBurst * 0.28;",
+    "}",
+  ].join("\n");
+
+  var MORPH_FS = [
+    "precision highp float;",
+    "varying vec3 vCol;",
+    "varying float vAlpha;",
+    "void main(){",
+    "  float r = length(gl_PointCoord - 0.5);",
+    "  float a = smoothstep(0.5, 0.05, r) * vAlpha;",
+    "  gl_FragColor = vec4(vCol * (1.0 + a * 0.6), a);",
     "}",
   ].join("\n");
 
@@ -653,6 +696,7 @@
       ocean: program(OCEAN_VS, OCEAN_FS),
       part: program(PART_VS, PART_FS),
       beam: program(BEAM_VS, BEAM_FS),
+      morph: program(MORPH_VS, MORPH_FS),
     };
   } catch (error) {
     console.error("[lowpoly] program:", error && (error.message || error));
@@ -744,6 +788,235 @@
   var OCEAN = oceanBuffer();
   var PARTS = particleBuffer(150);
   var BEAMS = beamBuffer();
+
+  /* ---------------- morphing particle sculpture ----------------
+     Per-point position tween with random delays, inspired by the
+     Up2017/particle effect template (QingXia-Ela), adapted to our
+     raw WebGL pipeline. Shapes are sampled from the same low-poly
+     builders so the particles feel part of the world. */
+  var MORPH_COUNT = 1200;
+  var MORPH_CENTER = [0.45, 3.55, -0.7];
+  var morphBurst = 0;
+  var morphRot = 0;
+
+  function sampleBuilder(builder, count, scale, center) {
+    var d = builder.data;
+    var triCount = d.length / 27;
+    var areas = new Float32Array(triCount);
+    var total = 0;
+    var i, a, b, c, ab, ac, cr;
+    for (i = 0; i < triCount; i += 1) {
+      a = i * 27; b = a + 9; c = a + 18;
+      ab = [d[b] - d[a], d[b + 1] - d[a + 1], d[b + 2] - d[a + 2]];
+      ac = [d[c] - d[a], d[c + 1] - d[a + 1], d[c + 2] - d[a + 2]];
+      cr = cross(ab, ac);
+      areas[i] = Math.sqrt(dot(cr, cr)) * 0.5;
+      total += areas[i];
+    }
+    var out = new Float32Array(count * 3);
+    var r = rng(7331 + count);
+    for (i = 0; i < count; i += 1) {
+      var pick = r() * total;
+      var tri = 0;
+      while (tri < triCount - 1 && pick > areas[tri]) { pick -= areas[tri]; tri += 1; }
+      var base = tri * 27;
+      var u = Math.sqrt(r());
+      var v = r();
+      var w0 = 1 - u;
+      var w1 = u * (1 - v);
+      var w2 = u * v;
+      var px = d[base] * w0 + d[base + 9] * w1 + d[base + 18] * w2;
+      var py = d[base + 1] * w0 + d[base + 10] * w1 + d[base + 19] * w2;
+      var pz = d[base + 2] * w0 + d[base + 11] * w1 + d[base + 20] * w2;
+      out[i * 3] = (px - center[0]) * scale + MORPH_CENTER[0];
+      out[i * 3 + 1] = (py - center[1]) * scale + MORPH_CENTER[1];
+      out[i * 3 + 2] = (pz - center[2]) * scale + MORPH_CENTER[2];
+    }
+    return out;
+  }
+
+  function makeShapes() {
+    var shapes = {};
+
+    // island: the same terraced language as the world
+    shapes.island = sampleBuilder(
+      buildTerracedIsland(911, 2.0, 3, 1.3),
+      MORPH_COUNT, 0.92, [0, 0.35, 0]
+    );
+
+    // crystal: a cluster sampled from crystal surfaces
+    var crystal = new Builder();
+    [
+      [0.0, 0.0, 0.0, 0.52, 2.2, C.crystalIndigo],
+      [0.58, -0.1, 0.26, 0.3, 1.3, C.crystalTeal],
+      [-0.52, -0.1, 0.18, 0.26, 1.1, C.crystalPink],
+      [0.1, -0.15, -0.5, 0.2, 0.8, C.crystalTeal],
+    ].forEach(function (c, ci) {
+      var g = buildCrystal(880 + ci, c[3], c[4], c[5]);
+      var d = g.data;
+      for (var k = 0; k < d.length; k += 9) crystal.push([d[k] + c[0], d[k + 1] + c[1], d[k + 2] + c[2]], [d[k + 3], d[k + 4], d[k + 5]], [d[k + 6], d[k + 7], d[k + 8]]);
+    });
+    shapes.crystal = sampleBuilder(crystal, MORPH_COUNT, 0.9, [0, 0.9, 0]);
+
+    // ring: torus
+    var ring = new Float32Array(MORPH_COUNT * 3);
+    var rr = rng(1777);
+    for (var ri = 0; ri < MORPH_COUNT; ri += 1) {
+      var R = 1.45, tube = 0.42;
+      var u = rr() * Math.PI * 2;
+      var v = rr() * Math.PI * 2;
+      var x = (R + tube * Math.cos(v)) * Math.cos(u);
+      var y = (R + tube * Math.cos(v)) * Math.sin(u);
+      var z = tube * Math.sin(v);
+      ring[ri * 3] = x + MORPH_CENTER[0];
+      ring[ri * 3 + 1] = y + MORPH_CENTER[1];
+      ring[ri * 3 + 2] = z + MORPH_CENTER[2];
+    }
+    shapes.ring = ring;
+
+    // wave: reference-template style flat wave
+    var wave = new Float32Array(MORPH_COUNT * 3);
+    var wr = rng(2888);
+    for (var wi = 0; wi < MORPH_COUNT; wi += 1) {
+      var wx = (wr() * 2 - 1) * 1.9;
+      var wz = (wr() * 2 - 1) * 1.45;
+      var wy = Math.sin(wx * 2.5) * 0.26 + Math.cos(wz * 3.1) * 0.2 - 0.1;
+      wave[wi * 3] = wx + MORPH_CENTER[0];
+      wave[wi * 3 + 1] = wy + MORPH_CENTER[1];
+      wave[wi * 3 + 2] = wz + MORPH_CENTER[2];
+    }
+    shapes.wave = wave;
+
+    return shapes;
+  }
+
+  var SHAPES = makeShapes();
+  var MORPH_COLORS = {};
+  function shapeColors(name) {
+    var r = rng(9100 + name.length);
+    var cols = new Float32Array(MORPH_COUNT * 3);
+    var palettes = {
+      island: [C.crystalTeal, C.crystalTeal, C.grassLight, C.crystalIndigo],
+      crystal: [C.crystalIndigo, C.crystalPink, C.crystalTeal, C.crystalIndigo],
+      ring: [C.crystalTeal, C.crystalIndigo, C.crystalTeal, C.crystalPink],
+      wave: [C.crystalPink, C.crystalTeal, C.crystalIndigo, C.crystalTeal],
+    };
+    var pal = palettes[name] || [C.crystalTeal, C.crystalIndigo];
+    for (var i = 0; i < MORPH_COUNT; i += 1) {
+      var c = pal[Math.floor(r() * pal.length)];
+      var k = 0.55 + r() * 0.45;
+      cols[i * 3] = c[0] * k;
+      cols[i * 3 + 1] = c[1] * k;
+      cols[i * 3 + 2] = c[2] * k;
+    }
+    return cols;
+  }
+  Object.keys(SHAPES).forEach(function (name) { MORPH_COLORS[name] = shapeColors(name); });
+
+  var MORPH = {
+    curPos: new Float32Array(MORPH_COUNT * 3),
+    fromPos: new Float32Array(MORPH_COUNT * 3),
+    curCol: new Float32Array(MORPH_COUNT * 3),
+    fromCol: new Float32Array(MORPH_COUNT * 3),
+    targetPos: SHAPES.island,
+    targetCol: MORPH_COLORS.island,
+    delays: new Float32Array(MORPH_COUNT),
+    start: 0,
+    duration: 1.55,
+    active: false,
+    name: "island",
+  };
+
+  function createMorphBuffers() {
+    var r = rng(5151);
+    var meta = [];
+    var p = MORPH.curPos;
+    var c = MORPH.curCol;
+    for (var i = 0; i < MORPH_COUNT; i += 1) {
+      var a = r() * Math.PI * 2;
+      var b = Math.acos(r() * 2 - 1);
+      var rad = 2.2 + r() * 2.0;
+      p[i * 3] = MORPH_CENTER[0] + Math.sin(b) * Math.cos(a) * rad;
+      p[i * 3 + 1] = MORPH_CENTER[1] + Math.cos(b) * rad;
+      p[i * 3 + 2] = MORPH_CENTER[2] + Math.sin(b) * Math.sin(a) * rad;
+      var col = [C.crystalTeal, C.crystalIndigo, C.crystalPink][Math.floor(r() * 3)];
+      c[i * 3] = col[0] * 0.8; c[i * 3 + 1] = col[1] * 0.8; c[i * 3 + 2] = col[2] * 0.8;
+      meta.push(0.28 + r() * 0.85, r());
+    }
+    var posBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, p, gl.DYNAMIC_DRAW);
+    var colBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, colBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, c, gl.DYNAMIC_DRAW);
+    var metaBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, metaBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(meta), gl.STATIC_DRAW);
+    return { pos: posBuf, col: colBuf, meta: metaBuf, count: MORPH_COUNT };
+  }
+  var MORPH_BUFFERS = createMorphBuffers();
+
+  function easeInOutCubic(x) {
+    return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+  }
+
+  function morphTo(name) {
+    if (!SHAPES[name]) return;
+    var now = performance.now() / 1000;
+    MORPH.fromPos.set(MORPH.curPos);
+    MORPH.fromCol.set(MORPH.curCol);
+    MORPH.targetPos = SHAPES[name];
+    MORPH.targetCol = MORPH_COLORS[name];
+    for (var i = 0; i < MORPH_COUNT; i += 1) MORPH.delays[i] = Math.random() * 0.55;
+    MORPH.start = now;
+    MORPH.active = true;
+    MORPH.name = name;
+    morphBurst = 1.0;
+    var buttons = document.querySelectorAll("[data-morph]");
+    for (var b = 0; b < buttons.length; b += 1) buttons[b].classList.toggle("active", buttons[b].getAttribute("data-morph") === name);
+  }
+
+  function updateMorph(t) {
+    if (!MORPH.active) return;
+    var pos = MORPH.curPos;
+    var col = MORPH.curCol;
+    var fp = MORPH.fromPos, tp = MORPH.targetPos;
+    var fc = MORPH.fromCol, tc = MORPH.targetCol;
+    var done = true;
+    for (var i = 0; i < MORPH_COUNT; i += 1) {
+      var raw = (t - MORPH.start - MORPH.delays[i]) / MORPH.duration;
+      if (raw < 1) done = false;
+      var p = Math.max(0, Math.min(1, raw));
+      var e = easeInOutCubic(p);
+      var dx = tp[i * 3] - fp[i * 3];
+      var dy = tp[i * 3 + 1] - fp[i * 3 + 1];
+      var dz = tp[i * 3 + 2] - fp[i * 3 + 2];
+      var lift = Math.sin(Math.PI * p) * 0.28;
+      var ix = fp[i * 3] - MORPH_CENTER[0];
+      var iy = fp[i * 3 + 1] - MORPH_CENTER[1];
+      var iz = fp[i * 3 + 2] - MORPH_CENTER[2];
+      var il = Math.sqrt(ix * ix + iy * iy + iz * iz) || 1;
+      pos[i * 3] = fp[i * 3] + dx * e + ix / il * lift;
+      pos[i * 3 + 1] = fp[i * 3 + 1] + dy * e + iy / il * lift;
+      pos[i * 3 + 2] = fp[i * 3 + 2] + dz * e + iz / il * lift;
+      col[i * 3] = fc[i * 3] + (tc[i * 3] - fc[i * 3]) * e;
+      col[i * 3 + 1] = fc[i * 3 + 1] + (tc[i * 3 + 1] - fc[i * 3 + 1]) * e;
+      col[i * 3 + 2] = fc[i * 3 + 2] + (tc[i * 3 + 2] - fc[i * 3 + 2]) * e;
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, MORPH_BUFFERS.pos);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, pos);
+    gl.bindBuffer(gl.ARRAY_BUFFER, MORPH_BUFFERS.col);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, col);
+    if (done) MORPH.active = false;
+  }
+
+  var morphButtons = document.querySelectorAll("[data-morph]");
+  for (var mb = 0; mb < morphButtons.length; mb += 1) {
+    (function (button) {
+      button.addEventListener("click", function () { morphTo(button.getAttribute("data-morph")); });
+    })(morphButtons[mb]);
+  }
+  morphTo("island");
 
   /* ---------------- scene objects ---------------- */
   var objects = [];
@@ -890,7 +1163,7 @@
   var dragOffset = 0;
   var hovered = null;
   var tip = document.getElementById("scene-tip");
-  var interactiveSelector = "a,button,input,textarea,select,label,[role='button'],.stat,.card,.project";
+  var interactiveSelector = "a,button,input,textarea,select,label,[role='button'],.stat,.card,.project,.particle-switch";
   var worldShift = 0;
 
   function updateWorldShift() {
@@ -1070,6 +1343,9 @@
       scroll: gl.getUniformLocation(p, "uScroll"),
       pointer: gl.getUniformLocation(p, "uPointer"),
       shift: gl.getUniformLocation(p, "uShift"),
+      burst: gl.getUniformLocation(p, "uBurst"),
+      rot: gl.getUniformLocation(p, "uRot"),
+      center: gl.getUniformLocation(p, "uCenter"),
     };
   }
   var US = {
@@ -1078,6 +1354,7 @@
     ocean: uniforms(progs.ocean),
     part: uniforms(progs.part),
     beam: uniforms(progs.beam),
+    morph: uniforms(progs.morph),
   };
   var AT = {
     sky: {
@@ -1100,6 +1377,11 @@
       pos: gl.getAttribLocation(progs.beam, "aPos"),
       phase: gl.getAttribLocation(progs.beam, "aPhase"),
     },
+    morph: {
+      pos: gl.getAttribLocation(progs.morph, "aPos"),
+      col: gl.getAttribLocation(progs.morph, "aCol"),
+      meta: gl.getAttribLocation(progs.morph, "aMeta"),
+    },
   };
 
   var lastAspect = 0;
@@ -1115,6 +1397,9 @@
     }
 
     scrollProgress += (scrollTarget - scrollProgress) * 0.08;
+    morphRot += dt * 0.11;
+    morphBurst = Math.max(0, morphBurst - dt * 1.45);
+    updateMorph(t);
     var fadeIn = Math.max(0, Math.min(1, (scrollProgress - 0.03) / 0.18));
     var sceneOpacity = 1 - fadeIn * 0.82;
     if (Math.abs(sceneOpacity - lastOpacity) > 0.01) {
@@ -1230,6 +1515,7 @@
     gl.uniform1f(US.part.time, t);
     gl.uniform2f(US.part.pointer, pointer.x, pointer.y);
     gl.uniform1f(US.part.shift, worldShift);
+    gl.uniform1f(US.part.burst, morphBurst);
     gl.bindBuffer(gl.ARRAY_BUFFER, PARTS.pos.buffer);
     gl.enableVertexAttribArray(AT.part.pos);
     gl.vertexAttribPointer(AT.part.pos, 3, gl.FLOAT, false, 0, 0);
@@ -1240,6 +1526,30 @@
     gl.enableVertexAttribArray(AT.part.meta);
     gl.vertexAttribPointer(AT.part.meta, 2, gl.FLOAT, false, 0, 0);
     gl.drawArrays(gl.POINTS, 0, PARTS.count);
+
+    /* ---- morphing particle sculpture ---- */
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+    gl.depthMask(false);
+    gl.useProgram(progs.morph);
+    gl.uniformMatrix4fv(US.morph.proj, false, proj);
+    gl.uniformMatrix4fv(US.morph.view, false, view);
+    gl.uniform1f(US.morph.time, t);
+    gl.uniform1f(US.morph.shift, worldShift);
+    gl.uniform1f(US.morph.rot, morphRot);
+    gl.uniform1f(US.morph.burst, morphBurst);
+    gl.uniform3fv(US.morph.center, new Float32Array(MORPH_CENTER));
+    gl.bindBuffer(gl.ARRAY_BUFFER, MORPH_BUFFERS.pos);
+    gl.enableVertexAttribArray(AT.morph.pos);
+    gl.vertexAttribPointer(AT.morph.pos, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, MORPH_BUFFERS.col);
+    gl.enableVertexAttribArray(AT.morph.col);
+    gl.vertexAttribPointer(AT.morph.col, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, MORPH_BUFFERS.meta);
+    gl.enableVertexAttribArray(AT.morph.meta);
+    gl.vertexAttribPointer(AT.morph.meta, 2, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.POINTS, 0, MORPH_COUNT);
+
     gl.depthMask(true);
     gl.disable(gl.BLEND);
 
@@ -1265,5 +1575,16 @@
       return project(world);
     },
     camera: function () { return { eye: eye.slice(), target: target.slice(), scroll: scrollProgress, drag: dragOffset }; },
+    morph: function (name) { morphTo(name); },
+    morphInfo: function () {
+      var min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+      for (var i = 0; i < MORPH.curPos.length; i += 3) {
+        for (var k = 0; k < 3; k += 1) {
+          if (MORPH.curPos[i + k] < min[k]) min[k] = MORPH.curPos[i + k];
+          if (MORPH.curPos[i + k] > max[k]) max[k] = MORPH.curPos[i + k];
+        }
+      }
+      return { active: MORPH.active, name: MORPH.name, min: min, max: max };
+    },
   };
 })();
