@@ -1,0 +1,87 @@
+<section id="ch04" class="chapter">
+  <p class="chapter-kicker">第 4 讲 · 图形管线</p>
+  <h2 class="chapter-title">UV 图案：step、fract 与棋盘
+    <small>把连续坐标切成格子，是所有程序化图案的起点</small>
+  </h2>
+  <p class="chapter-lede">棋盘、条纹、点阵、网格——看起来不同的图案，底层都是同一组操作：放大 UV、取小数部分、判断奇偶、用 smoothstep 画线。</p>
+  <p class="source-line">
+    <span>Demo 4 · 程序化棋盘</span>
+    <span>关键词 <code>fract</code> · <code>step</code> · <code>mod</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>用 fract 把坐标折叠成重复格子</li>
+    <li>用 floor/mod 判断奇偶格，用 smoothstep 画网格线</li>
+    <li>理解放大 UV 与抗锯齿之间的关系</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>把空间切成格子</h3>
+    <p>核心操作只有两个：<code class="inline-code">uv *= n</code> 放大坐标，<code class="inline-code">fract(uv)</code> 取小数部分。放大后每个整数区间变成一个格子，fract 把它们折叠回 0..1。<code class="inline-code">floor(uv)</code> 则告诉你当前在第几个格子。</p>
+<pre data-lang="glsl"><code>vec2 uv = vUv * vec2(uRes.x/uRes.y, 1.0) * 8.0;
+vec2 g = abs(fract(uv) - 0.5);             // 到格子中心的距离
+float checker = mod(floor(uv.x) + floor(uv.y), 2.0);
+float line = smoothstep(0.49, 0.5, max(g.x, g.y));
+</code></pre>
+    <p><code class="inline-code">checker</code> 为 0/1，用来选两种底色；<code class="inline-code">line</code> 在靠近格子边界时接近 1，用来画网格线。两者叠加就是一个会动起来的棋盘。</p>
+    <div class="demo" data-demo="pattern" data-label="DEMO 04 · pattern" data-cap="棋盘 + 网格线，UV 随时间轻微漂移"></div>
+
+    <div class="analogy">
+      <span class="analogy-title">像地砖的铺法</span>
+      <p>放大 UV 相当于决定每块地砖多大；fract 是「你在这块砖里的哪个位置」；floor 是「你在第几行第几列」。改砖的大小、颜色和缝隙，就能得到完全不同的图案。</p>
+      <p><b>类比到哪为止：</b>真实地砖有物理缝隙；shader 里的「缝隙」只是 smoothstep 画出来的一条颜色带。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>完整片段</h3>
+<pre data-lang="glsl"><code>precision highp float;
+varying vec2 vUv;
+uniform vec2 uRes;
+uniform float uTime;
+
+void main() {
+  vec2 uv = vUv * vec2(uRes.x/uRes.y, 1.0) * 8.0;
+  uv += vec2(uTime * 0.08, sin(uTime * 0.3));
+  vec2 g = abs(fract(uv) - 0.5);
+  float checker = mod(floor(uv.x) + floor(uv.y), 2.0);
+  float line = smoothstep(0.49, 0.5, max(g.x, g.y));
+  vec3 col = mix(vec3(0.02,0.04,0.08),
+                 vec3(0.08,0.5,0.55),
+                 checker * 0.35 + 0.1);
+  col = mix(col, vec3(0.75,0.9,0.95), line * 0.65);
+  gl_FragColor = vec4(col, 1.0);
+}
+</code></pre>
+
+    <h3><span class="h3num">03</span>抗锯齿</h3>
+    <p>当格子很密时，一条像素可能跨过多个格子，硬边会出现摩尔纹和闪烁。WebGL 1 没有内置 fwidth，但可以用两个 smoothstep 控制线宽，或降低图案频率、加一点模糊。先把图案做「粗」一点，通常比事后抗锯齿更有效。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么放大 UV 会让边缘闪烁？</summary>
+      <div class="deep-body">
+        <p>因为像素是离散采样。当图案频率接近像素频率时，采样结果会在不同帧/不同位置跳变，形成摩尔纹。增加分辨率、降低频率、使用导数宽度（WebGL2/fwidth）或后处理模糊，都是缓解方式。</p>
+        <p>这也是为什么很多 shader 作品在 1080p 好看，在 4K 或小窗口却出现纹理噪点。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">04</span>自测</h3>
+    <details class="quiz">
+      <summary>fract(uv) 和 floor(uv) 分别给你什么信息？</summary>
+      <div class="answer"><p>fract 给格子内的局部坐标（0..1）；floor 给格子的整数索引，用来判断第几个格子、奇偶等。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么棋盘用 mod(floor(x)+floor(y),2)？</summary>
+      <div class="answer"><p>相邻格子的行列索引之和奇偶交替，取模 2 就得到 0/1 的棋盘模式。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>图案放大后出现摩尔纹，最直接的缓解方式？</summary>
+      <div class="answer"><p>降低图案频率或增加线宽/模糊；WebGL2 可以用 fwidth 根据屏幕导数自适应线宽。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>程序化图案的通用套路：放大 UV → fract 折叠 → floor 取索引 → step/smoothstep 画边界。掌握这套组合，条纹、点阵、瓷砖都能推出来。</p>
+      <p class="next"><b>下一讲：</b>如果格子不是规则的，而是随机的呢？噪声函数就是「可控的随机」。</p>
+    </div>
+  </div>
+</section>

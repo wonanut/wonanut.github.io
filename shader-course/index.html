@@ -1,0 +1,2080 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebGL Shader 内功课 · 从片元到画面</title>
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="canonical" href="https://wonanut.github.io/shader-course/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="WebGL Shader 内功课 · 从片元到画面">
+<meta property="og:description" content="一门在浏览器里直接写 GLSL 的 WebGL Shader 入门课：坐标系、顶点与片元、uniform、UV 图案、噪声、SDF、光照、交互与性能，每章配可直接运行的实时 Demo。">
+<meta property="og:url" content="https://wonanut.github.io/shader-course/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="description" content="一门在浏览器里直接写 GLSL 的 WebGL Shader 入门课：坐标系、顶点与片元、uniform、UV 图案、噪声、SDF、光照、交互与性能，每章配可直接运行的实时 Demo。">
+<style>
+:root{
+  --bg:#ffffff; --bg-soft:#f6f7f9; --bg-sink:#eef0f4;
+  --text:#1c2027; --text-soft:#3d4450; --muted:#6a7280; --faint:#9aa2b1;
+  --border:#e4e7ec; --border-strong:#d3d8e0;
+  --accent:#4f46e5; --accent-soft:#eef0ff; --accent-strong:#4338ca;
+  --green:#0f766e; --green-soft:#ecfdf5; --green-border:#99f6e4;
+  --amber:#b45309; --amber-soft:#fffbeb; --amber-border:#fde68a;
+  --rose:#be123c; --rose-soft:#fff1f2; --rose-border:#fecdd3;
+  --code-bg:#0f1729; --code-text:#e6edf7; --code-border:#1e293b;
+  --shadow:0 1px 2px rgba(16,24,40,.06),0 8px 24px -12px rgba(16,24,40,.18);
+  --radius:14px;
+  --sidebar-w:300px;
+  --maxw:880px;
+  --sans:system-ui,-apple-system,"Segoe UI","PingFang SC","Hiragino Sans GB","Noto Sans SC","Microsoft YaHei",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+}
+html[data-theme="dark"]{
+  --bg:#0f1218; --bg-soft:#151a22; --bg-sink:#1b212b;
+  --text:#e6e9ef; --text-soft:#c3c9d4; --muted:#8d96a5; --faint:#5f6876;
+  --border:#252c38; --border-strong:#333c4a;
+  --accent:#8b93ff; --accent-soft:#1d2140; --accent-strong:#a5abff;
+  --green:#5eead4; --green-soft:#0d2b28; --green-border:#155e56;
+  --amber:#fbbf24; --amber-soft:#2a2110; --amber-border:#5c4511;
+  --rose:#fb7185; --rose-soft:#2a1118; --rose-border:#5f1d2b;
+  --code-bg:#0a0e16; --code-text:#dbe5f3; --code-border:#1c2432;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.6);
+}
+@media (prefers-color-scheme: dark){
+  html[data-theme="auto"]{
+    --bg:#0f1218; --bg-soft:#151a22; --bg-sink:#1b212b;
+    --text:#e6e9ef; --text-soft:#c3c9d4; --muted:#8d96a5; --faint:#5f6876;
+    --border:#252c38; --border-strong:#333c4a;
+    --accent:#8b93ff; --accent-soft:#1d2140; --accent-strong:#a5abff;
+    --green:#5eead4; --green-soft:#0d2b28; --green-border:#155e56;
+    --amber:#fbbf24; --amber-soft:#2a2110; --amber-border:#5c4511;
+    --rose:#fb7185; --rose-soft:#2a1118; --rose-border:#5f1d2b;
+    --code-bg:#0a0e16; --code-text:#dbe5f3; --code-border:#1c2432;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.6);
+  }
+}
+*,*::before,*::after{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:76px}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+  font-size:16px;line-height:1.78;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+::selection{background:var(--accent);color:#fff}
+
+/* ---------- progress ---------- */
+#reading-progress{position:fixed;top:0;left:0;height:3px;width:0;background:linear-gradient(90deg,#6366f1,#a855f7,#ec4899);z-index:60;transition:width .08s linear}
+
+/* ---------- topbar ---------- */
+.topbar{position:fixed;top:0;left:0;right:0;height:60px;z-index:50;display:flex;align-items:center;gap:12px;
+  padding:0 20px;background:color-mix(in srgb,var(--bg) 86%,transparent);backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--border)}
+.topbar .burger{display:none;border:1px solid var(--border);background:var(--bg-soft);color:var(--text);
+  border-radius:9px;width:36px;height:36px;font-size:17px;cursor:pointer;line-height:1}
+.topbar .brand{display:flex;align-items:baseline;gap:10px;min-width:0}
+.topbar .brand b{font-size:15px;letter-spacing:.2px;white-space:nowrap}
+.topbar .brand span{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.topbar .spacer{flex:1}
+.tb-btn{border:1px solid var(--border);background:var(--bg-soft);color:var(--text-soft);border-radius:9px;
+  height:34px;padding:0 11px;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+  font-family:inherit;transition:.15s}
+.tb-btn:hover{border-color:var(--border-strong);background:var(--bg-sink);color:var(--text)}
+.tb-progress{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);white-space:nowrap}
+.tb-progress .bar{width:88px;height:6px;border-radius:99px;background:var(--bg-sink);overflow:hidden}
+.tb-progress .bar i{display:block;height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,#6366f1,#a855f7);transition:width .3s}
+
+/* ---------- layout ---------- */
+.layout{display:flex;min-height:100vh;padding-top:60px}
+.sidebar{position:fixed;top:60px;bottom:0;left:0;width:var(--sidebar-w);border-right:1px solid var(--border);
+  background:var(--bg-soft);overflow-y:auto;overscroll-behavior:contain;padding:18px 12px 60px;z-index:40}
+.sidebar::-webkit-scrollbar{width:9px}
+.sidebar::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:9px;border:2px solid var(--bg-soft)}
+.back-home{display:flex;align-items:center;gap:7px;margin:0 4px 12px;padding:8px 10px;
+  border-radius:9px;text-decoration:none;color:var(--muted);font-size:12.5px;transition:.15s}
+.back-home:hover{color:var(--accent);background:var(--bg-sink)}
+.side-search{display:flex;align-items:center;gap:8px;margin:0 4px 14px;padding:0 10px;height:36px;
+  border:1px solid var(--border);border-radius:9px;background:var(--bg)}
+.side-search input{border:0;background:transparent;color:var(--text);font:inherit;font-size:13px;width:100%;outline:none}
+.side-search kbd{font-family:var(--mono);font-size:10px;color:var(--faint);border:1px solid var(--border);
+  border-radius:4px;padding:1px 5px;background:var(--bg-soft)}
+.nav-part{margin:0 0 6px}
+.nav-part-title{font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--faint);
+  margin:16px 10px 7px;font-weight:700}
+.nav-link{display:flex;align-items:flex-start;gap:9px;padding:7px 10px;border-radius:8px;text-decoration:none;
+  color:var(--text-soft);font-size:13.5px;line-height:1.45;position:relative;transition:.13s}
+.nav-link:hover{background:var(--bg-sink);color:var(--text)}
+.nav-link.active{background:var(--accent-soft);color:var(--accent-strong);font-weight:600}
+.nav-link.active::before{content:"";position:absolute;left:-12px;top:6px;bottom:6px;width:3px;border-radius:0 3px 3px 0;background:var(--accent)}
+.nav-num{font-family:var(--mono);font-size:10.5px;color:var(--faint);width:20px;flex:none;text-align:right}
+.nav-link.active .nav-num{color:var(--accent)}
+.nav-label{flex:1;min-width:0}
+.nav-check{flex:none;width:17px;height:17px;border-radius:5px;margin-top:3px;border:1.5px solid var(--border-strong);
+  display:grid;place-items:center;font-size:11px;color:transparent;background:var(--bg);transition:.15s;cursor:pointer}
+.nav-check:hover{border-color:var(--accent)}
+.nav-check[aria-checked="true"]{background:var(--green);border-color:var(--green);color:#fff}
+html[data-theme="dark"] .nav-check[aria-checked="true"]{color:#04211d}
+.side-foot{margin:22px 10px 0;padding-top:14px;border-top:1px solid var(--border);font-size:11.5px;color:var(--faint);line-height:1.7}
+.side-foot a{color:var(--muted)}
+
+.main{flex:1;min-width:0;margin-left:var(--sidebar-w);display:flex;justify-content:center}
+.main-inner{width:100%;max-width:calc(var(--maxw) + 96px);padding:40px 48px 120px}
+
+/* ---------- content typography ---------- */
+.chapter{max-width:var(--maxw);margin:0 auto;padding-bottom:76px;scroll-margin-top:80px}
+.chapter + .chapter{border-top:1px solid var(--border);padding-top:64px}
+.chapter-kicker{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:700;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--accent);margin:0 0 14px}
+.chapter-kicker::before{content:"";width:22px;height:2px;background:var(--accent);border-radius:2px}
+.chapter-title{font-size:clamp(27px,3.3vw,38px);line-height:1.24;letter-spacing:-.02em;margin:0 0 8px;font-weight:800}
+.chapter-title small{display:block;font-size:15px;font-weight:500;color:var(--muted);letter-spacing:0;margin-top:8px}
+.chapter-lede{font-size:17.5px;color:var(--text-soft);margin:14px 0 18px;line-height:1.8}
+.source-line{font-size:12.5px;color:var(--faint);margin:0 0 26px;display:flex;flex-wrap:wrap;gap:6px 14px}
+.source-line code{background:var(--bg-soft);border:1px solid var(--border);padding:1px 6px;border-radius:5px;font-size:11.5px}
+.source-line a{color:var(--muted);text-decoration:none;border-bottom:1px dashed var(--border-strong)}
+.source-line a:hover{color:var(--accent);border-color:var(--accent)}
+.objectives{list-style:none;margin:0 0 34px;padding:16px 20px;border:1px solid var(--border);border-radius:var(--radius);
+  background:var(--bg-soft);display:grid;gap:8px}
+.objectives li{position:relative;padding-left:26px;font-size:14.5px;color:var(--text-soft);line-height:1.6}
+.objectives li::before{content:"✓";position:absolute;left:0;top:0;color:var(--green);font-weight:800;font-size:13px}
+.objectives .obj-title{display:block;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);
+  font-weight:700;grid-column:1/-1}
+.chapter-body h3{font-size:22px;line-height:1.35;margin:52px 0 16px;letter-spacing:-.01em;font-weight:750}
+.chapter-body h3 .h3num{color:var(--accent);font-family:var(--mono);font-size:14px;font-weight:700;margin-right:9px;vertical-align:2px}
+.chapter-body h4{font-size:16.5px;margin:30px 0 10px;font-weight:700}
+.chapter-body p{margin:0 0 16px;color:var(--text-soft)}
+.chapter-body strong{color:var(--text);font-weight:700}
+.chapter-body a{color:var(--accent);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--accent) 35%,transparent)}
+.chapter-body a:hover{border-bottom-color:var(--accent)}
+.chapter-body ul,.chapter-body ol{margin:0 0 18px;padding-left:24px;color:var(--text-soft)}
+.chapter-body li{margin:6px 0}
+.chapter-body li::marker{color:var(--accent)}
+.chapter-body hr{border:0;border-top:1px solid var(--border);margin:40px 0}
+.inline-code{font-family:var(--mono);font-size:.88em;background:var(--bg-soft);border:1px solid var(--border);
+  padding:1.5px 6px;border-radius:6px;color:var(--text);white-space:nowrap}
+html[data-theme="dark"] .inline-code{background:var(--bg-sink)}
+
+/* ---------- components ---------- */
+.analogy{position:relative;margin:26px 0;padding:18px 22px 18px 56px;border-radius:var(--radius);
+  background:linear-gradient(135deg,var(--accent-soft),transparent 85%);border:1px solid var(--border)}
+.analogy::before{content:"🧩";position:absolute;left:18px;top:16px;font-size:22px;line-height:1}
+.analogy .analogy-title{display:block;font-weight:750;color:var(--text);margin-bottom:4px;font-size:15px}
+.analogy p{margin:0;font-size:14.5px;color:var(--text-soft)}
+.analogy p + p{margin-top:8px}
+
+.callout{margin:22px 0;padding:15px 18px 15px 48px;border-radius:12px;border:1px solid var(--border);
+  background:var(--bg-soft);position:relative;font-size:14.5px;line-height:1.72;color:var(--text-soft)}
+.callout::before{position:absolute;left:16px;top:14px;font-size:18px;line-height:1}
+.callout .callout-title{display:block;font-weight:750;color:var(--text);margin-bottom:3px;font-size:14px}
+.callout p{margin:0 0 8px;font-size:14.5px}
+.callout p:last-child{margin-bottom:0}
+.callout ul,.callout ol{margin:6px 0 0;font-size:14.5px}
+.callout.tip{background:var(--green-soft);border-color:var(--green-border)}
+.callout.tip::before{content:"💡"}
+.callout.tip .callout-title{color:var(--green)}
+.callout.warn{background:var(--amber-soft);border-color:var(--amber-border)}
+.callout.warn::before{content:"⚠️"}
+.callout.warn .callout-title{color:var(--amber)}
+.callout.insight{background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 25%,var(--border))}
+.callout.insight::before{content:"🔭"}
+.callout.insight .callout-title{color:var(--accent-strong)}
+.callout.key{background:var(--rose-soft);border-color:var(--rose-border)}
+.callout.key::before{content:"🔑"}
+.callout.key .callout-title{color:var(--rose)}
+
+.code-block{position:relative;margin:22px 0;border-radius:12px;overflow:hidden;border:1px solid var(--code-border);
+  background:var(--code-bg);box-shadow:var(--shadow)}
+.code-head{display:flex;align-items:center;gap:10px;padding:9px 14px;background:rgba(255,255,255,.04);
+  border-bottom:1px solid var(--code-border);font-family:var(--mono);font-size:11.5px;color:#93a4bd}
+.code-head .dots{display:flex;gap:5px}
+.code-head .dots i{width:9px;height:9px;border-radius:50%;background:#ff5f57;display:block}
+.code-head .dots i:nth-child(2){background:#febc2e}
+.code-head .dots i:nth-child(3){background:#28c840}
+.code-head .lang{margin-left:auto;letter-spacing:.08em;text-transform:uppercase;color:#7c8ba1}
+.copy-btn{border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.06);color:#c9d6e8;
+  border-radius:6px;font-family:var(--mono);font-size:11px;padding:3px 8px;cursor:pointer;transition:.15s}
+.copy-btn:hover{background:rgba(255,255,255,.14)}
+.copy-btn.done{color:#6ee7b7;border-color:#6ee7b7}
+.code-block pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:13px;
+  line-height:1.72;color:var(--code-text);tab-size:4}
+.code-block pre code{font-family:inherit;font-size:inherit}
+.code-block pre::-webkit-scrollbar{height:9px}
+.code-block pre::-webkit-scrollbar-thumb{background:#334155;border-radius:9px}
+.tok-kw{color:#c792ea}
+.tok-str{color:#c3e88d}
+.tok-com{color:#637777;font-style:italic}
+.tok-num{color:#f78c6c}
+.tok-fn{color:#82aaff}
+.tok-bi{color:#ffcb6b}
+.tok-op{color:#89ddff}
+.tok-prop{color:#f07178}
+
+.deep{margin:26px 0;border:1px solid var(--border);border-radius:12px;background:var(--bg-soft);overflow:hidden}
+.deep>summary{list-style:none;cursor:pointer;padding:14px 18px;font-weight:700;font-size:14.5px;color:var(--text-soft);
+  display:flex;align-items:center;gap:9px;user-select:none}
+.deep>summary::-webkit-details-marker{display:none}
+.deep>summary::before{content:"▸";color:var(--accent);font-size:13px;transition:transform .18s;display:inline-block}
+.deep[open]>summary::before{transform:rotate(90deg)}
+.deep>summary:hover{background:var(--bg-sink)}
+.deep .deep-body{padding:4px 20px 18px;border-top:1px solid var(--border);font-size:14.5px}
+.deep .deep-body h4{margin-top:18px}
+.deep-2{background:transparent;border-style:dashed}
+
+.quiz{margin:14px 0;border:1px solid var(--border);border-radius:12px;background:var(--bg-soft);overflow:hidden}
+.quiz>summary{list-style:none;cursor:pointer;padding:13px 18px;font-size:14.5px;font-weight:600;color:var(--text-soft);
+  display:flex;gap:9px;align-items:flex-start;user-select:none}
+.quiz>summary::-webkit-details-marker{display:none}
+.quiz>summary::before{content:"Q";flex:none;width:20px;height:20px;border-radius:6px;background:var(--accent);
+  color:#fff;font-family:var(--mono);font-size:11px;display:grid;place-items:center;margin-top:2px;font-weight:700}
+.quiz[open]>summary{border-bottom:1px solid var(--border)}
+.answer{padding:14px 18px;font-size:14.5px;color:var(--text-soft);background:var(--bg)}
+.answer::before{content:"参考答案";display:block;font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--green);font-weight:800;margin-bottom:6px}
+.answer p{margin:0 0 8px;font-size:14.5px}
+.answer p:last-child{margin-bottom:0}
+
+.flow{display:flex;align-items:stretch;flex-wrap:wrap;gap:8px;margin:24px 0;padding:18px;border-radius:12px;
+  background:var(--bg-soft);border:1px dashed var(--border-strong)}
+.flow-node{flex:1 1 120px;min-width:112px;background:var(--bg);border:1px solid var(--border-strong);border-radius:10px;
+  padding:10px 12px;font-size:13px;line-height:1.5;text-align:center;color:var(--text-soft);box-shadow:0 1px 0 rgba(0,0,0,.03)}
+.flow-node b{display:block;color:var(--text);font-size:13.5px;margin-bottom:2px}
+.flow-node code{font-size:11.5px}
+.flow-node.accent{background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 40%,var(--border))}
+.flow-arrow{display:grid;place-items:center;color:var(--accent);font-size:16px;font-weight:700;flex:0 0 16px}
+.flow.down{flex-direction:column}
+.flow.down .flow-arrow{transform:rotate(90deg);height:14px}
+
+.steps{counter-reset:step;list-style:none;padding:0;margin:22px 0;display:grid;gap:10px}
+.steps>li{counter-increment:step;position:relative;padding:12px 16px 12px 52px;border:1px solid var(--border);
+  border-radius:10px;background:var(--bg-soft);font-size:14.5px;color:var(--text-soft)}
+.steps>li::before{content:counter(step,decimal-leading-zero);position:absolute;left:14px;top:11px;
+  font-family:var(--mono);font-size:12px;font-weight:700;color:var(--accent);
+  background:var(--accent-soft);border-radius:6px;padding:2px 7px}
+.steps>li b{color:var(--text)}
+
+.table-wrap{overflow-x:auto;margin:22px 0;border:1px solid var(--border);border-radius:12px}
+.table-wrap table{border-collapse:collapse;width:100%;font-size:13.5px}
+.table-wrap th{background:var(--bg-soft);text-align:left;padding:10px 14px;font-size:12px;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border-strong);white-space:nowrap}
+.table-wrap td{padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text-soft);vertical-align:top}
+.table-wrap tr:last-child td{border-bottom:0}
+.table-wrap code{font-size:12px}
+
+.takeaway{margin:44px 0 0;padding:22px 24px;border-radius:var(--radius);position:relative;
+  background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 12%,var(--bg)),var(--bg) 70%);
+  border:1px solid color-mix(in srgb,var(--accent) 28%,var(--border))}
+.takeaway .tk-label{display:inline-block;font-size:11px;letter-spacing:.14em;text-transform:uppercase;font-weight:800;
+  color:var(--accent);margin-bottom:7px}
+.takeaway p{margin:0;font-size:15.5px;color:var(--text);line-height:1.7}
+.takeaway .next{margin-top:12px;padding-top:12px;border-top:1px dashed color-mix(in srgb,var(--accent) 25%,var(--border));
+  font-size:13.5px;color:var(--muted)}
+.takeaway .next b{color:var(--text-soft)}
+
+.chapter-nav{display:flex;gap:12px;margin:34px 0 0;padding-top:22px;border-top:1px solid var(--border)}
+.chapter-nav a{flex:1;display:block;padding:13px 16px;border:1px solid var(--border);border-radius:11px;
+  text-decoration:none;transition:.15s;min-width:0}
+.chapter-nav a:hover{border-color:var(--accent);background:var(--accent-soft)}
+.chapter-nav .dir{font-size:11px;color:var(--faint);letter-spacing:.08em;text-transform:uppercase;display:block;margin-bottom:2px}
+.chapter-nav .name{font-size:13.5px;color:var(--text-soft);font-weight:600;display:block;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.chapter-nav a.next{text-align:right}
+
+.kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--border-strong);border-bottom-width:2px;
+  border-radius:5px;padding:1px 6px;background:var(--bg-soft);color:var(--text-soft);white-space:nowrap}
+
+/* ---------- hero (only in ch00) ---------- */
+.hero{position:relative;margin:0 0 46px;padding:44px 40px;border-radius:20px;overflow:hidden;
+  background:radial-gradient(120% 130% at 0% 0%,color-mix(in srgb,var(--accent) 16%,var(--bg)),var(--bg) 60%);
+  border:1px solid color-mix(in srgb,var(--accent) 22%,var(--border))}
+.hero::after{content:"";position:absolute;right:-90px;bottom:-120px;width:340px;height:340px;border-radius:50%;
+  background:radial-gradient(circle,color-mix(in srgb,var(--accent) 22%,transparent),transparent 65%);pointer-events:none}
+.hero .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);font-weight:700}
+.hero h1{font-size:clamp(30px,4.4vw,46px);line-height:1.16;letter-spacing:-.025em;margin:12px 0 14px;font-weight:850}
+.hero p{font-size:17px;color:var(--text-soft);margin:0;max-width:640px;line-height:1.75}
+.hero .hero-meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:4px 11px;border-radius:99px;
+  background:var(--bg);border:1px solid var(--border-strong);color:var(--text-soft);font-weight:600}
+.pill.accent{background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 35%,var(--border));color:var(--accent-strong)}
+
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin:30px 0}
+.stat{padding:16px;border:1px solid var(--border);border-radius:12px;background:var(--bg-soft)}
+.stat b{display:block;font-size:26px;line-height:1.1;letter-spacing:-.02em;color:var(--text);font-weight:800}
+.stat span{font-size:12px;color:var(--muted)}
+
+.card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin:24px 0}
+.card{padding:18px;border:1px solid var(--border);border-radius:12px;background:var(--bg-soft)}
+.card h4{margin:0 0 6px;font-size:15px}
+.card p{margin:0;font-size:13.5px;color:var(--muted);line-height:1.65}
+
+/* ---------- misc ---------- */
+.backdrop{display:none;position:fixed;inset:0;background:rgba(15,18,24,.5);z-index:35;backdrop-filter:blur(2px)}
+.to-top{position:fixed;right:22px;bottom:22px;width:40px;height:40px;border-radius:11px;border:1px solid var(--border);
+  background:var(--bg);color:var(--text-soft);box-shadow:var(--shadow);cursor:pointer;font-size:16px;z-index:30;
+  opacity:0;pointer-events:none;transition:.2s}
+.to-top.show{opacity:1;pointer-events:auto}
+.to-top:hover{color:var(--accent);border-color:var(--accent)}
+mark.hit{background:#fde68a;color:#713f12;border-radius:3px;padding:0 2px}
+html[data-theme="dark"] mark.hit{background:#a16207;color:#fef3c7}
+.muted{color:var(--muted)}
+.center{text-align:center}
+.mt-0{margin-top:0}
+.hidden{display:none!important}
+
+@media (max-width:1100px){
+  :root{--sidebar-w:280px}
+  .main-inner{padding:32px 30px 100px}
+}
+@media (max-width:900px){
+  .topbar .burger{display:block}
+  .sidebar{transform:translateX(-100%);transition:transform .22s ease;box-shadow:var(--shadow);width:300px}
+  body.nav-open .sidebar{transform:none}
+  body.nav-open .backdrop{display:block}
+  .main{margin-left:0}
+  .main-inner{padding:26px 20px 100px}
+  .topbar .brand span{display:none}
+  .hero{padding:30px 22px}
+  .chapter+.chapter{padding-top:48px}
+  .chapter-nav{flex-direction:column}
+  .chapter-nav a.next{text-align:left}
+  .tb-progress span{display:none}
+}
+@media (max-width:560px){
+  body{font-size:15.5px}
+  .tb-progress .bar{width:52px}
+  .tb-btn{padding:0 9px}
+  .tb-btn .lbl{display:none}
+  .tb-btn .ico{font-size:14px}
+  .chapter-body h3{font-size:20px}
+  .analogy,.callout{padding-left:44px}
+  .flow{padding:12px}
+  .flow-arrow{flex-basis:100%;height:10px;transform:rotate(90deg)}
+}
+@media (prefers-reduced-motion: reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+@media print{
+  .sidebar,.topbar,.to-top,.backdrop,#reading-progress,.chapter-nav,.copy-btn{display:none!important}
+  .main{margin-left:0}
+  .main-inner{padding:0;max-width:none}
+  body{font-size:11.5pt;line-height:1.6}
+  .chapter{page-break-before:always;max-width:none;padding-bottom:20px}
+  .chapter:first-child{page-break-before:auto}
+  .deep,.quiz{border:1px solid #ccc;background:none}
+  .deep>summary::before,.quiz>summary::before{display:none}
+  .code-block{border:1px solid #bbb;box-shadow:none;break-inside:avoid}
+  .code-block pre{color:#111;background:#f6f6f6}
+  .code-block pre span{color:#111!important}
+  .code-head{background:#eee!important;color:#333!important}
+  .code-head .lang{color:#333!important}
+  .code-head .dots{display:none}
+  .analogy,.callout,.deep,.quiz,.table-wrap,.flow,.steps>li,.takeaway{break-inside:avoid}
+  a{color:#111}
+  .hero{background:none}
+  .chapter-title small{color:#444}
+}
+/* ---------- live shader demos ---------- */
+.demo{margin:24px 0;border:1px solid var(--border);border-radius:14px;overflow:hidden;
+  background:#05070f;box-shadow:var(--shadow);position:relative}
+.demo-bar{display:flex;align-items:center;gap:8px;padding:8px 13px;
+  border-bottom:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;color:#8fa3bd}
+.demo-bar .dot{width:7px;height:7px;border-radius:50%;background:#5eead4;box-shadow:0 0 8px #5eead4}
+.demo-bar .name{color:#c7d2e5}
+.demo-bar .live{margin-left:auto;color:#5eead4;font-size:9px;letter-spacing:.12em}
+.demo-body{position:relative;height:320px;background:#05070f;overflow:hidden}
+.demo-body canvas{display:block;width:100%;height:100%}
+.demo-cap{position:absolute;left:12px;bottom:10px;font-size:10.5px;color:rgba(220,235,255,.62);
+  font-family:var(--mono);pointer-events:none;text-shadow:0 1px 8px rgba(0,0,0,.7)}
+.demo-fallback{position:absolute;inset:0;display:grid;place-items:center;padding:24px;
+  color:#9aa8bd;font-size:13px;text-align:center}
+@media (max-width:640px){.demo-body{height:230px}.demo{margin:18px 0}}
+@media print{.demo{display:none!important}}
+
+</style>
+</head>
+<body>
+<div id="reading-progress"></div>
+<div class="backdrop" id="backdrop"></div>
+
+<header class="topbar">
+  <button class="burger" id="burger" aria-label="打开目录" aria-expanded="false">☰</button>
+  <a class="brand" href="../" title="返回首页" style="text-decoration:none;color:inherit">
+    <b>WebGL Shader 内功课</b>
+    <span>从片元到画面，手写第一束光</span>
+  </a>
+  <div class="spacer"></div>
+  <div class="tb-progress" title="学习进度">
+    <span id="progress-text">0 / 0</span>
+    <div class="bar"><i id="progress-bar"></i></div>
+  </div>
+  <button class="tb-btn" id="theme-btn" title="切换深浅色主题"><span class="ico">◐</span><span class="lbl">主题</span></button>
+  <button class="tb-btn" id="expand-btn" title="展开/收起全部深入区块"><span class="ico">⤢</span><span class="lbl">展开</span></button>
+  <button class="tb-btn" id="print-btn" title="打印 / 导出 PDF"><span class="ico">⎙</span><span class="lbl">打印</span></button>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar">
+    <a class="back-home" href="../">← 返回 Doran 的个人首页</a>
+    <label class="side-search">
+      <span aria-hidden="true">🔍</span>
+      <input type="search" id="side-search" placeholder="搜索章节…" autocomplete="off" aria-label="搜索章节">
+      <kbd>/</kbd>
+    </label>
+    <nav id="toc" aria-label="课程目录">
+    <div class="nav-part" data-part="p0">
+      <p class="nav-part-title">出发之前</p>
+      <a class="nav-link" href="#ch00" data-ch="ch00"><span class="nav-num">00</span><span class="nav-label">课程导览：GPU 在画什么</span><span class="nav-check" data-check="ch00" role="checkbox" aria-checked="false" tabindex="0"></span></a>
+      <a class="nav-link" href="#ch01" data-ch="ch01"><span class="nav-num">01</span><span class="nav-label">第一个片元：坐标系与颜色</span><span class="nav-check" data-check="ch01" role="checkbox" aria-checked="false" tabindex="0"></span></a>
+    </div>
+    <div class="nav-part" data-part="p1">
+      <p class="nav-part-title">图形管线</p>
+      <a class="nav-link" href="#ch02" data-ch="ch02"><span class="nav-num">02</span><span class="nav-label">顶点与插值：三角形怎么上色</span><span class="nav-check" data-check="ch02" role="checkbox" aria-checked="false" tabindex="0"></span></a>
+      <a class="nav-link" href="#ch03" data-ch="ch03"><span class="nav-num">03</span><span class="nav-label">uniform 与时间：让画面动起来</span><span class="nav-check" data-check="ch03" role="checkbox" aria-checked="false" tabindex="0"></span></a>
+      <a class="nav-link" href="#ch04" data-ch="ch04"><span class="nav-num">04</span><span class="nav-label">UV 图案：step、fract 与棋盘</span><span class="nav-check" data-check="ch04" role="checkbox" aria-checked="false" tabindex="0"></span></a>
+    </div>
+    <div class="nav-part" data-part="p2">
+      <p class="nav-part-title">程序化图形</p>
+      <a class="nav-link" href="#ch05" data-ch="ch05"><span class="nav-num">05</span><span class="nav-label">噪声与 FBM：程序化云层</span><span class="nav-check" data-check="ch05" role="checkbox" aria-checked="false" tabindex="0"></span></a>
+      <a class="nav-link" href="#ch06" data-ch="ch06"><span class="nav-num">06</span><span class="nav-label">SDF：用距离函数塑造形状</span><span class="nav-check" data-check="ch06" role="checkbox" aria-checked="false" tabindex="0"></span></a>
+      <a class="nav-link" href="#ch07" data-ch="ch07"><span class="nav-num">07</span><span class="nav-label">光照与 raymarch：球体怎么亮</span><span class="nav-check" data-check="ch07" role="checkbox" aria-checked="false" tabindex="0"></span></a>
+    </div>
+    <div class="nav-part" data-part="p3">
+      <p class="nav-part-title">交互与结课</p>
+      <a class="nav-link" href="#ch08" data-ch="ch08"><span class="nav-num">08</span><span class="nav-label">交互与性能：鼠标、分辨率、暂停</span><span class="nav-check" data-check="ch08" role="checkbox" aria-checked="false" tabindex="0"></span></a>
+      <a class="nav-link" href="#ch09" data-ch="ch09"><span class="nav-num">09</span><span class="nav-label">结课：组合一个 shader 场景</span><span class="nav-check" data-check="ch09" role="checkbox" aria-checked="false" tabindex="0"></span></a>
+    </div>
+    </nav>
+    <div class="side-foot">
+      <p>本课程基于 WebGL 1 / GLSL ES 1.00 规范与 MDN、WebGL Fundamentals 等公开资料编写，代码均为课程原创。</p>
+      <p>浏览器直接运行，无需安装任何依赖；示例均在页面内实时渲染。</p>
+      <p>阅读进度保存在本机浏览器中 · <a href="../">返回个人首页</a></p>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="main-inner" id="content">
+<section id="ch00" class="chapter">
+  <div class="hero">
+    <p class="eyebrow">WebGL · Shader from scratch</p>
+    <h1 class="chapter-title">在浏览器里，亲手写下第一束光</h1>
+    <p class="chapter-lede">这不是一份 WebGL API 手册，而是一趟从像素出发的旅程：你会写 GLSL、画全屏三角形、做渐变、噪声、SDF 和 raymarching，最终组合出一个能实时交互的场景。每一章都有可直接运行的 Demo。</p>
+    <div class="hero-meta">
+      <span class="pill accent">中文 · 单页可离线阅读</span>
+      <span class="pill">10 章 · 约 3 小时</span>
+      <span class="pill">每章实时 WebGL Demo</span>
+      <span class="pill">零依赖 · 浏览器直接跑</span>
+    </div>
+  </div>
+
+  <p class="source-line">
+    <span>基于 WebGL 1 / GLSL ES 1.00 规范</span>
+    <span>示例全部在页面内实时渲染</span>
+    <span>不依赖 Three.js 或任何框架</span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">读完这门课，你会</li>
+    <li>理解 GPU 图形管线的两个可编程阶段：顶点着色器与片元着色器</li>
+    <li>用 GLSL 写渐变、图案、噪声、SDF 与简单的 raymarching 光照</li>
+    <li>知道如何把鼠标、时间、分辨率传给 shader，并让它持续高性能地运行</li>
+    <li>能独立写出一个全屏 shader 作品，并知道下一步该往哪里深入</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>先建立最小心智模型</h3>
+    <p>屏幕上的每个像素，最终都由 GPU 里的一小段程序决定颜色。WebGL 把这套过程拆成两个可编程阶段：<b>顶点着色器</b>决定几何体的顶点落在哪里；<b>片元着色器</b>决定每个像素最终是什么颜色。</p>
+    <p>本课程大部分 Demo 都是「全屏三角形 + 片元着色器」：屏幕上每个像素都会执行一次你写的 <code class="inline-code">main()</code>。你只要根据坐标算出颜色，就能画出无限复杂的图案。</p>
+    <div class="flow">
+      <div class="flow-node"><b>JS</b>准备数据与 uniform</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>Vertex</b>顶点位置 / 插值</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>Rasterizer</b>变成像素</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>Fragment</b>每个像素算颜色</div>
+    </div>
+
+    <div class="analogy">
+      <span class="analogy-title">像给每个像素发一张答题卡</span>
+      <p>片元着色器就是一张「你负责的像素」答题卡：卡上印着坐标、时间、鼠标等已知条件，你按要求填一个颜色交回去。GPU 会同时发出几百万张卡，所以每个 <code class="inline-code">main()</code> 都必须很轻。</p>
+      <p><b>类比到哪为止：</b>答题卡之间不能互相通信；片元着色器无法读取邻居像素的颜色，这是它快的原因，也是很多效果要另想办法的原因。</p>
+    </div>
+
+    <p>先看一个最小片元 shader 的形状：它拿到当前像素的坐标，算出一个颜色，写进 <code class="inline-code">gl_FragColor</code>。</p>
+<pre data-lang="glsl"><code>precision highp float;
+uniform vec2 uRes;
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / uRes;   // 0..1
+  gl_FragColor = vec4(uv.x, uv.y, 0.5, 1.0);
+}
+</code></pre>
+    <p>这一小段会在屏幕每个像素上执行一次。把 <code class="inline-code">uv.x</code> 和 <code class="inline-code">uv.y</code> 分别送进红色和绿色通道，就得到一张从黑到黄、再到青的渐变图。整门课都是在这个形状上不断加东西。</p>
+
+    <h3><span class="h3num">02</span>课程地图</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>阶段</th><th>章节</th><th>解决的问题</th></tr></thead>
+        <tbody>
+          <tr><td>入门</td><td>ch01</td><td>坐标系、全屏三角形、第一个颜色</td></tr>
+          <tr><td>管线</td><td>ch02–ch04</td><td>顶点与插值、uniform 时间、UV 图案</td></tr>
+          <tr><td>图形</td><td>ch05–ch07</td><td>噪声、SDF、光照与 raymarch</td></tr>
+          <tr><td>交互</td><td>ch08</td><td>鼠标、分辨率、性能与暂停</td></tr>
+          <tr><td>结课</td><td>ch09</td><td>组合一个实时场景</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3><span class="h3num">03</span>不需要安装任何东西</h3>
+    <p>课程里的 Demo 已经在页面内运行。你只需要一个支持 WebGL 的现代浏览器，以及一个能改代码的编辑器。想自己实验，可以把页面里的 shader 代码复制到任意 WebGL Playground，或本地建一个 <code class="inline-code">index.html</code>：</p>
+<pre data-lang="html"><code>&lt;canvas id="c"&gt;&lt;/canvas&gt;
+&lt;script&gt;
+const gl = document.getElementById('c').getContext('webgl');
+// 编译 shader、创建 program、绘制全屏三角形
+&lt;/script&gt;
+</code></pre>
+    <p>课程不会展开完整的 WebGL 初始化样板；那是框架和模板替你做的事。我们把注意力放在 shader 本身：只要你知道输入（坐标、时间、鼠标）和输出（颜色），就能读懂本课程绝大多数代码。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：WebGL 1 和 WebGL 2 的 GLSL 有什么差别？</summary>
+      <div class="deep-body">
+        <p>WebGL 1 使用 GLSL ES 1.00：没有 <code class="inline-code">in/out</code>，用 <code class="inline-code">attribute</code>、<code class="inline-code">varying</code>、<code class="inline-code">gl_FragColor</code>；不支持动态循环和纹理数组。WebGL 2 对应 GLSL ES 3.00，语法更现代，但入门阶段两者概念完全一致。</p>
+        <p>本课程使用 WebGL 1 语法，兼容面最广；你之后迁到 Three.js 的 <code class="inline-code">ShaderMaterial</code> 或 WebGL2 时，只需替换少量关键字。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">04</span>每章怎么读</h3>
+    <ol class="steps">
+      <li><b>先看 Demo</b>：观察画面随时间和鼠标怎么变化，猜它用了哪些输入。</li>
+      <li><b>读代码</b>：把 shader 拆成「坐标 → 图案 → 颜色」三段，而不是逐行背语法。</li>
+      <li><b>做实验</b>：每章都有一个「改一行」的任务，改完刷新页面看差异。</li>
+      <li><b>做自测</b>：至少回答一遍，确认自己不是在「看懂了」的幻觉里。</li>
+    </ol>
+
+    <h3><span class="h3num">05</span>自测</h3>
+    <details class="quiz">
+      <summary>片元着色器每个像素执行一次，那它能读取相邻像素的颜色吗？</summary>
+      <div class="answer"><p>不能。片元着色器只拿到当前片元的坐标和 uniform，无法访问邻居像素。需要邻域信息的效果通常要额外 pass、纹理或后处理。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么很多全屏 shader 用一个三角形，而不是两个三角形拼成矩形？</summary>
+      <div class="answer"><p>一个覆盖屏幕的大三角形少一个顶点、少一条对角线，光栅化更简单；对全屏后处理来说足够，且能减少边界处的重复计算。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>顶点着色器和片元着色器，哪个决定「像素颜色」？</summary>
+      <div class="answer"><p>片元着色器。顶点着色器只决定顶点位置与传给片元的 varying；颜色最终在片元阶段计算并写入帧缓冲。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>先记住两个可编程阶段：顶点决定「在哪」，片元决定「什么颜色」。接下来我们只做一件事：让片元根据坐标输出一个可解释的颜色。</p>
+      <p class="next"><b>下一讲：</b>从一行颜色开始，认识 clip space、UV 和第一个全屏 shader。</p>
+    </div>
+  </div>
+
+<nav class="chapter-nav" aria-label="章节导航">
+<a class="next" href="#ch01"><span class="dir">下一讲 →</span><span class="name">第一个片元：坐标系与颜色</span></a>
+</nav>
+</section>
+
+<section id="ch01" class="chapter">
+  <p class="chapter-kicker">第 1 讲 · 出发之前</p>
+  <h2 class="chapter-title">第一个片元：坐标系、UV 与颜色<small>全屏三角形 + 一次片元调用，就是最小可运行 shader</small>
+  </h2>
+  <p class="chapter-lede">写 shader 最容易迷路的地方不是语法，而是坐标：clip space、屏幕坐标、UV、宽高比，各自在哪个范围？这一讲把坐标系一次性理顺，然后画出第一张渐变。</p>
+  <p class="source-line">
+    <span>Demo 1 · UV 渐变与鼠标光斑</span>
+    <span>关键词 <code>gl_FragCoord</code> · <code>vUv</code> · <code>mix</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>区分 clip space、屏幕像素坐标与 0..1 的 UV</li>
+    <li>用全屏三角形让片元着色器覆盖整个画布</li>
+    <li>用 <code>mix</code> 与鼠标位置画出会跟随的渐变光斑</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>先把坐标理清</h3>
+    <p>顶点着色器输出的位置在 <b>clip space</b>：x、y 都在 -1 到 1 之间，(-1,-1) 是左下，(+1,+1) 是右上。光栅化之后，片元着色器拿到的是像素坐标，通常用 <code class="inline-code">gl_FragCoord.xy</code>，范围是画布宽高。</p>
+    <p>最常用的中间量是 <b>UV</b>：把坐标归一化到 0..1。归一化后，图案不依赖画布具体像素尺寸，换屏幕也能保持比例。但注意：直接把 <code class="inline-code">gl_FragCoord.xy / uRes</code> 当 UV，会让圆变成椭圆，因为屏幕通常不是正方形；需要乘宽高比。</p>
+    <div class="demo" data-demo="gradient" data-label="DEMO 01 · gradient" data-cap="移动鼠标：高光会跟随；UV 已按宽高比修正"></div>
+
+    <div class="analogy">
+      <span class="analogy-title">像给每个像素发一张带经纬度的答题卡</span>
+      <p>UV 就是像素的经纬度，告诉你「你在画面的哪个位置」。颜色函数则是答题规则：给定经纬度，返回一个颜色。</p>
+      <p><b>类比到哪为止：</b>真实地图的经纬度是连续的；shader 里的 UV 每个像素只采样一次，所以高频图案会出现锯齿，这也是后面要学抗锯齿的原因。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>全屏三角形</h3>
+    <p>为了覆盖整个画布，我们只画一个三角形：三个顶点放在裁剪空间外，确保它盖住屏幕。片元阶段再根据 UV 上色。这个技巧比画两个三角形组成矩形更省一点，也避免对角线接缝。</p>
+<pre data-lang="js"><code>const positions = new Float32Array([
+  -1, -1,
+   3, -1,
+  -1,  3,
+]);
+
+gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+gl.drawArrays(gl.TRIANGLES, 0, 3);
+</code></pre>
+
+    <h3><span class="h3num">03</span>第一个片元 shader</h3>
+    <p>顶点着色器只做一件事：把顶点坐标传给光栅化，并顺便算好 UV。片元着色器则拿 UV 算颜色：</p>
+<pre data-lang="glsl"><code>precision highp float;
+varying vec2 vUv;
+uniform vec2 uRes;
+uniform vec2 uMouse;
+
+void main() {
+  vec3 col = mix(vec3(0.02,0.03,0.08),
+                 vec3(0.08,0.55,0.62),
+                 vUv.y);
+  float d = distance(vUv * vec2(uRes.x/uRes.y, 1.0),
+                     uMouse * vec2(uRes.x/uRes.y, 1.0));
+  col += vec3(0.3,0.9,0.85) * smoothstep(0.4, 0.0, d) * 0.6;
+  gl_FragColor = vec4(col, 1.0);
+}
+</code></pre>
+    <p><code class="inline-code">mix(a,b,t)</code> 做线性插值，<code class="inline-code">smoothstep</code> 做柔和的 0→1 过渡。用 <code class="inline-code">smoothstep</code> 而不是 <code class="inline-code">step</code>，光斑边缘会柔和很多。</p>
+
+    <div class="callout insight">
+      <span class="callout-title">宽高比是 shader 里最常见的坑</span>
+      <p>把 x 乘上 <code class="inline-code">uRes.x / uRes.y</code>，能让「以中心为圆心的距离」在屏幕坐标里保持圆形。否则在 16:9 屏幕上，圆会横向拉长。</p>
+    </div>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么 Demo 的鼠标高光不是简单的圆？</summary>
+      <div class="deep-body">
+        <p>它其实叠加了两个形状：一个柔和的圆形高光，和一个以 (0.5,0.8) 为圆心的细环。每个形状都用 <code class="inline-code">smoothstep</code> 控制衰减，最后相加。你看到的「发光」不是物理光，而是颜色叠加。</p>
+        <p>很多看起来复杂的 shader 都是这样：几个简单的距离/噪声函数相加或相乘。先学会读每一项，再谈组合。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">04</span>动手实验</h3>
+    <ol class="steps">
+      <li>把 <code class="inline-code">vUv.y</code> 换成 <code class="inline-code">vUv.x</code>，观察渐变方向；再把 <code>mix</code> 的两种颜色对调。</li>
+      <li>把 <code class="inline-code">smoothstep(0.4, 0.0, d)</code> 改成 <code class="inline-code">smoothstep(0.2, 0.0, d) * 2.0</code>，让光斑更小更亮。</li>
+    </ol>
+
+    <h3><span class="h3num">05</span>自测</h3>
+    <details class="quiz">
+      <summary>为什么 UV 要乘宽高比？</summary>
+      <div class="answer"><p>因为画布像素不是正方形。要让距离函数在屏幕空间保持各向同性，需要把 x 乘以 <code>width / height</code>，否则圆会被拉成椭圆。</p></div>
+    </details>
+    <details class="quiz">
+      <summary><code>mix(a,b,0.3)</code> 的结果是什么？</summary>
+      <div class="answer"><p>返回 <code>a * 0.7 + b * 0.3</code> 的线性插值。t 可以大于 1 或小于 0，但通常我们保持在 0..1。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>全屏三角形为什么顶点会超出 [-1,1]？</summary>
+      <div class="answer"><p>超出的部分会被裁剪，但留下的区域正好覆盖整个视口；这样只用三个顶点就盖满屏幕，避免两个三角形拼矩形的对角线接缝。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>坐标的层级是：clip space → 屏幕像素 → UV。记住乘宽高比、用 <code>smoothstep</code> 做柔边，你就已经能画出一张像样的全屏图。</p>
+      <p class="next"><b>下一讲：</b>全屏片元是「每个像素自己算」，但三角形要先把颜色从顶点插值到像素；这就是 attribute 与 varying。</p>
+    </div>
+  </div>
+
+<nav class="chapter-nav" aria-label="章节导航">
+<a class="prev" href="#ch00"><span class="dir">← 上一讲</span><span class="name">课程导览：GPU 在画什么</span></a>
+<a class="next" href="#ch02"><span class="dir">下一讲 →</span><span class="name">顶点与插值：三角形怎么上色</span></a>
+</nav>
+</section>
+
+<section id="ch02" class="chapter">
+  <p class="chapter-kicker">第 2 讲 · 图形管线</p>
+  <h2 class="chapter-title">顶点与插值：三角形怎么上色<small>attribute 进入顶点着色器，varying 把颜色插值到每个像素</small>
+  </h2>
+  <p class="chapter-lede">全屏 shader 只有片元阶段，但真正的几何体需要顶点着色器先决定顶点位置。这一讲画一个旋转三角形，看清 attribute、varying 和插值各自负责什么。</p>
+  <p class="source-line">
+    <span>Demo 2 · 顶点颜色插值</span>
+    <span>关键词 <code>attribute</code> · <code>varying</code> · <code>gl_Position</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>分清 attribute、uniform、varying 在管线中的位置</li>
+    <li>让三个顶点带不同颜色，并在片元里得到平滑渐变</li>
+    <li>理解为什么顶点数据比逐像素数据更省</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>管线里的三种变量</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>变量</th><th>声明在</th><th>从哪里来</th><th>典型用途</th></tr></thead>
+        <tbody>
+          <tr><td><code>attribute</code></td><td>顶点着色器</td><td>JavaScript 的顶点缓冲</td><td>位置、法线、颜色</td></tr>
+          <tr><td><code>uniform</code></td><td>两个着色器</td><td>JavaScript 每次绘制传入</td><td>时间、分辨率、矩阵</td></tr>
+          <tr><td><code>varying</code></td><td>两个着色器</td><td>顶点着色器输出 → 光栅化插值</td><td>UV、顶点颜色、法线</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>顶点着色器每个顶点执行一次；片元着色器每个像素执行一次。三个顶点的颜色之所以能变成一整片渐变，是因为光栅化阶段会把 varying 按重心坐标插值。</p>
+
+    <div class="demo" data-demo="triangle" data-label="DEMO 02 · varying" data-cap="三个顶点的颜色被插值到三角形内部，并随时间旋转"></div>
+
+    <div class="analogy">
+      <span class="analogy-title">像把三盏灯的亮度摊到整个房间</span>
+      <p>三个顶点是三盏颜色不同的灯，片元是房间里的每个点。光栅化会根据你离三盏灯的距离做加权平均，于是每个像素得到一个混合色。</p>
+      <p><b>类比到哪为止：</b>插值是线性的，所以颜色从顶点到顶点是平滑过渡；如果三个顶点颜色相同，整个三角形就是纯色。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>顶点着色器</h3>
+    <p>这段 shader 接收位置和颜色两个 attribute，用旋转矩阵转动位置，再把颜色作为 varying 传给片元。<code class="inline-code">gl_Position</code> 是必须写入的裁剪空间坐标。</p>
+<pre data-lang="glsl"><code>attribute vec2 aPos;
+attribute vec3 aColor;
+uniform float uTime;
+varying vec3 vColor;
+
+void main() {
+  float a = uTime * 0.5;
+  mat2 r = mat2(cos(a), -sin(a), sin(a), cos(a));
+  vec2 p = r * aPos;
+  gl_Position = vec4(p, 0.0, 1.0);
+  vColor = aColor;
+}
+</code></pre>
+
+    <h3><span class="h3num">03</span>片元着色器与 draw call</h3>
+    <p>片元着色器只接收插值后的 <code class="inline-code">vColor</code>，做一点呼吸亮度后输出。注意它完全不知道三角形有几个顶点，也不知道顶点颜色来自哪里。</p>
+<pre data-lang="glsl"><code>precision highp float;
+varying vec3 vColor;
+uniform float uTime;
+
+void main() {
+  float pulse = 0.85 + 0.15 * sin(uTime * 2.0);
+  gl_FragColor = vec4(vColor * pulse, 1.0);
+}
+</code></pre>
+    <p>JavaScript 侧只需要把两个 buffer 绑到 attribute 位置，然后 <code class="inline-code">drawArrays(TRIANGLES, 0, 3)</code>。颜色数组长度是 9，因为 3 个顶点 × RGB 3 个分量。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么 varying 不能随便传大数组？</summary>
+      <div class="deep-body">
+        <p>varying 的数量受 GPU 限制，而且每个顶点都要写入、每个片元都要读取。传纹理坐标和法线通常够用；如果需要大量每顶点数据，应该用纹理或实例化属性，而不是堆几十个 varying。</p>
+        <p>另一个限制是精度：WebGL 1 的 varying 默认可能是 mediump，移动端尤其要小心位置/UV 的精度。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">04</span>自测</h3>
+    <details class="quiz">
+      <summary>三个顶点分别是红、绿、蓝，三角形中心大概是什么颜色？</summary>
+      <div class="answer"><p>三者的加权平均，接近灰/白。正中心重心坐标约为 (1/3,1/3,1/3)，所以 RGB 各约 0.33。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>uniform 和 attribute 的最大区别？</summary>
+      <div class="answer"><p>attribute 是逐顶点数据，来自顶点缓冲；uniform 是一次 draw call 内所有顶点/片元共享的常量，由 JS 在绘制前设置。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么片元着色器不直接接收顶点数组？</summary>
+      <div class="answer"><p>片元阶段处理的是光栅化后的像素，不持有顶点数组；它只能拿到插值后的 varying 和 uniform。这样 GPU 才能并行处理大量像素。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>顶点着色器决定「顶点在哪、传什么 varying」，光栅化负责插值，片元着色器只负责「当前像素是什么颜色」。这就是几何体上色的全部秘密。</p>
+      <p class="next"><b>下一讲：</b>给 shader 一个不断变化的时间，让画面真正动起来。</p>
+    </div>
+  </div>
+
+<nav class="chapter-nav" aria-label="章节导航">
+<a class="prev" href="#ch01"><span class="dir">← 上一讲</span><span class="name">第一个片元：坐标系与颜色</span></a>
+<a class="next" href="#ch03"><span class="dir">下一讲 →</span><span class="name">uniform 与时间：让画面动起来</span></a>
+</nav>
+</section>
+
+<section id="ch03" class="chapter">
+  <p class="chapter-kicker">第 3 讲 · 图形管线</p>
+  <h2 class="chapter-title">uniform 与时间：让画面动起来<small>同一个 shader，每帧只改一个 uTime，就能得到连续的动画</small>
+  </h2>
+  <p class="chapter-lede">静态图案只是开始。shader 的动画不需要改顶点或重建几何体，只要把时间作为 uniform 传进去，让颜色/位置随时间变化。</p>
+  <p class="source-line">
+    <span>Demo 3 · 时间脉冲</span>
+    <span>关键词 <code>uniform float uTime</code> · <code>sin</code> · <code>fract</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>把 requestAnimationFrame 的时间传给 shader</li>
+    <li>用 sin / fract 构造周期动画，而不是写 if-else</li>
+    <li>避免时间精度与帧率带来的常见问题</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>时间从哪来</h3>
+    <p>WebGL 没有内置「时间」。你在 JS 里用 <code class="inline-code">performance.now()</code> 或 <code class="inline-code">requestAnimationFrame</code> 的时间戳，换算成秒，传给 shader 的 <code class="inline-code">uTime</code>。每一帧更新一次 uniform，画面就动了。</p>
+<pre data-lang="js"><code>function frame(now) {
+  const t = now * 0.001;              // 毫秒 → 秒
+  gl.uniform1f(uTime, t);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</code></pre>
+    <p>注意不要用 <code class="inline-code">Date.now()</code> 做动画时间，它会受系统时钟调整影响；<code class="inline-code">performance.now()</code> 单调递增，更适合动画。</p>
+
+    <h3><span class="h3num">02</span>用周期函数构造动画</h3>
+    <p>下面把屏幕坐标变成极坐标，用 <code class="inline-code">sin(radius - time)</code> 做出一圈圈向外扩散的环。整个过程没有 if，也没有状态，只有函数。</p>
+<pre data-lang="glsl"><code>precision highp float;
+varying vec2 vUv;
+uniform vec2 uRes;
+uniform float uTime;
+
+void main() {
+  vec2 p = vUv * 2.0 - 1.0;
+  p.x *= uRes.x / uRes.y;
+  float r = length(p);
+  float ring = pow(0.5 + 0.5 * sin(r * 12.0 - uTime * 2.2), 8.0);
+  vec3 col = mix(vec3(0.01,0.03,0.08),
+                 vec3(0.1,0.7,0.65),
+                 ring * smoothstep(1.4, 0.0, r));
+  gl_FragColor = vec4(col, 1.0);
+}
+</code></pre>
+    <div class="demo" data-demo="pulse" data-label="DEMO 03 · time" data-cap="sin 驱动的同心环；power 让波峰更窄"></div>
+
+    <div class="analogy">
+      <span class="analogy-title">像水面上一圈圈扩散的波纹</span>
+      <p>时间每增加一点，波纹的相位就往前推一点；<code class="inline-code">sin</code> 负责形状，<code class="inline-code">pow</code> 负责让波峰变窄，<code class="inline-code">smoothstep</code> 负责让远处淡出。</p>
+      <p><b>类比到哪为止：</b>水波是物理传播；这里的「波纹」只是数学函数，移动速度和间距都可以随手改。</p>
+    </div>
+
+    <h3><span class="h3num">03</span>时间精度与帧率</h3>
+    <p>动画速度应该按秒计算，而不是按帧。如果用 <code class="inline-code">frameCount * 0.01</code>，在 120Hz 屏幕上会比 60Hz 快一倍。用真实秒数就不会有这个问题。</p>
+    <div class="callout warn">
+      <span class="callout-title">长时间运行后 uTime 会变大</span>
+      <p>float 精度有限，运行几小时后时间的细粒度会变粗。长时间展示的 shader 可以把时间对某个周期取模，例如 <code class="inline-code">uTime = t % 3600.0</code>。</p>
+    </div>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么 shader 里很少写 if 来控制动画？</summary>
+      <div class="deep-body">
+        <p>GPU 是 SIMD 执行，分支会让同一组线程走不同路径，降低效率；而且 if 写出来的动画容易不平滑。用 <code class="inline-code">sin</code>、<code class="inline-code">smoothstep</code>、<code class="inline-code">mix</code> 这类连续函数，既能得到平滑过渡，也更容易并行。</p>
+        <p>当然，判断命中、循环终止这类逻辑仍然需要 if/for；只是「形状与动画」尽量用数学函数表达。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">04</span>动手实验</h3>
+    <ol class="steps">
+      <li>把 <code class="inline-code">uTime * 2.2</code> 改成 <code class="inline-code">uTime * 0.8</code>，观察波纹扩散速度。</li>
+      <li>把 <code class="inline-code">pow(..., 8.0)</code> 改成 <code class="inline-code">4.0</code> 或 <code class="inline-code">16.0</code>，看波峰宽度如何变化。</li>
+    </ol>
+
+    <h3><span class="h3num">05</span>自测</h3>
+    <details class="quiz">
+      <summary>为什么动画时间要用 performance.now() 而不是 Date.now()？</summary>
+      <div class="answer"><p>performance.now() 单调递增，不受系统时间调整影响；Date.now() 可能因为校时/时区变化跳变，导致动画跳帧。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>sin 的函数值范围是多少？怎样映射到 0..1？</summary>
+      <div class="answer"><p>sin 返回 -1..1；用 <code>0.5 + 0.5 * sin(x)</code> 映射到 0..1。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么用 pow 处理 sin 的环？</summary>
+      <div class="answer"><p>pow 会压窄波峰、拉宽波谷，让环看起来更锐利、更像发光线条，而不是一大片渐变。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>动画的本质是「时间进入函数」：把秒数传给 uTime，用 sin/fract/smoothstep 构造连续变化。不要用帧数计时，也不要滥用 if。</p>
+      <p class="next"><b>下一讲：</b>有了 UV 和时间，下一步是用 fract/step 把连续空间切成图案。</p>
+    </div>
+  </div>
+
+<nav class="chapter-nav" aria-label="章节导航">
+<a class="prev" href="#ch02"><span class="dir">← 上一讲</span><span class="name">顶点与插值：三角形怎么上色</span></a>
+<a class="next" href="#ch04"><span class="dir">下一讲 →</span><span class="name">UV 图案：step、fract 与棋盘</span></a>
+</nav>
+</section>
+
+<section id="ch04" class="chapter">
+  <p class="chapter-kicker">第 4 讲 · 图形管线</p>
+  <h2 class="chapter-title">UV 图案：step、fract 与棋盘<small>把连续坐标切成格子，是所有程序化图案的起点</small>
+  </h2>
+  <p class="chapter-lede">棋盘、条纹、点阵、网格——看起来不同的图案，底层都是同一组操作：放大 UV、取小数部分、判断奇偶、用 smoothstep 画线。</p>
+  <p class="source-line">
+    <span>Demo 4 · 程序化棋盘</span>
+    <span>关键词 <code>fract</code> · <code>step</code> · <code>mod</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>用 fract 把坐标折叠成重复格子</li>
+    <li>用 floor/mod 判断奇偶格，用 smoothstep 画网格线</li>
+    <li>理解放大 UV 与抗锯齿之间的关系</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>把空间切成格子</h3>
+    <p>核心操作只有两个：<code class="inline-code">uv *= n</code> 放大坐标，<code class="inline-code">fract(uv)</code> 取小数部分。放大后每个整数区间变成一个格子，fract 把它们折叠回 0..1。<code class="inline-code">floor(uv)</code> 则告诉你当前在第几个格子。</p>
+<pre data-lang="glsl"><code>vec2 uv = vUv * vec2(uRes.x/uRes.y, 1.0) * 8.0;
+vec2 g = abs(fract(uv) - 0.5);             // 到格子中心的距离
+float checker = mod(floor(uv.x) + floor(uv.y), 2.0);
+float line = smoothstep(0.49, 0.5, max(g.x, g.y));
+</code></pre>
+    <p><code class="inline-code">checker</code> 为 0/1，用来选两种底色；<code class="inline-code">line</code> 在靠近格子边界时接近 1，用来画网格线。两者叠加就是一个会动起来的棋盘。</p>
+    <div class="demo" data-demo="pattern" data-label="DEMO 04 · pattern" data-cap="棋盘 + 网格线，UV 随时间轻微漂移"></div>
+
+    <div class="analogy">
+      <span class="analogy-title">像地砖的铺法</span>
+      <p>放大 UV 相当于决定每块地砖多大；fract 是「你在这块砖里的哪个位置」；floor 是「你在第几行第几列」。改砖的大小、颜色和缝隙，就能得到完全不同的图案。</p>
+      <p><b>类比到哪为止：</b>真实地砖有物理缝隙；shader 里的「缝隙」只是 smoothstep 画出来的一条颜色带。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>完整片段</h3>
+<pre data-lang="glsl"><code>precision highp float;
+varying vec2 vUv;
+uniform vec2 uRes;
+uniform float uTime;
+
+void main() {
+  vec2 uv = vUv * vec2(uRes.x/uRes.y, 1.0) * 8.0;
+  uv += vec2(uTime * 0.08, sin(uTime * 0.3));
+  vec2 g = abs(fract(uv) - 0.5);
+  float checker = mod(floor(uv.x) + floor(uv.y), 2.0);
+  float line = smoothstep(0.49, 0.5, max(g.x, g.y));
+  vec3 col = mix(vec3(0.02,0.04,0.08),
+                 vec3(0.08,0.5,0.55),
+                 checker * 0.35 + 0.1);
+  col = mix(col, vec3(0.75,0.9,0.95), line * 0.65);
+  gl_FragColor = vec4(col, 1.0);
+}
+</code></pre>
+
+    <h3><span class="h3num">03</span>抗锯齿</h3>
+    <p>当格子很密时，一条像素可能跨过多个格子，硬边会出现摩尔纹和闪烁。WebGL 1 没有内置 fwidth，但可以用两个 smoothstep 控制线宽，或降低图案频率、加一点模糊。先把图案做「粗」一点，通常比事后抗锯齿更有效。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么放大 UV 会让边缘闪烁？</summary>
+      <div class="deep-body">
+        <p>因为像素是离散采样。当图案频率接近像素频率时，采样结果会在不同帧/不同位置跳变，形成摩尔纹。增加分辨率、降低频率、使用导数宽度（WebGL2/fwidth）或后处理模糊，都是缓解方式。</p>
+        <p>这也是为什么很多 shader 作品在 1080p 好看，在 4K 或小窗口却出现纹理噪点。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">04</span>自测</h3>
+    <details class="quiz">
+      <summary>fract(uv) 和 floor(uv) 分别给你什么信息？</summary>
+      <div class="answer"><p>fract 给格子内的局部坐标（0..1）；floor 给格子的整数索引，用来判断第几个格子、奇偶等。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么棋盘用 mod(floor(x)+floor(y),2)？</summary>
+      <div class="answer"><p>相邻格子的行列索引之和奇偶交替，取模 2 就得到 0/1 的棋盘模式。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>图案放大后出现摩尔纹，最直接的缓解方式？</summary>
+      <div class="answer"><p>降低图案频率或增加线宽/模糊；WebGL2 可以用 fwidth 根据屏幕导数自适应线宽。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>程序化图案的通用套路：放大 UV → fract 折叠 → floor 取索引 → step/smoothstep 画边界。掌握这套组合，条纹、点阵、瓷砖都能推出来。</p>
+      <p class="next"><b>下一讲：</b>如果格子不是规则的，而是随机的呢？噪声函数就是「可控的随机」。</p>
+    </div>
+  </div>
+
+<nav class="chapter-nav" aria-label="章节导航">
+<a class="prev" href="#ch03"><span class="dir">← 上一讲</span><span class="name">uniform 与时间：让画面动起来</span></a>
+<a class="next" href="#ch05"><span class="dir">下一讲 →</span><span class="name">噪声与 FBM：程序化云层</span></a>
+</nav>
+</section>
+
+<section id="ch05" class="chapter">
+  <p class="chapter-kicker">第 5 讲 · 程序化图形</p>
+  <h2 class="chapter-title">噪声与 FBM：程序化云层<small>hash 生成随机，value noise 做平滑，FBM 把多层细节叠起来</small>
+  </h2>
+  <p class="chapter-lede">规则图案看多了会腻。自然界的云、雾、岩石都有「随机但有结构」的纹理，噪声函数就是 shader 里生成这种纹理的万能工具。</p>
+  <p class="source-line">
+    <span>Demo 5 · FBM 云层</span>
+    <span>关键词 <code>hash</code> · <code>value noise</code> · <code>fbm</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>用 hash 把坐标映射成伪随机值</li>
+    <li>用双线性插值把随机点变成平滑噪声</li>
+    <li>用 FBM 叠加多个八度，得到云层一样的细节</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>从 hash 开始</h3>
+    <p>真正的随机数在 shader 里成本高且不可复现；我们只需要「同样的坐标永远得到同样的随机值」。一个常见的 hash 是把坐标做 sin/点乘/fract 组合：</p>
+<pre data-lang="glsl"><code>float hash(vec2 p) {
+  p = fract(p * vec2(123.34, 345.45));
+  p += dot(p, p + 34.345);
+  return fract(p.x * p.y);
+}
+</code></pre>
+    <p>hash 输出的值在格子之间是跳变的，直接用会像电视雪花。下一步是在格子之间做平滑插值，这就是 value noise。</p>
+
+    <h3><span class="h3num">02</span>value noise 与 FBM</h3>
+    <p>在整数格点上取 hash，再对四个角做 smoothstep 插值。单层噪声已经有点云的感觉，但缺少细节；FBM 把噪声按频率翻倍、振幅减半地叠加：</p>
+<pre data-lang="glsl"><code>float noise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float a = hash(i);
+  float b = hash(i + vec2(1.0, 0.0));
+  float c = hash(i + vec2(0.0, 1.0));
+  float d = hash(i + vec2(1.0, 1.0));
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+float fbm(vec2 p) {
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i &lt; 5; i++) {
+    v += a * noise(p);
+    p *= 2.03;
+    a *= 0.5;
+  }
+  return v;
+}
+</code></pre>
+    <div class="demo" data-demo="noise" data-label="DEMO 05 · fbm" data-cap="5 层 FBM 叠加出的云层，随时间缓慢漂移"></div>
+
+    <div class="analogy">
+      <span class="analogy-title">像用不同粗细的笔刷叠画</span>
+      <p>第一层是大笔刷，决定云的大块形状；第二层细一点，补边缘；第三层更细，补毛刺。振幅逐层减半，避免细节盖过整体。</p>
+      <p><b>类比到哪为止：</b>画画可以随时收笔；shader 里的层数是固定的，层数越多越贵，需要按性能取舍。</p>
+    </div>
+
+    <h3><span class="h3num">03</span>上色</h3>
+    <p>把 fbm 的输出当作密度：低密度给深色，高密度给亮色，再用 smoothstep 做柔和过渡。颜色不要直接用 RGB 随机，而是取一个有限色板，画面会更统一。</p>
+<pre data-lang="glsl"><code>float f = fbm(vUv * 3.2 + vec2(uTime * 0.03, uTime * 0.02));
+vec3 col = mix(vec3(0.02,0.03,0.08),
+               vec3(0.12,0.55,0.60),
+               smoothstep(0.35, 0.7, f));
+col += vec3(0.7,0.3,0.8) * smoothstep(0.55, 0.82, f) * 0.45;
+</code></pre>
+
+    <details class="deep">
+      <summary>🔬 深入：value noise 和 simplex noise 差在哪？</summary>
+      <div class="deep-body">
+        <p>value noise 在格点上取随机值再插值，计算便宜，但容易看出网格方向；simplex/perlin noise 在梯度上插值，方向性更弱、观感更自然，但实现更复杂。FBM 对两者都适用。</p>
+        <p>移动端预算紧时，value noise 往往是更实际的选择；需要更「有机」的形状时，再换 simplex。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">04</span>自测</h3>
+    <details class="quiz">
+      <summary>hash 的作用是什么？</summary>
+      <div class="answer"><p>把坐标映射成固定但看起来随机的值；同样的输入永远得到同样的输出，所以动画可复现、无需存储随机表。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么 FBM 每层要乘 2.03 而不是 2.0？</summary>
+      <div class="answer"><p>避免频率正好成整数倍导致重复图案；稍微错开可以掩盖周期性。振幅同时减半，保证细节不会压过整体。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>FBM 层数越多，画面越好吗？</summary>
+      <div class="answer"><p>不一定。层数增加提升细节，但也线性增加开销；很多场景 4–6 层已经足够，剩下的交给颜色和构图。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>hash 产生随机，noise 把随机变平滑，FBM 把平滑叠出细节。三者组合是云、雾、地形、水面等所有自然纹理的起点。</p>
+      <p class="next"><b>下一讲：</b>噪声负责「表面纹理」，SDF 负责「形状」；两者结合可以做出会融合的有机体。</p>
+    </div>
+  </div>
+
+<nav class="chapter-nav" aria-label="章节导航">
+<a class="prev" href="#ch04"><span class="dir">← 上一讲</span><span class="name">UV 图案：step、fract 与棋盘</span></a>
+<a class="next" href="#ch06"><span class="dir">下一讲 →</span><span class="name">SDF：用距离函数塑造形状</span></a>
+</nav>
+</section>
+
+<section id="ch06" class="chapter">
+  <p class="chapter-kicker">第 6 讲 · 程序化图形</p>
+  <h2 class="chapter-title">SDF：用距离函数塑造形状<small>不画三角形，也能算出圆的边界；smooth min 让形状自然融合</small>
+  </h2>
+  <p class="chapter-lede">Signed Distance Field（有符号距离场）用一个函数告诉你「点到形状边界有多远」。正数在外部，负数在内部，零就是边界。它既能在 2D 做图形，也是 raymarching 的基础。</p>
+  <p class="source-line">
+    <span>Demo 6 · 可交互的 metaball</span>
+    <span>关键词 <code>sdf</code> · <code>smooth min</code> · <code>smoothstep</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>写出圆、矩形等基础 SDF，并用距离判断内外</li>
+    <li>用 smooth min 把多个圆融合成有机形状</li>
+    <li>理解 SDF 为什么能天然做描边、发光与柔和边缘</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>距离就是形状</h3>
+    <p>圆的 SDF 非常直观：<code class="inline-code">length(p) - r</code>。到原点的距离减去半径，小于 0 就在圆内，大于 0 就在圆外，等于 0 就是边界。你不需要三角形，也不需要顶点。</p>
+<pre data-lang="glsl"><code>float sdCircle(vec2 p, float r) {
+  return length(p) - r;
+}
+
+// 距离 &lt; 0.01 的部分当作填充
+float fill = smoothstep(0.01, 0.0, d);
+</code></pre>
+    <p><code class="inline-code">smoothstep</code> 把距离变成 0..1 的遮罩，天然带有柔和边缘；把参数收窄，就得到硬边；放宽，就得到发光。</p>
+
+    <h3><span class="h3num">02</span>smooth min：形状会融合</h3>
+    <p>两个 SDF 直接取 <code class="inline-code">min</code>，形状只是并集，交界处有硬折角。<code class="inline-code">smin</code> 在最小值附近做平滑混合，两个圆靠近时会像水滴一样连在一起——这就是 metaball 的手感。</p>
+<pre data-lang="glsl"><code>float smin(float a, float b, float k) {
+  float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+  return mix(b, a, h) - k * h * (1.0 - h);
+}
+
+float d = smin(smin(d1, d2, 0.42), d3, 0.42);
+</code></pre>
+    <p>k 越大，融合范围越宽；k 越小，越接近普通 min。Demo 里的鼠标会带动一个圆，另外两个圆固定，三者的融合边界随鼠标实时变化。</p>
+    <div class="demo" data-demo="sdf" data-label="DEMO 06 · sdf metaballs" data-cap="移动鼠标：主圆跟随；三个圆用 smooth min 融合"></div>
+
+    <div class="analogy">
+      <span class="analogy-title">像墨水滴在纸上互相晕开</span>
+      <p>每个圆是一滴墨水，smin 是纸张的晕染半径。离得远时各自独立，靠近时边缘先连起来，再慢慢融成一个整体。</p>
+      <p><b>类比到哪为止：</b>墨水是物理扩散；smin 只是一个数学平滑，你可以随时把融合半径调到任意值。</p>
+    </div>
+
+    <h3><span class="h3num">03</span>从 2D 到 3D</h3>
+    <p>把 <code class="inline-code">vec2 p</code> 换成 <code class="inline-code">vec3 p</code>，圆就变成球，矩形变成盒子。3D SDF 是 surface raymarching 的核心：相机沿射线前进，每一步用 SDF 问「离最近表面还有多远」，直到距离足够小或超出范围。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：SDF 为什么会出现在字体、UI 和特效里？</summary>
+      <div class="deep-body">
+        <p>因为距离场是分辨率无关的：同一个 SDF 可以在任意尺寸下重建边缘，还能用 smoothstep 自由控制描边宽度和发光。字体渲染（SDF font）、UI 圆角、图标发光、2D metaball 都爱用它。</p>
+        <p>代价是需要预计算或实时计算距离；复杂 3D 场景用 SDF 时，raymarch 的步数会直接影响性能。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">04</span>自测</h3>
+    <details class="quiz">
+      <summary>SDF 返回负数代表什么？</summary>
+      <div class="answer"><p>点在形状内部。正数在外部，零在边界；绝对值是到边界的距离。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>smin 和 min 的区别？</summary>
+      <div class="answer"><p>min 直接取较小值，边界有折角；smin 在交界处平滑混合，形状会自然融合，适合有机形体和 metaball。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么 SDF 做描边很方便？</summary>
+      <div class="answer"><p>因为 <code>abs(d)</code> 就是到边界的距离，用 <code>smoothstep(宽度, 0, abs(d))</code> 就能得到一条固定宽度的边界带。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>SDF 把「形状」变成「距离函数」：负内正外，零是边界。smoothstep 负责上色，smin 负责融合。理解这一点，你就拿到了 raymarching 的钥匙。</p>
+      <p class="next"><b>下一讲：</b>有了 3D SDF，怎样让表面看起来有光照？我们需要法线与点积。</p>
+    </div>
+  </div>
+
+<nav class="chapter-nav" aria-label="章节导航">
+<a class="prev" href="#ch05"><span class="dir">← 上一讲</span><span class="name">噪声与 FBM：程序化云层</span></a>
+<a class="next" href="#ch07"><span class="dir">下一讲 →</span><span class="name">光照与 raymarch：球体怎么亮</span></a>
+</nav>
+</section>
+
+<section id="ch07" class="chapter">
+  <p class="chapter-kicker">第 7 讲 · 程序化图形</p>
+  <h2 class="chapter-title">光照与 raymarch：球体怎么亮<small>沿射线步进找到表面，用有限差分求法线，再用 dot 算明暗</small>
+  </h2>
+  <p class="chapter-lede">SDF 只告诉你形状在哪，不会自动产生立体感。要给球体打光，需要三件事：从相机发射射线、找到交点、在交点处求法线，最后用光线方向与法线的点积算亮度。</p>
+  <p class="source-line">
+    <span>Demo 7 · raymarch 球体</span>
+    <span>关键词 <code>raymarch</code> · <code>normal</code> · <code>dot</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>用 SDF 步进找到射线与表面的交点</li>
+    <li>用有限差分计算表面法线</li>
+    <li>用 dot(normal, lightDir) 做出漫反射与边缘光</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>从像素发射一条射线</h3>
+    <p>全屏 shader 的每个像素对应相机的一条射线。把 UV 映射到 -1..1，乘宽高比，再组合相机位置和方向。Demo 里的相机固定在 z=3.2，射线朝 -z 方向发散。</p>
+<pre data-lang="glsl"><code>vec2 uv = vUv * 2.0 - 1.0;
+uv.x *= uRes.x / uRes.y;
+vec3 ro = vec3(0.0, 0.0, 3.2);
+vec3 rd = normalize(vec3(uv, -1.8));
+</code></pre>
+
+    <h3><span class="h3num">02</span>步进与法线</h3>
+    <p>沿射线每次前进「当前点到最近表面的距离」。如果距离小于阈值，就认为命中；如果走太远，就认为没打中。命中后，用 SDF 在 x/y/z 三个方向的微小偏移求法线。</p>
+<pre data-lang="glsl"><code>float map(vec3 p) {
+  p.xz = rot(uTime * 0.25) * p.xz;
+  return length(p) - 1.0;
+}
+
+vec3 calcNormal(vec3 p) {
+  const vec2 e = vec2(0.001, 0.0);
+  return normalize(vec3(
+    map(p + e.xyy) - map(p - e.xyy),
+    map(p + e.yxy) - map(p - e.yxy),
+    map(p + e.yyx) - map(p - e.yyx)
+  ));
+}
+</code></pre>
+    <p>有限差分是 raymarch 里最常用的法线求法：不需要解析导数，只要多采样几次 SDF。代价是每个像素多几次函数调用。</p>
+    <div class="demo" data-demo="raymarch" data-label="DEMO 07 · raymarch" data-cap="球体 + 漫反射 + 菲涅尔边缘光，缓慢旋转"></div>
+
+    <div class="analogy">
+      <span class="analogy-title">像在黑暗里用手电筒找墙</span>
+      <p>每一步问「我离最近的墙还有多远」，然后走那么远；走到足够近就停下。法线是墙面朝向，光照就是手电筒方向与墙面朝向的夹角。</p>
+      <p><b>类比到哪为止：</b>真实手电筒会散射、有阴影；raymarch 的简单光照只算一个方向光，阴影要额外发射阴影射线。</p>
+    </div>
+
+    <h3><span class="h3num">03</span>光照公式</h3>
+    <p>漫反射用 <code class="inline-code">max(dot(n, l), 0.0)</code>：法线与光方向越接近，越亮。菲涅尔用 <code class="inline-code">pow(1 - dot(n, -rd), 3)</code>：视线越贴近表面，边缘光越强。两者叠加就有立体感。</p>
+<pre data-lang="glsl"><code>vec3 n = calcNormal(p);
+vec3 l = normalize(vec3(0.6, 0.8, 0.4));
+float diff = max(dot(n, l), 0.0);
+float rim = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
+vec3 col = vec3(0.12,0.75,0.7) * diff
+         + vec3(0.8,0.4,0.95) * rim * 0.7
+         + vec3(0.02,0.03,0.08);
+</code></pre>
+
+    <details class="deep">
+      <summary>🔬 深入：raymarch 的性能瓶颈在哪里？</summary>
+      <div class="deep-body">
+        <p>主要在「每个像素的步数 × 每步的 SDF 计算量」。球体很简单，几十步就能命中；复杂场景（多个 SDF、噪声位移）会让每步成本高很多。常用优化包括：限制最大距离、提前退出、降低分辨率、减少 SDF 复杂度、用包围盒跳过空白区域。</p>
+        <p>屏幕空间反射、体积雾、软阴影都是在这个循环里再加采样；每加一项，成本都会成倍上升。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">04</span>自测</h3>
+    <details class="quiz">
+      <summary>raymarch 每一步前进多少距离？</summary>
+      <div class="answer"><p>前进当前点到最近表面的 SDF 距离。因为这段距离内不会撞到任何表面，所以是安全的步长。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么法线可以用有限差分求？</summary>
+      <div class="answer"><p>法线是 SDF 的梯度方向；在 x/y/z 三个方向取微小偏移，计算函数值差，就近似得到梯度。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>dot(n, l) 的结果范围与含义？</summary>
+      <div class="answer"><p>范围 -1..1；1 表示法线与光线同向（最亮），0 表示垂直（无漫反射），负数表示背光。通常用 max(...,0) 截断。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>raymarch = 发射射线 + SDF 步进 + 交点法线 + 点积光照。它用数学函数代替网格，是 shader 作品里最灵活、也最吃性能的一类技术。</p>
+      <p class="next"><b>下一讲：</b>把鼠标、分辨率和性能策略接进来，让 shader 从「能看」变成「能玩」。</p>
+    </div>
+  </div>
+
+<nav class="chapter-nav" aria-label="章节导航">
+<a class="prev" href="#ch06"><span class="dir">← 上一讲</span><span class="name">SDF：用距离函数塑造形状</span></a>
+<a class="next" href="#ch08"><span class="dir">下一讲 →</span><span class="name">交互与性能：鼠标、分辨率、暂停</span></a>
+</nav>
+</section>
+
+<section id="ch08" class="chapter">
+  <p class="chapter-kicker">第 8 讲 · 交互与结课</p>
+  <h2 class="chapter-title">交互与性能：鼠标、分辨率、暂停<small>把 pointer 归一化、把 DPR 限住、把不可见的画面停掉</small>
+  </h2>
+  <p class="chapter-lede">一个能玩的 shader，不只是画面好看：鼠标要跟手、窗口缩放不能变形、高 DPI 屏幕不能烧显卡、滚出视口要暂停。这一讲补齐从「Demo」到「作品」的工程细节。</p>
+  <p class="source-line">
+    <span>Demo 8 · 鼠标涟漪</span>
+    <span>关键词 <code>uMouse</code> · <code>devicePixelRatio</code> · <code>IntersectionObserver</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>把鼠标/触摸坐标归一化后传给 shader</li>
+    <li>正确处理画布尺寸与 devicePixelRatio</li>
+    <li>用 IntersectionObserver 暂停不可见画面，避免无意义渲染</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>鼠标坐标怎么传</h3>
+    <p>浏览器给的是相对视口的像素坐标，shader 需要 0..1 的 UV。用 <code class="inline-code">getBoundingClientRect()</code> 把坐标映射到画布内，再把 y 翻转（WebGL 原点在左下）：</p>
+<pre data-lang="js"><code>canvas.addEventListener("pointermove", (e) =&gt; {
+  const r = canvas.getBoundingClientRect();
+  pointer.x = (e.clientX - r.left) / r.width;
+  pointer.y = 1.0 - (e.clientY - r.top) / r.height;
+  gl.uniform2f(uMouse, pointer.x, pointer.y);
+});
+</code></pre>
+    <p>触摸屏用 Pointer Events 就能统一处理；如果要做拖拽/缩放，需要记录 pointerId 和初始位置，别把「移动鼠标」和「按下拖动」混在一起。</p>
+
+    <h3><span class="h3num">02</span>分辨率与 DPR</h3>
+    <p>CSS 宽高是显示尺寸，canvas 的 <code class="inline-code">width/height</code> 是像素尺寸。在 Retina 屏上如果直接用 CSS 尺寸，画面会糊；但完全按 DPR 放大，又会增加 4 倍像素。常见折中是限制 DPR 上限：</p>
+<pre data-lang="js"><code>const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+canvas.width = Math.floor(cssWidth * dpr);
+canvas.height = Math.floor(cssHeight * dpr);
+gl.viewport(0, 0, canvas.width, canvas.height);
+</code></pre>
+    <p>shader 里的 <code class="inline-code">uRes</code> 应该传 <code class="inline-code">canvas.width/height</code>（像素尺寸），这样宽高比与采样密度都正确。窗口变化时用 ResizeObserver 重新设置，而不是只在初始化时算一次。</p>
+
+    <div class="demo" data-demo="ripple" data-label="DEMO 08 · pointer" data-cap="移动鼠标：以指针为中心产生涟漪，网格随位置偏移"></div>
+
+    <div class="analogy">
+      <span class="analogy-title">像用放大镜看画</span>
+      <p>DPR 是放大镜的倍数：放大能看清细节，但也要处理更多像素。限制 DPR 上限，等于在清晰度和性能之间选一个可接受的折中。</p>
+      <p><b>类比到哪为止：</b>放大镜不会改变画的内容；DPR 会改变实际渲染分辨率，shader 里的高频图案在低 DPR 下更容易闪烁。</p>
+    </div>
+
+    <h3><span class="h3num">03</span>暂停与恢复</h3>
+    <p>页面里可能有多个 demo，滚出视口后继续 60fps 渲染纯属浪费。用 IntersectionObserver 在进入/离开视口时启动/停止 requestAnimationFrame；页面隐藏时也停掉。</p>
+<pre data-lang="js"><code>new IntersectionObserver((entries) =&gt; {
+  entries.forEach((en) =&gt; {
+    if (en.isIntersecting) startLoop();
+    else stopLoop();
+  });
+}, { rootMargin: "120px 0px" }).observe(canvas);
+
+document.addEventListener("visibilitychange", () =&gt; {
+  if (document.hidden) stopLoop(); else startLoop();
+});
+</code></pre>
+
+    <h3><span class="h3num">04</span>shader 侧也有一些性能习惯</h3>
+    <div class="callout tip">
+      <span class="callout-title">先降复杂度，再降分辨率</span>
+      <p>减少 raymarch 步数、减少 FBM 层数、避免在片元里做昂贵循环，通常比单纯降低分辨率更划算；分辨率下降会先损失清晰度。</p>
+    </div>
+    <p>另外，尽量把「每帧不变」的计算放到 JS 或 uniform，而不是每个片元重复算。shader 里一次多余的点积可能被几百万像素放大。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么鼠标事件要节流/合并？</summary>
+      <div class="deep-body">
+        <p>pointermove 触发频率可能高于 60Hz，如果每次都更新 uniform 并触发绘制，会浪费。通常只记录最新坐标，在下一帧统一上传；或者用 requestAnimationFrame 合并事件。UI 事件处理不应成为渲染循环的瓶颈。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">05</span>自测</h3>
+    <details class="quiz">
+      <summary>为什么鼠标 y 坐标要 1.0 - normalizedY？</summary>
+      <div class="answer"><p>浏览器坐标原点在左上、y 向下；WebGL/UV 通常原点在左下、y 向上。翻转后才能让鼠标位置与画面一致。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>canvas.width 和 CSS width 的区别？</summary>
+      <div class="answer"><p>CSS width 是显示尺寸；canvas.width 是实际像素缓冲尺寸。后者决定 GPU 渲染分辨率，前者只是布局。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么会用 IntersectionObserver 暂停 demo？</summary>
+      <div class="answer"><p>不可见的画面继续渲染会浪费 CPU/GPU 和电量。离开视口暂停、进入再恢复，是页面里有多个 WebGL demo 时的基本礼貌。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>交互 shader 的工程三件套：鼠标归一化、DPR 上限、不可见暂停。画面之外，这些细节决定了它是「网页里的 demo」还是「能上线的作品」。</p>
+      <p class="next"><b>下一讲：</b>把前面所有零件组合成一个场景：形状、光照、噪声、交互与性能策略。</p>
+    </div>
+  </div>
+
+<nav class="chapter-nav" aria-label="章节导航">
+<a class="prev" href="#ch07"><span class="dir">← 上一讲</span><span class="name">光照与 raymarch：球体怎么亮</span></a>
+<a class="next" href="#ch09"><span class="dir">下一讲 →</span><span class="name">结课：组合一个 shader 场景</span></a>
+</nav>
+</section>
+
+<section id="ch09" class="chapter">
+  <p class="chapter-kicker">第 9 讲 · 交互与结课</p>
+  <h2 class="chapter-title">结课：组合一个 shader 场景<small>球体 + 环 + 光照 + 背景，把前面每一讲拼成一件作品</small>
+  </h2>
+  <p class="chapter-lede">最后一讲不再引入新概念，而是把 SDF、raymarch、法线、光照和颜色组合成一个完整的场景。你会发现：复杂画面不是更难的语法，而是更多简单函数的叠加。</p>
+  <p class="source-line">
+    <span>Demo 9 · raymarch 组合场景</span>
+    <span>关键词 <code>min(SDF, SDF)</code> · <code>rotation</code> · <code>fog</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>把两个 SDF 用 min 组合成场景</li>
+    <li>用旋转矩阵让几何体缓慢转动</li>
+    <li>用背景渐变与雾把画面收成一个整体</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>场景就是多个 SDF 的并集</h3>
+    <p>球体与圆环分别是一个距离函数，取 <code class="inline-code">min</code> 就得到「离任一物体最近」的距离。raymarch 不需要知道场景里有几个物体，它只需要一个 <code class="inline-code">map(p)</code>。</p>
+<pre data-lang="glsl"><code>float map(vec3 p) {
+  vec3 q = p;
+  q.xz = rot(uTime * 0.18) * q.xz;
+  float sphere = length(q) - 0.75;
+  float torus = length(vec2(length(q.xz) - 1.35, q.y)) - 0.28;
+  return min(sphere, torus);
+}
+</code></pre>
+    <p>圆环 SDF 的写法值得记住：先算 xz 平面到圆心的距离，再与 y 组成二维向量，减去管半径。这样圆环会绕 y 轴旋转，而不是平躺在屏幕上。</p>
+    <div class="demo" data-demo="scene" data-label="DEMO 09 · combined scene" data-cap="球体 + 圆环 + 漫反射/边缘光 + 背景渐变"></div>
+
+    <h3><span class="h3num">02</span>给画面收尾</h3>
+    <p>材质色、背景渐变、雾、暗角，这些「收尾」决定了画面是否像一件完整作品。一个简单的背景渐变就能让黑底上的几何体立刻有空间感。</p>
+<pre data-lang="glsl"><code>vec3 col = vec3(0.015, 0.03, 0.08);
+if (t &lt; 9.0) {
+  vec3 n = calcNormal(p);
+  float diff = max(dot(n, normalize(vec3(0.5,0.9,0.3))), 0.0);
+  float rim = pow(1.0 - max(dot(n, -rd), 0.0), 2.5);
+  col = vec3(0.1,0.8,0.7) * diff
+      + vec3(0.9,0.35,0.9) * rim * 0.8;
+}
+col += vec3(0.3,0.15,0.5) * smoothstep(0.8, 0.0, length(uv));
+</code></pre>
+
+    <div class="analogy">
+      <span class="analogy-title">像搭一组静物摄影</span>
+      <p>几何体是摆件，光照是灯，背景是幕布，雾和暗角是镜头氛围。每件东西都简单，组合起来才成为一张照片。</p>
+      <p><b>类比到哪为止：</b>摄影受物理约束；shader 里你可以随意让球和环互相穿插，只要距离函数写得出来。</p>
+    </div>
+
+    <h3><span class="h3num">03</span>结课项目建议</h3>
+    <ol class="steps">
+      <li><b>换材质</b>：给球和环不同颜色，或按法线方向混色。</li>
+      <li><b>加噪声</b>：用 fbm 扰动 SDF 表面，做出岩石/液态金属质感。</li>
+      <li><b>加交互</b>：鼠标控制旋转速度或相机位置，滚轮改变 fog 密度。</li>
+      <li><b>加后处理</b>：把场景颜色做暗角、色调映射或扫描线，形成自己的风格。</li>
+    </ol>
+
+    <details class="deep">
+      <summary>🔬 深入：从这门口课继续往哪走？</summary>
+      <div class="deep-body">
+        <p>三条常见路线：<b>图形学</b>（光照模型、PBR、阴影、后处理）、<b>程序化艺术</b>（噪声、SDF、生成式构图）、<b>工程化</b>（WebGL2、Three.js ShaderMaterial、性能与多 pass）。</p>
+        <p>别急着学框架。先用原生 WebGL 把「一个全屏 shader + 一个 SDF 场景」写熟，再换框架会发现只是换了 API，核心概念没变。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">04</span>自测</h3>
+    <details class="quiz">
+      <summary>两个 SDF 用 min 组合，表示什么？</summary>
+      <div class="answer"><p>表示两个形状的并集：空间中任意点到「最近的任一表面」的距离。raymarch 用这个距离安全前进。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>圆环 SDF 里为什么要先算 length(q.xz)？</summary>
+      <div class="answer"><p>圆环可以看成「xz 平面上到圆心距离为 R 的圆」与「y 方向上的管截面」的组合；先算平面距离，再与 y 组成二维向量，才能得到正确的管状距离。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>如果场景中有 3 个物体，map 应该返回什么？</summary>
+      <div class="answer"><p>返回三个 SDF 的最小值（或 smooth min）。raymarch 只关心最近表面距离，不关心物体数量。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>复杂场景 = 多个简单 SDF + 统一光照 + 背景氛围。你现在已经具备从零写一个实时 shader 作品的完整工具箱；剩下的，是不断改参数、看结果、再改。</p>
+      <p class="next"><b>课程结束：</b>回到 ch01 的渐变，把它扩展成你自己的作品——那才是这门课真正的开始。</p>
+    </div>
+  </div>
+
+<nav class="chapter-nav" aria-label="章节导航">
+<a class="prev" href="#ch08"><span class="dir">← 上一讲</span><span class="name">交互与性能：鼠标、分辨率、暂停</span></a>
+</nav>
+</section>
+    </div>
+  </main>
+</div>
+
+<button class="to-top" id="to-top" title="回到顶部" aria-label="回到顶部">↑</button>
+
+<script>
+(function(){
+  "use strict";
+  var STORAGE_KEY = "shader-course-progress-v1";
+  var THEME_KEY = "shader-course-theme";
+  var $ = function(s,c){return (c||document).querySelector(s)};
+  var $$ = function(s,c){return Array.prototype.slice.call((c||document).querySelectorAll(s))};
+
+  /* ---------- theme ---------- */
+  var themeBtn = $("#theme-btn");
+  var savedTheme = null;
+  try{ savedTheme = localStorage.getItem(THEME_KEY); }catch(e){}
+  function applyTheme(t){
+    document.documentElement.setAttribute("data-theme", t);
+    themeBtn.setAttribute("title","当前主题：" + (t==="dark"?"深色":t==="light"?"浅色":"跟随系统"));
+    try{ localStorage.setItem(THEME_KEY, t); }catch(e){}
+  }
+  var themeOrder = ["auto","light","dark"];
+  var currentTheme = themeOrder.indexOf(savedTheme) >= 0 ? savedTheme : "auto";
+  applyTheme(currentTheme);
+  themeBtn.addEventListener("click", function(){
+    currentTheme = themeOrder[(themeOrder.indexOf(currentTheme)+1) % themeOrder.length];
+    applyTheme(currentTheme);
+  });
+
+  /* ---------- mobile sidebar ---------- */
+  var burger = $("#burger"), backdrop = $("#backdrop"), sidebar = $("#sidebar");
+  function setNav(open){
+    document.body.classList.toggle("nav-open", open);
+    burger.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+  burger.addEventListener("click", function(){ setNav(!document.body.classList.contains("nav-open")); });
+  backdrop.addEventListener("click", function(){ setNav(false); });
+
+  /* ---------- progress ---------- */
+  var links = $$(".nav-link");
+  var checks = $$(".nav-check");
+  var progressText = $("#progress-text"), progressBar = $("#progress-bar");
+  var done = {};
+  try{ done = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}") || {}; }catch(e){ done = {}; }
+  var totalChapters = links.length;
+
+  function paintProgress(){
+    var n = 0;
+    checks.forEach(function(c){
+      var id = c.getAttribute("data-check");
+      var isDone = !!done[id];
+      c.setAttribute("aria-checked", isDone ? "true" : "false");
+      c.setAttribute("title", isDone ? "标记为未读" : "标记为已读");
+      if(isDone) n++;
+    });
+    progressText.textContent = n + " / " + totalChapters;
+    progressBar.style.width = totalChapters ? (n/totalChapters*100) + "%" : "0%";
+    try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(done)); }catch(e){}
+  }
+  checks.forEach(function(c){
+    function toggle(e){
+      e.preventDefault(); e.stopPropagation();
+      var id = c.getAttribute("data-check");
+      if(done[id]) delete done[id]; else done[id] = 1;
+      paintProgress();
+    }
+    c.addEventListener("click", toggle);
+    c.addEventListener("keydown", function(e){
+      if(e.key === " " || e.key === "Enter"){ toggle(e); }
+    });
+  });
+  paintProgress();
+
+  /* ---------- scroll spy + reading progress ---------- */
+  var chapters = $$(".chapter");
+  var activeId = null;
+  function setActive(id){
+    if(id === activeId) return;
+    activeId = id;
+    links.forEach(function(l){ l.classList.toggle("active", l.getAttribute("data-ch") === id); });
+  }
+  if("IntersectionObserver" in window){
+    var visible = {};
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(en){
+        visible[en.target.id] = en.isIntersecting ? en.boundingClientRect.top : null;
+      });
+      var best = null;
+      chapters.forEach(function(ch){
+        if(visible[ch.id] !== undefined && visible[ch.id] !== null){
+          if(best === null || visible[ch.id] < (visible[best] === undefined || visible[best] === null ? Infinity : visible[best])) best = ch.id;
+        }
+      });
+      if(best) setActive(best);
+    }, {rootMargin:"-72px 0px -66% 0px", threshold:0});
+    chapters.forEach(function(ch){ io.observe(ch); });
+  }
+  var rp = $("#reading-progress"), toTop = $("#to-top");
+  function onScroll(){
+    var h = document.documentElement;
+    var max = h.scrollHeight - h.clientHeight;
+    var pct = max > 0 ? (h.scrollTop || document.body.scrollTop) / max * 100 : 0;
+    rp.style.width = pct + "%";
+    toTop.classList.toggle("show", (h.scrollTop || document.body.scrollTop) > 900);
+    if(!("IntersectionObserver" in window)){
+      var cur = chapters[0];
+      chapters.forEach(function(ch){
+        if(ch.getBoundingClientRect().top <= 120) cur = ch;
+      });
+      if(cur) setActive(cur.id);
+    }
+  }
+  addEventListener("scroll", onScroll, {passive:true});
+  addEventListener("resize", onScroll);
+  onScroll();
+  toTop.addEventListener("click", function(){ scrollTo({top:0, behavior:"smooth"}); });
+
+  /* ---------- sidebar search ---------- */
+  var searchInput = $("#side-search");
+  function filterNav(){
+    var q = (searchInput.value || "").trim().toLowerCase();
+    var parts = $$(".nav-part");
+    parts.forEach(function(part){
+      var any = false;
+      $$(".nav-link", part).forEach(function(l){
+        var hit = !q || l.textContent.toLowerCase().indexOf(q) >= 0;
+        l.classList.toggle("hidden", !hit);
+        if(hit) any = true;
+      });
+      part.classList.toggle("hidden", !any);
+    });
+  }
+  searchInput.addEventListener("input", filterNav);
+  searchInput.addEventListener("keydown", function(e){
+    if(e.key === "Escape"){ searchInput.value = ""; filterNav(); searchInput.blur(); }
+  });
+
+  /* ---------- code blocks: language label + copy ---------- */
+  $$("pre").forEach(function(pre){
+    if(pre.closest(".code-block")) return;
+    var code = pre.querySelector("code");
+    var lang = pre.getAttribute("data-lang") || (code && code.getAttribute("data-lang")) || "text";
+    var wrap = document.createElement("div");
+    wrap.className = "code-block";
+    var head = document.createElement("div");
+    head.className = "code-head";
+    head.innerHTML = '<span class="dots"><i></i><i></i><i></i></span><span class="lang">' + lang + '</span>';
+    var btn = document.createElement("button");
+    btn.className = "copy-btn"; btn.type = "button"; btn.textContent = "复制";
+    btn.addEventListener("click", function(){
+      var text = (code || pre).innerText;
+      function ok(){ btn.textContent = "已复制"; btn.classList.add("done");
+        setTimeout(function(){ btn.textContent = "复制"; btn.classList.remove("done"); }, 1600); }
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(ok, function(){ fallback(); });
+      } else { fallback(); }
+      function fallback(){
+        var ta = document.createElement("textarea");
+        ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.select();
+        try{ document.execCommand("copy"); ok(); }catch(e){}
+        document.body.removeChild(ta);
+      }
+    });
+    head.appendChild(btn);
+    pre.parentNode.insertBefore(wrap, pre);
+    wrap.appendChild(head);
+    wrap.appendChild(pre);
+  });
+
+  /* ---------- lightweight syntax highlighting ---------- */
+  var PY_KW = /^(def|class|return|if|elif|else|for|while|in|not|and|or|is|None|True|False|import|from|as|with|try|except|finally|raise|pass|break|continue|lambda|yield|async|await|global|nonlocal|assert|del|print)$/;
+  var PY_BI = /^(self|str|int|float|bool|list|dict|set|tuple|len|range|enumerate|open|super|type|isinstance|getattr|setattr|hasattr|print|json|os|sys|time|Path|Any|Optional|List|Dict|True|False|None)$/;
+  function escapeHtml(s){
+    return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+  function highlight(codeEl){
+    if(codeEl.getAttribute("data-hl")) return;
+    codeEl.setAttribute("data-hl","1");
+    var lang = (codeEl.getAttribute("data-lang") || codeEl.parentNode.getAttribute("data-lang") || "text").toLowerCase();
+    var text = codeEl.textContent;
+    if(lang !== "python" && lang !== "py" && lang !== "bash" && lang !== "sh"){
+      codeEl.innerHTML = escapeHtml(text);
+      return;
+    }
+    if(lang === "bash" || lang === "sh"){
+      var lines = text.split("\n").map(function(line){
+        var m = line.match(/^(\s*)(#.*)$/);
+        if(m) return escapeHtml(m[1]) + '<span class="tok-com">' + escapeHtml(m[2]) + "</span>";
+        var p = line.match(/^(\s*)(\$ )?(.*)$/);
+        return escapeHtml(p[1]) + (p[2] ? '<span class="tok-op">$ </span>' : "") +
+          escapeHtml(p[3]).replace(/(&#39;[^&]*?&#39;|'[^']*'|"[^"]*")/g, '<span class="tok-str">$1</span>');
+      });
+      codeEl.innerHTML = lines.join("\n");
+      return;
+    }
+    var out = "";
+    var i = 0;
+    var n = text.length;
+    while(i < n){
+      var ch = text[i];
+      if(ch === "#"){
+        var end = text.indexOf("\n", i);
+        if(end === -1) end = n;
+        out += '<span class="tok-com">' + escapeHtml(text.slice(i,end)) + "</span>";
+        i = end; continue;
+      }
+      if(ch === '"' || ch === "'"){
+        var quote = ch, j = i + 1;
+        while(j < n){
+          if(text[j] === "\\"){ j += 2; continue; }
+          if(text[j] === quote) break;
+          j++;
+        }
+        var str = text.slice(i, Math.min(j+1, n));
+        out += '<span class="tok-str">' + escapeHtml(str) + "</span>";
+        i = i + str.length; continue;
+      }
+      if(/[0-9]/.test(ch) && !/[A-Za-z_$]/.test(text[i-1] || "")){
+        var k = i;
+        while(k < n && /[0-9._]/.test(text[k])) k++;
+        out += '<span class="tok-num">' + escapeHtml(text.slice(i,k)) + "</span>";
+        i = k; continue;
+      }
+      if(/[A-Za-z_]/.test(ch)){
+        var w = i;
+        while(w < n && /[A-Za-z0-9_]/.test(text[w])) w++;
+        var word = text.slice(i,w);
+        var cls = "";
+        if(PY_KW.test(word)) cls = "tok-kw";
+        else if(PY_BI.test(word)) cls = "tok-bi";
+        if(cls) out += '<span class="' + cls + '">' + escapeHtml(word) + "</span>";
+        else out += escapeHtml(word);
+        i = w; continue;
+      }
+      out += escapeHtml(ch);
+      i++;
+    }
+    codeEl.innerHTML = out;
+  }
+  $$("pre code").forEach(highlight);
+
+  /* ---------- expand all deep blocks ---------- */
+  var expandBtn = $("#expand-btn");
+  var expanded = false;
+  expandBtn.addEventListener("click", function(){
+    expanded = !expanded;
+    $$("details.deep").forEach(function(d){ d.open = expanded; });
+    expandBtn.querySelector(".lbl").textContent = expanded ? "收起" : "展开";
+  });
+
+  /* ---------- print ---------- */
+  $("#print-btn").addEventListener("click", function(){ window.print(); });
+  addEventListener("beforeprint", function(){
+    $$("details").forEach(function(d){ if(!d.open) d.setAttribute("data-was-closed","1"); d.open = true; });
+  });
+  addEventListener("afterprint", function(){
+    $$("details[data-was-closed]").forEach(function(d){ d.open = false; d.removeAttribute("data-was-closed"); });
+  });
+
+  /* ---------- keyboard ---------- */
+  function gotoSibling(dir){
+    var idx = links.indexOf(document.querySelector(".nav-link.active"));
+    var target = idx >= 0 ? links[idx + dir] : null;
+    if(target) location.hash = target.getAttribute("href");
+  }
+  addEventListener("keydown", function(e){
+    var tag = (e.target && e.target.tagName || "").toLowerCase();
+    var typing = tag === "input" || tag === "textarea" || e.target.isContentEditable;
+    if(e.key === "/" && !typing){ e.preventDefault(); searchInput.focus(); }
+    if(typing) return;
+    if(e.key === "[" || e.key === "ArrowLeft"){ gotoSibling(-1); }
+    if(e.key === "]" || e.key === "ArrowRight"){ gotoSibling(1); }
+  });
+  $$(".nav-link").forEach(function(l){
+    l.addEventListener("click", function(){
+      if(window.innerWidth <= 900) setNav(false);
+    });
+  });
+
+  /* ---------- mark active chapter done when scrolled past ---------- */
+  $$("section.chapter").forEach(function(sec){
+    sec.addEventListener("dblclick", function(){
+      var cb = document.querySelector('.nav-check[data-check="' + sec.id + '"]');
+      if(cb) cb.click();
+    });
+  });
+})();
+</script>
+<script>
+(function () {
+  "use strict";
+  var FS_VERT = [
+    "attribute vec2 aPos;",
+    "varying vec2 vUv;",
+    "void main(){ vUv = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }",
+  ].join("\n");
+
+  var TRI_VERT = [
+    "attribute vec2 aPos;",
+    "attribute vec3 aColor;",
+    "uniform float uTime;",
+    "varying vec3 vColor;",
+    "void main(){",
+    "  float a = uTime * 0.5;",
+    "  mat2 r = mat2(cos(a), -sin(a), sin(a), cos(a));",
+    "  vec2 p = r * aPos;",
+    "  gl_Position = vec4(p, 0.0, 1.0);",
+    "  vColor = aColor;",
+    "}",
+  ].join("\n");
+
+  var DEMOS = {
+    gradient: {
+      fs: [
+        "precision highp float;",
+        "varying vec2 vUv;",
+        "uniform vec2 uRes;",
+        "uniform vec2 uMouse;",
+        "void main(){",
+        "  vec2 p = vUv; p.x *= uRes.x / uRes.y;",
+        "  vec2 m = uMouse; m.x *= uRes.x / uRes.y;",
+        "  vec3 col = mix(vec3(0.015,0.02,0.06), vec3(0.04,0.32,0.45), p.y);",
+        "  col = mix(col, vec3(0.26,0.16,0.55), smoothstep(0.1,1.0,p.x*0.7+p.y*0.2));",
+        "  float d = length(p - m);",
+        "  col += vec3(0.25,0.9,0.85) * smoothstep(0.45,0.0,d) * 0.7;",
+        "  col += vec3(0.8,0.35,0.95) * smoothstep(0.18,0.0,abs(length(p-vec2(0.5,0.8))-0.25)) * 0.2;",
+        "  col *= 1.0 - 0.18 * length(vUv - 0.5);",
+        "  gl_FragColor = vec4(col, 1.0);",
+        "}",
+      ].join("\n"),
+    },
+    triangle: {
+      tri: true,
+      vs: TRI_VERT,
+      fs: [
+        "precision highp float;",
+        "varying vec3 vColor;",
+        "uniform float uTime;",
+        "void main(){",
+        "  float pulse = 0.85 + 0.15 * sin(uTime * 2.0);",
+        "  gl_FragColor = vec4(vColor * pulse, 1.0);",
+        "}",
+      ].join("\n"),
+    },
+    pulse: {
+      fs: [
+        "precision highp float;",
+        "varying vec2 vUv;",
+        "uniform vec2 uRes;",
+        "uniform float uTime;",
+        "void main(){",
+        "  vec2 p = vUv * 2.0 - 1.0; p.x *= uRes.x / uRes.y;",
+        "  float r = length(p);",
+        "  float ring = pow(0.5 + 0.5 * sin(r * 12.0 - uTime * 2.2), 8.0);",
+        "  vec3 col = mix(vec3(0.01,0.03,0.08), vec3(0.1,0.7,0.65), ring * smoothstep(1.4,0.0,r));",
+        "  col += vec3(0.6,0.3,0.9) * smoothstep(0.2,0.0,abs(r-0.75)) * 0.5;",
+        "  col += vec3(0.9,0.6,1.0) * smoothstep(0.35,0.0,r) * 0.4;",
+        "  gl_FragColor = vec4(col, 1.0);",
+        "}",
+      ].join("\n"),
+    },
+    pattern: {
+      fs: [
+        "precision highp float;",
+        "varying vec2 vUv;",
+        "uniform vec2 uRes;",
+        "uniform float uTime;",
+        "void main(){",
+        "  vec2 uv = vUv * vec2(uRes.x/uRes.y,1.0) * 8.0;",
+        "  uv += vec2(uTime * 0.08, sin(uTime * 0.3));",
+        "  vec2 g = abs(fract(uv) - 0.5);",
+        "  float checker = mod(floor(uv.x) + floor(uv.y), 2.0);",
+        "  float line = smoothstep(0.49,0.5,max(g.x,g.y));",
+        "  vec3 col = mix(vec3(0.02,0.04,0.08), vec3(0.08,0.5,0.55), checker*0.35+0.1);",
+        "  col = mix(col, vec3(0.75,0.9,0.95), line*0.65);",
+        "  col += vec3(0.8,0.4,0.9) * smoothstep(0.5,0.0,length(vUv-0.5)) * 0.2;",
+        "  gl_FragColor = vec4(col, 1.0);",
+        "}",
+      ].join("\n"),
+    },
+    noise: {
+      fs: [
+        "precision highp float;",
+        "varying vec2 vUv;",
+        "uniform float uTime;",
+        "float hash(vec2 p){ p = fract(p * vec2(123.34,345.45)); p += dot(p,p+34.345); return fract(p.x*p.y); }",
+        "float noise(vec2 p){",
+        "  vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);",
+        "  float a=hash(i), b=hash(i+vec2(1.0,0.0)), c=hash(i+vec2(0.0,1.0)), d=hash(i+vec2(1.0,1.0));",
+        "  return mix(mix(a,b,f.x), mix(c,d,f.x), f.y);",
+        "}",
+        "float fbm(vec2 p){",
+        "  float v=0.0, a=0.5;",
+        "  for(int i=0;i<5;i++){ v += a*noise(p); p *= 2.03; a *= 0.5; }",
+        "  return v;",
+        "}",
+        "void main(){",
+        "  vec2 p = vUv * 3.2 + vec2(uTime*0.03, uTime*0.02);",
+        "  float f = fbm(p);",
+        "  vec3 col = mix(vec3(0.02,0.03,0.08), vec3(0.12,0.55,0.6), smoothstep(0.35,0.7,f));",
+        "  col += vec3(0.7,0.3,0.8) * smoothstep(0.55,0.82,f) * 0.45;",
+        "  gl_FragColor = vec4(col,1.0);",
+        "}",
+      ].join("\n"),
+    },
+    sdf: {
+      fs: [
+        "precision highp float;",
+        "varying vec2 vUv;",
+        "uniform vec2 uRes;",
+        "uniform vec2 uMouse;",
+        "uniform float uTime;",
+        "float sdCircle(vec2 p,float r){ return length(p)-r; }",
+        "float smin(float a,float b,float k){ float h=clamp(0.5+0.5*(b-a)/k,0.0,1.0); return mix(b,a,h)-k*h*(1.0-h); }",
+        "void main(){",
+        "  vec2 p = (vUv-0.5) * vec2(uRes.x/uRes.y,1.0) * 3.2;",
+        "  vec2 m = (uMouse-0.5) * vec2(uRes.x/uRes.y,1.0) * 3.2;",
+        "  float d1 = sdCircle(p - m*0.8, 0.62);",
+        "  float d2 = sdCircle(p + vec2(0.55,-0.2), 0.52);",
+        "  float d3 = sdCircle(p + vec2(-0.55,0.15), 0.42);",
+        "  float d = smin(smin(d1,d2,0.42),d3,0.42);",
+        "  float fill = smoothstep(0.015,0.0,d);",
+        "  float edge = smoothstep(0.09,0.0,abs(d));",
+        "  vec3 col = mix(vec3(0.015,0.025,0.07), vec3(0.15,0.9,0.75), fill);",
+        "  col += vec3(0.8,0.4,0.95) * edge * 0.85;",
+        "  gl_FragColor = vec4(col,1.0);",
+        "}",
+      ].join("\n"),
+    },
+    raymarch: {
+      fs: [
+        "precision highp float;",
+        "varying vec2 vUv;",
+        "uniform vec2 uRes;",
+        "uniform float uTime;",
+        "mat2 rot(float a){ return mat2(cos(a),-sin(a),sin(a),cos(a)); }",
+        "float map(vec3 p){ p.xz = rot(uTime*0.25) * p.xz; return length(p) - 1.0; }",
+        "vec3 calcNormal(vec3 p){ const vec2 e=vec2(0.001,0.0); return normalize(vec3(map(p+e.xyy)-map(p-e.xyy), map(p+e.yxy)-map(p-e.yxy), map(p+e.yyx)-map(p-e.yyx))); }",
+        "void main(){",
+        "  vec2 uv = vUv*2.0-1.0; uv.x *= uRes.x/uRes.y;",
+        "  vec3 ro = vec3(0.0,0.0,3.2);",
+        "  vec3 rd = normalize(vec3(uv,-1.8));",
+        "  float t=0.0; vec3 p;",
+        "  for(int i=0;i<64;i++){ p=ro+rd*t; float d=map(p); if(d<0.001||t>8.0) break; t+=d; }",
+        "  vec3 col = vec3(0.02,0.035,0.09);",
+        "  if(t < 8.0){",
+        "    vec3 n=calcNormal(p); vec3 l=normalize(vec3(0.6,0.8,0.4));",
+        "    float diff=max(dot(n,l),0.0); float rim=pow(1.0-max(dot(n,-rd),0.0),3.0);",
+        "    col = vec3(0.12,0.75,0.7)*diff*0.9 + vec3(0.8,0.4,0.95)*rim*0.7 + vec3(0.02,0.03,0.08);",
+        "  }",
+        "  gl_FragColor=vec4(col,1.0);",
+        "}",
+      ].join("\n"),
+    },
+    ripple: {
+      fs: [
+        "precision highp float;",
+        "varying vec2 vUv;",
+        "uniform vec2 uRes;",
+        "uniform vec2 uMouse;",
+        "uniform float uTime;",
+        "void main(){",
+        "  vec2 p = (vUv-0.5)*vec2(uRes.x/uRes.y,1.0)*2.0;",
+        "  vec2 m = (uMouse-0.5)*vec2(uRes.x/uRes.y,1.0)*2.0;",
+        "  float d = length(p-m);",
+        "  float rip = sin(d*20.0 - uTime*4.0) * exp(-d*2.6);",
+        "  float grid = smoothstep(0.48,0.5,max(abs(fract(p.x*4.0)-0.5),abs(fract(p.y*4.0)-0.5)));",
+        "  vec3 col = vec3(0.02,0.03,0.08) + vec3(0.08,0.45,0.5)*grid*0.35;",
+        "  col += vec3(0.2,0.9,0.8) * rip * 0.7;",
+        "  col += vec3(0.8,0.4,0.95) * smoothstep(0.12,0.0,d) * 0.55;",
+        "  gl_FragColor=vec4(col,1.0);",
+        "}",
+      ].join("\n"),
+    },
+    scene: {
+      fs: [
+        "precision highp float;",
+        "varying vec2 vUv;",
+        "uniform vec2 uRes;",
+        "uniform float uTime;",
+        "mat2 rot(float a){ return mat2(cos(a),-sin(a),sin(a),cos(a)); }",
+        "float map(vec3 p){",
+        "  vec3 q=p; q.xz=rot(uTime*0.18)*q.xz;",
+        "  float sphere=length(q-vec3(0.0,0.0,0.0))-0.75;",
+        "  float torus=length(vec2(length(q.xz)-1.35,q.y))-0.28;",
+        "  return min(sphere,torus);",
+        "}",
+        "vec3 calcNormal(vec3 p){ const vec2 e=vec2(0.001,0.0); return normalize(vec3(map(p+e.xyy)-map(p-e.xyy), map(p+e.yxy)-map(p-e.yxy), map(p+e.yyx)-map(p-e.yyx))); }",
+        "void main(){",
+        "  vec2 uv=vUv*2.0-1.0; uv.x*=uRes.x/uRes.y;",
+        "  vec3 ro=vec3(0.0,0.0,3.4); vec3 rd=normalize(vec3(uv,-1.9));",
+        "  float t=0.0; vec3 p;",
+        "  for(int i=0;i<80;i++){ p=ro+rd*t; float d=map(p); if(d<0.001||t>9.0) break; t+=d; }",
+        "  vec3 col=vec3(0.015,0.03,0.08);",
+        "  if(t<9.0){ vec3 n=calcNormal(p); vec3 l=normalize(vec3(0.5,0.9,0.3)); float diff=max(dot(n,l),0.0); float rim=pow(1.0-max(dot(n,-rd),0.0),2.5); col=vec3(0.1,0.8,0.7)*diff + vec3(0.9,0.35,0.9)*rim*0.8 + vec3(0.02,0.03,0.07); }",
+        "  col += vec3(0.3,0.15,0.5)*smoothstep(0.8,0.0,length(uv));",
+        "  gl_FragColor=vec4(col,1.0);",
+        "}",
+      ].join("\n"),
+    },
+  };
+
+  function compile(gl, type, src) {
+    var sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh) || "shader error");
+    return sh;
+  }
+
+  function build(gl, demo) {
+    var vs = demo.vs || FS_VERT;
+    var p = gl.createProgram();
+    gl.attachShader(p, compile(gl, gl.VERTEX_SHADER, vs));
+    gl.attachShader(p, compile(gl, gl.FRAGMENT_SHADER, demo.fs));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) || "link error");
+    return p;
+  }
+
+  function boot(el) {
+    var name = el.getAttribute("data-demo");
+    var demo = DEMOS[name];
+    if (!demo) return;
+    var bar = document.createElement("div");
+    bar.className = "demo-bar";
+    bar.innerHTML = '<span class="dot"></span><span class="name">' + (el.getAttribute("data-label") || name) + '</span><span class="live">LIVE · WEBGL</span>';
+    var body = document.createElement("div");
+    body.className = "demo-body";
+    var cap = document.createElement("div");
+    cap.className = "demo-cap";
+    cap.textContent = el.getAttribute("data-cap") || "";
+    var canvas = document.createElement("canvas");
+    body.appendChild(canvas);
+    if (cap.textContent) body.appendChild(cap);
+    el.appendChild(bar);
+    el.appendChild(body);
+    var gl = canvas.getContext("webgl", { antialias: true, alpha: false, powerPreference: "high-performance" })
+      || canvas.getContext("experimental-webgl");
+    if (!gl) {
+      body.innerHTML = '<div class="demo-fallback">当前浏览器没有可用的 WebGL 上下文；请开启硬件加速后刷新。</div>';
+      return;
+    }
+    var program;
+    try { program = build(gl, demo); } catch (e) {
+      body.innerHTML = '<div class="demo-fallback">Shader 编译失败：' + String(e.message || e).slice(0, 120) + '</div>';
+      return;
+    }
+    var isTri = !!demo.tri;
+    var posBuf = gl.createBuffer();
+    if (isTri) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-0.65,-0.55,0.65,-0.55,0,0.7]), gl.STATIC_DRAW);
+      var colBuf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, colBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0.1,0.85,0.8, 0.35,0.35,0.95, 0.9,0.35,0.85]), gl.STATIC_DRAW);
+    } else {
+      gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,3,-1,-1,3]), gl.STATIC_DRAW);
+    }
+    var aPos = gl.getAttribLocation(program, "aPos");
+    var aColor = gl.getAttribLocation(program, "aColor");
+    var uTime = gl.getUniformLocation(program, "uTime");
+    var uRes = gl.getUniformLocation(program, "uRes");
+    var uMouse = gl.getUniformLocation(program, "uMouse");
+    var pointer = { x: 0.5, y: 0.5 };
+    var dpr = 1, raf = 0, running = false, start = performance.now();
+    function resize() {
+      var w = Math.max(1, canvas.clientWidth), h = Math.max(1, canvas.clientHeight);
+      dpr = Math.min(1.5, window.devicePixelRatio || 1);
+      canvas.width = Math.floor(w * dpr);
+      canvas.height = Math.floor(h * dpr);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+    function frame(now) {
+      if (!running) return;
+      var t = (now - start) * 0.001;
+      gl.clearColor(0.01, 0.02, 0.05, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.useProgram(program);
+      gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+      gl.enableVertexAttribArray(aPos);
+      gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+      if (isTri && aColor >= 0) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, colBuf);
+        gl.enableVertexAttribArray(aColor);
+        gl.vertexAttribPointer(aColor, 3, gl.FLOAT, false, 0, 0);
+      }
+      if (uTime) gl.uniform1f(uTime, t);
+      if (uRes) gl.uniform2f(uRes, canvas.width, canvas.height);
+      if (uMouse) gl.uniform2f(uMouse, pointer.x, pointer.y);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      raf = requestAnimationFrame(frame);
+    }
+    function startLoop() { if (running) return; running = true; start = performance.now() - (start ? 0 : 0); raf = requestAnimationFrame(frame); }
+    function stopLoop() { running = false; if (raf) cancelAnimationFrame(raf); }
+    canvas.addEventListener("pointermove", function (e) {
+      var r = canvas.getBoundingClientRect();
+      pointer.x = (e.clientX - r.left) / r.width;
+      pointer.y = 1 - (e.clientY - r.top) / r.height;
+    }, { passive: true });
+    canvas.addEventListener("pointerleave", function () { pointer.x = 0.5; pointer.y = 0.5; });
+    if ("ResizeObserver" in window) new ResizeObserver(resize).observe(canvas); else window.addEventListener("resize", resize);
+    resize();
+    if ("IntersectionObserver" in window) {
+      new IntersectionObserver(function (entries) {
+        entries.forEach(function (en) { if (en.isIntersecting) startLoop(); else stopLoop(); });
+      }, { rootMargin: "120px 0px" }).observe(el);
+    } else startLoop();
+    document.addEventListener("visibilitychange", function () { if (document.hidden) stopLoop(); else startLoop(); });
+  }
+
+  var nodes = document.querySelectorAll("[data-demo]");
+  for (var i = 0; i < nodes.length; i += 1) boot(nodes[i]);
+})();
+
+</script>
+</body>
+</html>

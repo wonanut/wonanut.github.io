@@ -1,0 +1,98 @@
+<section id="ch02" class="chapter">
+  <p class="chapter-kicker">第 2 讲 · 图形管线</p>
+  <h2 class="chapter-title">顶点与插值：三角形怎么上色
+    <small>attribute 进入顶点着色器，varying 把颜色插值到每个像素</small>
+  </h2>
+  <p class="chapter-lede">全屏 shader 只有片元阶段，但真正的几何体需要顶点着色器先决定顶点位置。这一讲画一个旋转三角形，看清 attribute、varying 和插值各自负责什么。</p>
+  <p class="source-line">
+    <span>Demo 2 · 顶点颜色插值</span>
+    <span>关键词 <code>attribute</code> · <code>varying</code> · <code>gl_Position</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>分清 attribute、uniform、varying 在管线中的位置</li>
+    <li>让三个顶点带不同颜色，并在片元里得到平滑渐变</li>
+    <li>理解为什么顶点数据比逐像素数据更省</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>管线里的三种变量</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>变量</th><th>声明在</th><th>从哪里来</th><th>典型用途</th></tr></thead>
+        <tbody>
+          <tr><td><code>attribute</code></td><td>顶点着色器</td><td>JavaScript 的顶点缓冲</td><td>位置、法线、颜色</td></tr>
+          <tr><td><code>uniform</code></td><td>两个着色器</td><td>JavaScript 每次绘制传入</td><td>时间、分辨率、矩阵</td></tr>
+          <tr><td><code>varying</code></td><td>两个着色器</td><td>顶点着色器输出 → 光栅化插值</td><td>UV、顶点颜色、法线</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>顶点着色器每个顶点执行一次；片元着色器每个像素执行一次。三个顶点的颜色之所以能变成一整片渐变，是因为光栅化阶段会把 varying 按重心坐标插值。</p>
+
+    <div class="demo" data-demo="triangle" data-label="DEMO 02 · varying" data-cap="三个顶点的颜色被插值到三角形内部，并随时间旋转"></div>
+
+    <div class="analogy">
+      <span class="analogy-title">像把三盏灯的亮度摊到整个房间</span>
+      <p>三个顶点是三盏颜色不同的灯，片元是房间里的每个点。光栅化会根据你离三盏灯的距离做加权平均，于是每个像素得到一个混合色。</p>
+      <p><b>类比到哪为止：</b>插值是线性的，所以颜色从顶点到顶点是平滑过渡；如果三个顶点颜色相同，整个三角形就是纯色。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>顶点着色器</h3>
+    <p>这段 shader 接收位置和颜色两个 attribute，用旋转矩阵转动位置，再把颜色作为 varying 传给片元。<code class="inline-code">gl_Position</code> 是必须写入的裁剪空间坐标。</p>
+<pre data-lang="glsl"><code>attribute vec2 aPos;
+attribute vec3 aColor;
+uniform float uTime;
+varying vec3 vColor;
+
+void main() {
+  float a = uTime * 0.5;
+  mat2 r = mat2(cos(a), -sin(a), sin(a), cos(a));
+  vec2 p = r * aPos;
+  gl_Position = vec4(p, 0.0, 1.0);
+  vColor = aColor;
+}
+</code></pre>
+
+    <h3><span class="h3num">03</span>片元着色器与 draw call</h3>
+    <p>片元着色器只接收插值后的 <code class="inline-code">vColor</code>，做一点呼吸亮度后输出。注意它完全不知道三角形有几个顶点，也不知道顶点颜色来自哪里。</p>
+<pre data-lang="glsl"><code>precision highp float;
+varying vec3 vColor;
+uniform float uTime;
+
+void main() {
+  float pulse = 0.85 + 0.15 * sin(uTime * 2.0);
+  gl_FragColor = vec4(vColor * pulse, 1.0);
+}
+</code></pre>
+    <p>JavaScript 侧只需要把两个 buffer 绑到 attribute 位置，然后 <code class="inline-code">drawArrays(TRIANGLES, 0, 3)</code>。颜色数组长度是 9，因为 3 个顶点 × RGB 3 个分量。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么 varying 不能随便传大数组？</summary>
+      <div class="deep-body">
+        <p>varying 的数量受 GPU 限制，而且每个顶点都要写入、每个片元都要读取。传纹理坐标和法线通常够用；如果需要大量每顶点数据，应该用纹理或实例化属性，而不是堆几十个 varying。</p>
+        <p>另一个限制是精度：WebGL 1 的 varying 默认可能是 mediump，移动端尤其要小心位置/UV 的精度。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">04</span>自测</h3>
+    <details class="quiz">
+      <summary>三个顶点分别是红、绿、蓝，三角形中心大概是什么颜色？</summary>
+      <div class="answer"><p>三者的加权平均，接近灰/白。正中心重心坐标约为 (1/3,1/3,1/3)，所以 RGB 各约 0.33。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>uniform 和 attribute 的最大区别？</summary>
+      <div class="answer"><p>attribute 是逐顶点数据，来自顶点缓冲；uniform 是一次 draw call 内所有顶点/片元共享的常量，由 JS 在绘制前设置。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么片元着色器不直接接收顶点数组？</summary>
+      <div class="answer"><p>片元阶段处理的是光栅化后的像素，不持有顶点数组；它只能拿到插值后的 varying 和 uniform。这样 GPU 才能并行处理大量像素。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>顶点着色器决定「顶点在哪、传什么 varying」，光栅化负责插值，片元着色器只负责「当前像素是什么颜色」。这就是几何体上色的全部秘密。</p>
+      <p class="next"><b>下一讲：</b>给 shader 一个不断变化的时间，让画面真正动起来。</p>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,97 @@
+<section id="ch05" class="chapter">
+  <p class="chapter-kicker">第 5 讲 · 程序化图形</p>
+  <h2 class="chapter-title">噪声与 FBM：程序化云层
+    <small>hash 生成随机，value noise 做平滑，FBM 把多层细节叠起来</small>
+  </h2>
+  <p class="chapter-lede">规则图案看多了会腻。自然界的云、雾、岩石都有「随机但有结构」的纹理，噪声函数就是 shader 里生成这种纹理的万能工具。</p>
+  <p class="source-line">
+    <span>Demo 5 · FBM 云层</span>
+    <span>关键词 <code>hash</code> · <code>value noise</code> · <code>fbm</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>用 hash 把坐标映射成伪随机值</li>
+    <li>用双线性插值把随机点变成平滑噪声</li>
+    <li>用 FBM 叠加多个八度，得到云层一样的细节</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>从 hash 开始</h3>
+    <p>真正的随机数在 shader 里成本高且不可复现；我们只需要「同样的坐标永远得到同样的随机值」。一个常见的 hash 是把坐标做 sin/点乘/fract 组合：</p>
+<pre data-lang="glsl"><code>float hash(vec2 p) {
+  p = fract(p * vec2(123.34, 345.45));
+  p += dot(p, p + 34.345);
+  return fract(p.x * p.y);
+}
+</code></pre>
+    <p>hash 输出的值在格子之间是跳变的，直接用会像电视雪花。下一步是在格子之间做平滑插值，这就是 value noise。</p>
+
+    <h3><span class="h3num">02</span>value noise 与 FBM</h3>
+    <p>在整数格点上取 hash，再对四个角做 smoothstep 插值。单层噪声已经有点云的感觉，但缺少细节；FBM 把噪声按频率翻倍、振幅减半地叠加：</p>
+<pre data-lang="glsl"><code>float noise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float a = hash(i);
+  float b = hash(i + vec2(1.0, 0.0));
+  float c = hash(i + vec2(0.0, 1.0));
+  float d = hash(i + vec2(1.0, 1.0));
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+float fbm(vec2 p) {
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i &lt; 5; i++) {
+    v += a * noise(p);
+    p *= 2.03;
+    a *= 0.5;
+  }
+  return v;
+}
+</code></pre>
+    <div class="demo" data-demo="noise" data-label="DEMO 05 · fbm" data-cap="5 层 FBM 叠加出的云层，随时间缓慢漂移"></div>
+
+    <div class="analogy">
+      <span class="analogy-title">像用不同粗细的笔刷叠画</span>
+      <p>第一层是大笔刷，决定云的大块形状；第二层细一点，补边缘；第三层更细，补毛刺。振幅逐层减半，避免细节盖过整体。</p>
+      <p><b>类比到哪为止：</b>画画可以随时收笔；shader 里的层数是固定的，层数越多越贵，需要按性能取舍。</p>
+    </div>
+
+    <h3><span class="h3num">03</span>上色</h3>
+    <p>把 fbm 的输出当作密度：低密度给深色，高密度给亮色，再用 smoothstep 做柔和过渡。颜色不要直接用 RGB 随机，而是取一个有限色板，画面会更统一。</p>
+<pre data-lang="glsl"><code>float f = fbm(vUv * 3.2 + vec2(uTime * 0.03, uTime * 0.02));
+vec3 col = mix(vec3(0.02,0.03,0.08),
+               vec3(0.12,0.55,0.60),
+               smoothstep(0.35, 0.7, f));
+col += vec3(0.7,0.3,0.8) * smoothstep(0.55, 0.82, f) * 0.45;
+</code></pre>
+
+    <details class="deep">
+      <summary>🔬 深入：value noise 和 simplex noise 差在哪？</summary>
+      <div class="deep-body">
+        <p>value noise 在格点上取随机值再插值，计算便宜，但容易看出网格方向；simplex/perlin noise 在梯度上插值，方向性更弱、观感更自然，但实现更复杂。FBM 对两者都适用。</p>
+        <p>移动端预算紧时，value noise 往往是更实际的选择；需要更「有机」的形状时，再换 simplex。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">04</span>自测</h3>
+    <details class="quiz">
+      <summary>hash 的作用是什么？</summary>
+      <div class="answer"><p>把坐标映射成固定但看起来随机的值；同样的输入永远得到同样的输出，所以动画可复现、无需存储随机表。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么 FBM 每层要乘 2.03 而不是 2.0？</summary>
+      <div class="answer"><p>避免频率正好成整数倍导致重复图案；稍微错开可以掩盖周期性。振幅同时减半，保证细节不会压过整体。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>FBM 层数越多，画面越好吗？</summary>
+      <div class="answer"><p>不一定。层数增加提升细节，但也线性增加开销；很多场景 4–6 层已经足够，剩下的交给颜色和构图。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>hash 产生随机，noise 把随机变平滑，FBM 把平滑叠出细节。三者组合是云、雾、地形、水面等所有自然纹理的起点。</p>
+      <p class="next"><b>下一讲：</b>噪声负责「表面纹理」，SDF 负责「形状」；两者结合可以做出会融合的有机体。</p>
+    </div>
+  </div>
+</section>

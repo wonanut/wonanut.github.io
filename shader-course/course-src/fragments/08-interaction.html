@@ -1,0 +1,96 @@
+<section id="ch08" class="chapter">
+  <p class="chapter-kicker">第 8 讲 · 交互与结课</p>
+  <h2 class="chapter-title">交互与性能：鼠标、分辨率、暂停
+    <small>把 pointer 归一化、把 DPR 限住、把不可见的画面停掉</small>
+  </h2>
+  <p class="chapter-lede">一个能玩的 shader，不只是画面好看：鼠标要跟手、窗口缩放不能变形、高 DPI 屏幕不能烧显卡、滚出视口要暂停。这一讲补齐从「Demo」到「作品」的工程细节。</p>
+  <p class="source-line">
+    <span>Demo 8 · 鼠标涟漪</span>
+    <span>关键词 <code>uMouse</code> · <code>devicePixelRatio</code> · <code>IntersectionObserver</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>把鼠标/触摸坐标归一化后传给 shader</li>
+    <li>正确处理画布尺寸与 devicePixelRatio</li>
+    <li>用 IntersectionObserver 暂停不可见画面，避免无意义渲染</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>鼠标坐标怎么传</h3>
+    <p>浏览器给的是相对视口的像素坐标，shader 需要 0..1 的 UV。用 <code class="inline-code">getBoundingClientRect()</code> 把坐标映射到画布内，再把 y 翻转（WebGL 原点在左下）：</p>
+<pre data-lang="js"><code>canvas.addEventListener("pointermove", (e) =&gt; {
+  const r = canvas.getBoundingClientRect();
+  pointer.x = (e.clientX - r.left) / r.width;
+  pointer.y = 1.0 - (e.clientY - r.top) / r.height;
+  gl.uniform2f(uMouse, pointer.x, pointer.y);
+});
+</code></pre>
+    <p>触摸屏用 Pointer Events 就能统一处理；如果要做拖拽/缩放，需要记录 pointerId 和初始位置，别把「移动鼠标」和「按下拖动」混在一起。</p>
+
+    <h3><span class="h3num">02</span>分辨率与 DPR</h3>
+    <p>CSS 宽高是显示尺寸，canvas 的 <code class="inline-code">width/height</code> 是像素尺寸。在 Retina 屏上如果直接用 CSS 尺寸，画面会糊；但完全按 DPR 放大，又会增加 4 倍像素。常见折中是限制 DPR 上限：</p>
+<pre data-lang="js"><code>const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+canvas.width = Math.floor(cssWidth * dpr);
+canvas.height = Math.floor(cssHeight * dpr);
+gl.viewport(0, 0, canvas.width, canvas.height);
+</code></pre>
+    <p>shader 里的 <code class="inline-code">uRes</code> 应该传 <code class="inline-code">canvas.width/height</code>（像素尺寸），这样宽高比与采样密度都正确。窗口变化时用 ResizeObserver 重新设置，而不是只在初始化时算一次。</p>
+
+    <div class="demo" data-demo="ripple" data-label="DEMO 08 · pointer" data-cap="移动鼠标：以指针为中心产生涟漪，网格随位置偏移"></div>
+
+    <div class="analogy">
+      <span class="analogy-title">像用放大镜看画</span>
+      <p>DPR 是放大镜的倍数：放大能看清细节，但也要处理更多像素。限制 DPR 上限，等于在清晰度和性能之间选一个可接受的折中。</p>
+      <p><b>类比到哪为止：</b>放大镜不会改变画的内容；DPR 会改变实际渲染分辨率，shader 里的高频图案在低 DPR 下更容易闪烁。</p>
+    </div>
+
+    <h3><span class="h3num">03</span>暂停与恢复</h3>
+    <p>页面里可能有多个 demo，滚出视口后继续 60fps 渲染纯属浪费。用 IntersectionObserver 在进入/离开视口时启动/停止 requestAnimationFrame；页面隐藏时也停掉。</p>
+<pre data-lang="js"><code>new IntersectionObserver((entries) =&gt; {
+  entries.forEach((en) =&gt; {
+    if (en.isIntersecting) startLoop();
+    else stopLoop();
+  });
+}, { rootMargin: "120px 0px" }).observe(canvas);
+
+document.addEventListener("visibilitychange", () =&gt; {
+  if (document.hidden) stopLoop(); else startLoop();
+});
+</code></pre>
+
+    <h3><span class="h3num">04</span>shader 侧也有一些性能习惯</h3>
+    <div class="callout tip">
+      <span class="callout-title">先降复杂度，再降分辨率</span>
+      <p>减少 raymarch 步数、减少 FBM 层数、避免在片元里做昂贵循环，通常比单纯降低分辨率更划算；分辨率下降会先损失清晰度。</p>
+    </div>
+    <p>另外，尽量把「每帧不变」的计算放到 JS 或 uniform，而不是每个片元重复算。shader 里一次多余的点积可能被几百万像素放大。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么鼠标事件要节流/合并？</summary>
+      <div class="deep-body">
+        <p>pointermove 触发频率可能高于 60Hz，如果每次都更新 uniform 并触发绘制，会浪费。通常只记录最新坐标，在下一帧统一上传；或者用 requestAnimationFrame 合并事件。UI 事件处理不应成为渲染循环的瓶颈。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">05</span>自测</h3>
+    <details class="quiz">
+      <summary>为什么鼠标 y 坐标要 1.0 - normalizedY？</summary>
+      <div class="answer"><p>浏览器坐标原点在左上、y 向下；WebGL/UV 通常原点在左下、y 向上。翻转后才能让鼠标位置与画面一致。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>canvas.width 和 CSS width 的区别？</summary>
+      <div class="answer"><p>CSS width 是显示尺寸；canvas.width 是实际像素缓冲尺寸。后者决定 GPU 渲染分辨率，前者只是布局。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么会用 IntersectionObserver 暂停 demo？</summary>
+      <div class="answer"><p>不可见的画面继续渲染会浪费 CPU/GPU 和电量。离开视口暂停、进入再恢复，是页面里有多个 WebGL demo 时的基本礼貌。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>交互 shader 的工程三件套：鼠标归一化、DPR 上限、不可见暂停。画面之外，这些细节决定了它是「网页里的 demo」还是「能上线的作品」。</p>
+      <p class="next"><b>下一讲：</b>把前面所有零件组合成一个场景：形状、光照、噪声、交互与性能策略。</p>
+    </div>
+  </div>
+</section>

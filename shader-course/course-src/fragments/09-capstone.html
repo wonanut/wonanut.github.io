@@ -1,0 +1,88 @@
+<section id="ch09" class="chapter">
+  <p class="chapter-kicker">第 9 讲 · 交互与结课</p>
+  <h2 class="chapter-title">结课：组合一个 shader 场景
+    <small>球体 + 环 + 光照 + 背景，把前面每一讲拼成一件作品</small>
+  </h2>
+  <p class="chapter-lede">最后一讲不再引入新概念，而是把 SDF、raymarch、法线、光照和颜色组合成一个完整的场景。你会发现：复杂画面不是更难的语法，而是更多简单函数的叠加。</p>
+  <p class="source-line">
+    <span>Demo 9 · raymarch 组合场景</span>
+    <span>关键词 <code>min(SDF, SDF)</code> · <code>rotation</code> · <code>fog</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>把两个 SDF 用 min 组合成场景</li>
+    <li>用旋转矩阵让几何体缓慢转动</li>
+    <li>用背景渐变与雾把画面收成一个整体</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>场景就是多个 SDF 的并集</h3>
+    <p>球体与圆环分别是一个距离函数，取 <code class="inline-code">min</code> 就得到「离任一物体最近」的距离。raymarch 不需要知道场景里有几个物体，它只需要一个 <code class="inline-code">map(p)</code>。</p>
+<pre data-lang="glsl"><code>float map(vec3 p) {
+  vec3 q = p;
+  q.xz = rot(uTime * 0.18) * q.xz;
+  float sphere = length(q) - 0.75;
+  float torus = length(vec2(length(q.xz) - 1.35, q.y)) - 0.28;
+  return min(sphere, torus);
+}
+</code></pre>
+    <p>圆环 SDF 的写法值得记住：先算 xz 平面到圆心的距离，再与 y 组成二维向量，减去管半径。这样圆环会绕 y 轴旋转，而不是平躺在屏幕上。</p>
+    <div class="demo" data-demo="scene" data-label="DEMO 09 · combined scene" data-cap="球体 + 圆环 + 漫反射/边缘光 + 背景渐变"></div>
+
+    <h3><span class="h3num">02</span>给画面收尾</h3>
+    <p>材质色、背景渐变、雾、暗角，这些「收尾」决定了画面是否像一件完整作品。一个简单的背景渐变就能让黑底上的几何体立刻有空间感。</p>
+<pre data-lang="glsl"><code>vec3 col = vec3(0.015, 0.03, 0.08);
+if (t &lt; 9.0) {
+  vec3 n = calcNormal(p);
+  float diff = max(dot(n, normalize(vec3(0.5,0.9,0.3))), 0.0);
+  float rim = pow(1.0 - max(dot(n, -rd), 0.0), 2.5);
+  col = vec3(0.1,0.8,0.7) * diff
+      + vec3(0.9,0.35,0.9) * rim * 0.8;
+}
+col += vec3(0.3,0.15,0.5) * smoothstep(0.8, 0.0, length(uv));
+</code></pre>
+
+    <div class="analogy">
+      <span class="analogy-title">像搭一组静物摄影</span>
+      <p>几何体是摆件，光照是灯，背景是幕布，雾和暗角是镜头氛围。每件东西都简单，组合起来才成为一张照片。</p>
+      <p><b>类比到哪为止：</b>摄影受物理约束；shader 里你可以随意让球和环互相穿插，只要距离函数写得出来。</p>
+    </div>
+
+    <h3><span class="h3num">03</span>结课项目建议</h3>
+    <ol class="steps">
+      <li><b>换材质</b>：给球和环不同颜色，或按法线方向混色。</li>
+      <li><b>加噪声</b>：用 fbm 扰动 SDF 表面，做出岩石/液态金属质感。</li>
+      <li><b>加交互</b>：鼠标控制旋转速度或相机位置，滚轮改变 fog 密度。</li>
+      <li><b>加后处理</b>：把场景颜色做暗角、色调映射或扫描线，形成自己的风格。</li>
+    </ol>
+
+    <details class="deep">
+      <summary>🔬 深入：从这门口课继续往哪走？</summary>
+      <div class="deep-body">
+        <p>三条常见路线：<b>图形学</b>（光照模型、PBR、阴影、后处理）、<b>程序化艺术</b>（噪声、SDF、生成式构图）、<b>工程化</b>（WebGL2、Three.js ShaderMaterial、性能与多 pass）。</p>
+        <p>别急着学框架。先用原生 WebGL 把「一个全屏 shader + 一个 SDF 场景」写熟，再换框架会发现只是换了 API，核心概念没变。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">04</span>自测</h3>
+    <details class="quiz">
+      <summary>两个 SDF 用 min 组合，表示什么？</summary>
+      <div class="answer"><p>表示两个形状的并集：空间中任意点到「最近的任一表面」的距离。raymarch 用这个距离安全前进。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>圆环 SDF 里为什么要先算 length(q.xz)？</summary>
+      <div class="answer"><p>圆环可以看成「xz 平面上到圆心距离为 R 的圆」与「y 方向上的管截面」的组合；先算平面距离，再与 y 组成二维向量，才能得到正确的管状距离。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>如果场景中有 3 个物体，map 应该返回什么？</summary>
+      <div class="answer"><p>返回三个 SDF 的最小值（或 smooth min）。raymarch 只关心最近表面距离，不关心物体数量。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>复杂场景 = 多个简单 SDF + 统一光照 + 背景氛围。你现在已经具备从零写一个实时 shader 作品的完整工具箱；剩下的，是不断改参数、看结果、再改。</p>
+      <p class="next"><b>课程结束：</b>回到 ch01 的渐变，把它扩展成你自己的作品——那才是这门课真正的开始。</p>
+    </div>
+  </div>
+</section>

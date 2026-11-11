@@ -1,0 +1,99 @@
+<section id="ch03" class="chapter">
+  <p class="chapter-kicker">第 3 讲 · 图形管线</p>
+  <h2 class="chapter-title">uniform 与时间：让画面动起来
+    <small>同一个 shader，每帧只改一个 uTime，就能得到连续的动画</small>
+  </h2>
+  <p class="chapter-lede">静态图案只是开始。shader 的动画不需要改顶点或重建几何体，只要把时间作为 uniform 传进去，让颜色/位置随时间变化。</p>
+  <p class="source-line">
+    <span>Demo 3 · 时间脉冲</span>
+    <span>关键词 <code>uniform float uTime</code> · <code>sin</code> · <code>fract</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>把 requestAnimationFrame 的时间传给 shader</li>
+    <li>用 sin / fract 构造周期动画，而不是写 if-else</li>
+    <li>避免时间精度与帧率带来的常见问题</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>时间从哪来</h3>
+    <p>WebGL 没有内置「时间」。你在 JS 里用 <code class="inline-code">performance.now()</code> 或 <code class="inline-code">requestAnimationFrame</code> 的时间戳，换算成秒，传给 shader 的 <code class="inline-code">uTime</code>。每一帧更新一次 uniform，画面就动了。</p>
+<pre data-lang="js"><code>function frame(now) {
+  const t = now * 0.001;              // 毫秒 → 秒
+  gl.uniform1f(uTime, t);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</code></pre>
+    <p>注意不要用 <code class="inline-code">Date.now()</code> 做动画时间，它会受系统时钟调整影响；<code class="inline-code">performance.now()</code> 单调递增，更适合动画。</p>
+
+    <h3><span class="h3num">02</span>用周期函数构造动画</h3>
+    <p>下面把屏幕坐标变成极坐标，用 <code class="inline-code">sin(radius - time)</code> 做出一圈圈向外扩散的环。整个过程没有 if，也没有状态，只有函数。</p>
+<pre data-lang="glsl"><code>precision highp float;
+varying vec2 vUv;
+uniform vec2 uRes;
+uniform float uTime;
+
+void main() {
+  vec2 p = vUv * 2.0 - 1.0;
+  p.x *= uRes.x / uRes.y;
+  float r = length(p);
+  float ring = pow(0.5 + 0.5 * sin(r * 12.0 - uTime * 2.2), 8.0);
+  vec3 col = mix(vec3(0.01,0.03,0.08),
+                 vec3(0.1,0.7,0.65),
+                 ring * smoothstep(1.4, 0.0, r));
+  gl_FragColor = vec4(col, 1.0);
+}
+</code></pre>
+    <div class="demo" data-demo="pulse" data-label="DEMO 03 · time" data-cap="sin 驱动的同心环；power 让波峰更窄"></div>
+
+    <div class="analogy">
+      <span class="analogy-title">像水面上一圈圈扩散的波纹</span>
+      <p>时间每增加一点，波纹的相位就往前推一点；<code class="inline-code">sin</code> 负责形状，<code class="inline-code">pow</code> 负责让波峰变窄，<code class="inline-code">smoothstep</code> 负责让远处淡出。</p>
+      <p><b>类比到哪为止：</b>水波是物理传播；这里的「波纹」只是数学函数，移动速度和间距都可以随手改。</p>
+    </div>
+
+    <h3><span class="h3num">03</span>时间精度与帧率</h3>
+    <p>动画速度应该按秒计算，而不是按帧。如果用 <code class="inline-code">frameCount * 0.01</code>，在 120Hz 屏幕上会比 60Hz 快一倍。用真实秒数就不会有这个问题。</p>
+    <div class="callout warn">
+      <span class="callout-title">长时间运行后 uTime 会变大</span>
+      <p>float 精度有限，运行几小时后时间的细粒度会变粗。长时间展示的 shader 可以把时间对某个周期取模，例如 <code class="inline-code">uTime = t % 3600.0</code>。</p>
+    </div>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么 shader 里很少写 if 来控制动画？</summary>
+      <div class="deep-body">
+        <p>GPU 是 SIMD 执行，分支会让同一组线程走不同路径，降低效率；而且 if 写出来的动画容易不平滑。用 <code class="inline-code">sin</code>、<code class="inline-code">smoothstep</code>、<code class="inline-code">mix</code> 这类连续函数，既能得到平滑过渡，也更容易并行。</p>
+        <p>当然，判断命中、循环终止这类逻辑仍然需要 if/for；只是「形状与动画」尽量用数学函数表达。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">04</span>动手实验</h3>
+    <ol class="steps">
+      <li>把 <code class="inline-code">uTime * 2.2</code> 改成 <code class="inline-code">uTime * 0.8</code>，观察波纹扩散速度。</li>
+      <li>把 <code class="inline-code">pow(..., 8.0)</code> 改成 <code class="inline-code">4.0</code> 或 <code class="inline-code">16.0</code>，看波峰宽度如何变化。</li>
+    </ol>
+
+    <h3><span class="h3num">05</span>自测</h3>
+    <details class="quiz">
+      <summary>为什么动画时间要用 performance.now() 而不是 Date.now()？</summary>
+      <div class="answer"><p>performance.now() 单调递增，不受系统时间调整影响；Date.now() 可能因为校时/时区变化跳变，导致动画跳帧。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>sin 的函数值范围是多少？怎样映射到 0..1？</summary>
+      <div class="answer"><p>sin 返回 -1..1；用 <code>0.5 + 0.5 * sin(x)</code> 映射到 0..1。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么用 pow 处理 sin 的环？</summary>
+      <div class="answer"><p>pow 会压窄波峰、拉宽波谷，让环看起来更锐利、更像发光线条，而不是一大片渐变。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>动画的本质是「时间进入函数」：把秒数传给 uTime，用 sin/fract/smoothstep 构造连续变化。不要用帧数计时，也不要滥用 if。</p>
+      <p class="next"><b>下一讲：</b>有了 UV 和时间，下一步是用 fract/step 把连续空间切成图案。</p>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,119 @@
+<section id="ch00" class="chapter">
+  <div class="hero">
+    <p class="eyebrow">WebGL · Shader from scratch</p>
+    <h1 class="chapter-title">在浏览器里，亲手写下第一束光</h1>
+    <p class="chapter-lede">这不是一份 WebGL API 手册，而是一趟从像素出发的旅程：你会写 GLSL、画全屏三角形、做渐变、噪声、SDF 和 raymarching，最终组合出一个能实时交互的场景。每一章都有可直接运行的 Demo。</p>
+    <div class="hero-meta">
+      <span class="pill accent">中文 · 单页可离线阅读</span>
+      <span class="pill">10 章 · 约 3 小时</span>
+      <span class="pill">每章实时 WebGL Demo</span>
+      <span class="pill">零依赖 · 浏览器直接跑</span>
+    </div>
+  </div>
+
+  <p class="source-line">
+    <span>基于 WebGL 1 / GLSL ES 1.00 规范</span>
+    <span>示例全部在页面内实时渲染</span>
+    <span>不依赖 Three.js 或任何框架</span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">读完这门课，你会</li>
+    <li>理解 GPU 图形管线的两个可编程阶段：顶点着色器与片元着色器</li>
+    <li>用 GLSL 写渐变、图案、噪声、SDF 与简单的 raymarching 光照</li>
+    <li>知道如何把鼠标、时间、分辨率传给 shader，并让它持续高性能地运行</li>
+    <li>能独立写出一个全屏 shader 作品，并知道下一步该往哪里深入</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>先建立最小心智模型</h3>
+    <p>屏幕上的每个像素，最终都由 GPU 里的一小段程序决定颜色。WebGL 把这套过程拆成两个可编程阶段：<b>顶点着色器</b>决定几何体的顶点落在哪里；<b>片元着色器</b>决定每个像素最终是什么颜色。</p>
+    <p>本课程大部分 Demo 都是「全屏三角形 + 片元着色器」：屏幕上每个像素都会执行一次你写的 <code class="inline-code">main()</code>。你只要根据坐标算出颜色，就能画出无限复杂的图案。</p>
+    <div class="flow">
+      <div class="flow-node"><b>JS</b>准备数据与 uniform</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>Vertex</b>顶点位置 / 插值</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node accent"><b>Rasterizer</b>变成像素</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><b>Fragment</b>每个像素算颜色</div>
+    </div>
+
+    <div class="analogy">
+      <span class="analogy-title">像给每个像素发一张答题卡</span>
+      <p>片元着色器就是一张「你负责的像素」答题卡：卡上印着坐标、时间、鼠标等已知条件，你按要求填一个颜色交回去。GPU 会同时发出几百万张卡，所以每个 <code class="inline-code">main()</code> 都必须很轻。</p>
+      <p><b>类比到哪为止：</b>答题卡之间不能互相通信；片元着色器无法读取邻居像素的颜色，这是它快的原因，也是很多效果要另想办法的原因。</p>
+    </div>
+
+    <p>先看一个最小片元 shader 的形状：它拿到当前像素的坐标，算出一个颜色，写进 <code class="inline-code">gl_FragColor</code>。</p>
+<pre data-lang="glsl"><code>precision highp float;
+uniform vec2 uRes;
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / uRes;   // 0..1
+  gl_FragColor = vec4(uv.x, uv.y, 0.5, 1.0);
+}
+</code></pre>
+    <p>这一小段会在屏幕每个像素上执行一次。把 <code class="inline-code">uv.x</code> 和 <code class="inline-code">uv.y</code> 分别送进红色和绿色通道，就得到一张从黑到黄、再到青的渐变图。整门课都是在这个形状上不断加东西。</p>
+
+    <h3><span class="h3num">02</span>课程地图</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>阶段</th><th>章节</th><th>解决的问题</th></tr></thead>
+        <tbody>
+          <tr><td>入门</td><td>ch01</td><td>坐标系、全屏三角形、第一个颜色</td></tr>
+          <tr><td>管线</td><td>ch02–ch04</td><td>顶点与插值、uniform 时间、UV 图案</td></tr>
+          <tr><td>图形</td><td>ch05–ch07</td><td>噪声、SDF、光照与 raymarch</td></tr>
+          <tr><td>交互</td><td>ch08</td><td>鼠标、分辨率、性能与暂停</td></tr>
+          <tr><td>结课</td><td>ch09</td><td>组合一个实时场景</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3><span class="h3num">03</span>不需要安装任何东西</h3>
+    <p>课程里的 Demo 已经在页面内运行。你只需要一个支持 WebGL 的现代浏览器，以及一个能改代码的编辑器。想自己实验，可以把页面里的 shader 代码复制到任意 WebGL Playground，或本地建一个 <code class="inline-code">index.html</code>：</p>
+<pre data-lang="html"><code>&lt;canvas id="c"&gt;&lt;/canvas&gt;
+&lt;script&gt;
+const gl = document.getElementById('c').getContext('webgl');
+// 编译 shader、创建 program、绘制全屏三角形
+&lt;/script&gt;
+</code></pre>
+    <p>课程不会展开完整的 WebGL 初始化样板；那是框架和模板替你做的事。我们把注意力放在 shader 本身：只要你知道输入（坐标、时间、鼠标）和输出（颜色），就能读懂本课程绝大多数代码。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：WebGL 1 和 WebGL 2 的 GLSL 有什么差别？</summary>
+      <div class="deep-body">
+        <p>WebGL 1 使用 GLSL ES 1.00：没有 <code class="inline-code">in/out</code>，用 <code class="inline-code">attribute</code>、<code class="inline-code">varying</code>、<code class="inline-code">gl_FragColor</code>；不支持动态循环和纹理数组。WebGL 2 对应 GLSL ES 3.00，语法更现代，但入门阶段两者概念完全一致。</p>
+        <p>本课程使用 WebGL 1 语法，兼容面最广；你之后迁到 Three.js 的 <code class="inline-code">ShaderMaterial</code> 或 WebGL2 时，只需替换少量关键字。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">04</span>每章怎么读</h3>
+    <ol class="steps">
+      <li><b>先看 Demo</b>：观察画面随时间和鼠标怎么变化，猜它用了哪些输入。</li>
+      <li><b>读代码</b>：把 shader 拆成「坐标 → 图案 → 颜色」三段，而不是逐行背语法。</li>
+      <li><b>做实验</b>：每章都有一个「改一行」的任务，改完刷新页面看差异。</li>
+      <li><b>做自测</b>：至少回答一遍，确认自己不是在「看懂了」的幻觉里。</li>
+    </ol>
+
+    <h3><span class="h3num">05</span>自测</h3>
+    <details class="quiz">
+      <summary>片元着色器每个像素执行一次，那它能读取相邻像素的颜色吗？</summary>
+      <div class="answer"><p>不能。片元着色器只拿到当前片元的坐标和 uniform，无法访问邻居像素。需要邻域信息的效果通常要额外 pass、纹理或后处理。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么很多全屏 shader 用一个三角形，而不是两个三角形拼成矩形？</summary>
+      <div class="answer"><p>一个覆盖屏幕的大三角形少一个顶点、少一条对角线，光栅化更简单；对全屏后处理来说足够，且能减少边界处的重复计算。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>顶点着色器和片元着色器，哪个决定「像素颜色」？</summary>
+      <div class="answer"><p>片元着色器。顶点着色器只决定顶点位置与传给片元的 varying；颜色最终在片元阶段计算并写入帧缓冲。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>先记住两个可编程阶段：顶点决定「在哪」，片元决定「什么颜色」。接下来我们只做一件事：让片元根据坐标输出一个可解释的颜色。</p>
+      <p class="next"><b>下一讲：</b>从一行颜色开始，认识 clip space、UV 和第一个全屏 shader。</p>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,92 @@
+<section id="ch07" class="chapter">
+  <p class="chapter-kicker">第 7 讲 · 程序化图形</p>
+  <h2 class="chapter-title">光照与 raymarch：球体怎么亮
+    <small>沿射线步进找到表面，用有限差分求法线，再用 dot 算明暗</small>
+  </h2>
+  <p class="chapter-lede">SDF 只告诉你形状在哪，不会自动产生立体感。要给球体打光，需要三件事：从相机发射射线、找到交点、在交点处求法线，最后用光线方向与法线的点积算亮度。</p>
+  <p class="source-line">
+    <span>Demo 7 · raymarch 球体</span>
+    <span>关键词 <code>raymarch</code> · <code>normal</code> · <code>dot</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>用 SDF 步进找到射线与表面的交点</li>
+    <li>用有限差分计算表面法线</li>
+    <li>用 dot(normal, lightDir) 做出漫反射与边缘光</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>从像素发射一条射线</h3>
+    <p>全屏 shader 的每个像素对应相机的一条射线。把 UV 映射到 -1..1，乘宽高比，再组合相机位置和方向。Demo 里的相机固定在 z=3.2，射线朝 -z 方向发散。</p>
+<pre data-lang="glsl"><code>vec2 uv = vUv * 2.0 - 1.0;
+uv.x *= uRes.x / uRes.y;
+vec3 ro = vec3(0.0, 0.0, 3.2);
+vec3 rd = normalize(vec3(uv, -1.8));
+</code></pre>
+
+    <h3><span class="h3num">02</span>步进与法线</h3>
+    <p>沿射线每次前进「当前点到最近表面的距离」。如果距离小于阈值，就认为命中；如果走太远，就认为没打中。命中后，用 SDF 在 x/y/z 三个方向的微小偏移求法线。</p>
+<pre data-lang="glsl"><code>float map(vec3 p) {
+  p.xz = rot(uTime * 0.25) * p.xz;
+  return length(p) - 1.0;
+}
+
+vec3 calcNormal(vec3 p) {
+  const vec2 e = vec2(0.001, 0.0);
+  return normalize(vec3(
+    map(p + e.xyy) - map(p - e.xyy),
+    map(p + e.yxy) - map(p - e.yxy),
+    map(p + e.yyx) - map(p - e.yyx)
+  ));
+}
+</code></pre>
+    <p>有限差分是 raymarch 里最常用的法线求法：不需要解析导数，只要多采样几次 SDF。代价是每个像素多几次函数调用。</p>
+    <div class="demo" data-demo="raymarch" data-label="DEMO 07 · raymarch" data-cap="球体 + 漫反射 + 菲涅尔边缘光，缓慢旋转"></div>
+
+    <div class="analogy">
+      <span class="analogy-title">像在黑暗里用手电筒找墙</span>
+      <p>每一步问「我离最近的墙还有多远」，然后走那么远；走到足够近就停下。法线是墙面朝向，光照就是手电筒方向与墙面朝向的夹角。</p>
+      <p><b>类比到哪为止：</b>真实手电筒会散射、有阴影；raymarch 的简单光照只算一个方向光，阴影要额外发射阴影射线。</p>
+    </div>
+
+    <h3><span class="h3num">03</span>光照公式</h3>
+    <p>漫反射用 <code class="inline-code">max(dot(n, l), 0.0)</code>：法线与光方向越接近，越亮。菲涅尔用 <code class="inline-code">pow(1 - dot(n, -rd), 3)</code>：视线越贴近表面，边缘光越强。两者叠加就有立体感。</p>
+<pre data-lang="glsl"><code>vec3 n = calcNormal(p);
+vec3 l = normalize(vec3(0.6, 0.8, 0.4));
+float diff = max(dot(n, l), 0.0);
+float rim = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
+vec3 col = vec3(0.12,0.75,0.7) * diff
+         + vec3(0.8,0.4,0.95) * rim * 0.7
+         + vec3(0.02,0.03,0.08);
+</code></pre>
+
+    <details class="deep">
+      <summary>🔬 深入：raymarch 的性能瓶颈在哪里？</summary>
+      <div class="deep-body">
+        <p>主要在「每个像素的步数 × 每步的 SDF 计算量」。球体很简单，几十步就能命中；复杂场景（多个 SDF、噪声位移）会让每步成本高很多。常用优化包括：限制最大距离、提前退出、降低分辨率、减少 SDF 复杂度、用包围盒跳过空白区域。</p>
+        <p>屏幕空间反射、体积雾、软阴影都是在这个循环里再加采样；每加一项，成本都会成倍上升。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">04</span>自测</h3>
+    <details class="quiz">
+      <summary>raymarch 每一步前进多少距离？</summary>
+      <div class="answer"><p>前进当前点到最近表面的 SDF 距离。因为这段距离内不会撞到任何表面，所以是安全的步长。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么法线可以用有限差分求？</summary>
+      <div class="answer"><p>法线是 SDF 的梯度方向；在 x/y/z 三个方向取微小偏移，计算函数值差，就近似得到梯度。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>dot(n, l) 的结果范围与含义？</summary>
+      <div class="answer"><p>范围 -1..1；1 表示法线与光线同向（最亮），0 表示垂直（无漫反射），负数表示背光。通常用 max(...,0) 截断。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>raymarch = 发射射线 + SDF 步进 + 交点法线 + 点积光照。它用数学函数代替网格，是 shader 作品里最灵活、也最吃性能的一类技术。</p>
+      <p class="next"><b>下一讲：</b>把鼠标、分辨率和性能策略接进来，让 shader 从「能看」变成「能玩」。</p>
+    </div>
+  </div>
+</section>

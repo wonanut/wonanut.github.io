@@ -1,0 +1,80 @@
+<section id="ch06" class="chapter">
+  <p class="chapter-kicker">第 6 讲 · 程序化图形</p>
+  <h2 class="chapter-title">SDF：用距离函数塑造形状
+    <small>不画三角形，也能算出圆的边界；smooth min 让形状自然融合</small>
+  </h2>
+  <p class="chapter-lede">Signed Distance Field（有符号距离场）用一个函数告诉你「点到形状边界有多远」。正数在外部，负数在内部，零就是边界。它既能在 2D 做图形，也是 raymarching 的基础。</p>
+  <p class="source-line">
+    <span>Demo 6 · 可交互的 metaball</span>
+    <span>关键词 <code>sdf</code> · <code>smooth min</code> · <code>smoothstep</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>写出圆、矩形等基础 SDF，并用距离判断内外</li>
+    <li>用 smooth min 把多个圆融合成有机形状</li>
+    <li>理解 SDF 为什么能天然做描边、发光与柔和边缘</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>距离就是形状</h3>
+    <p>圆的 SDF 非常直观：<code class="inline-code">length(p) - r</code>。到原点的距离减去半径，小于 0 就在圆内，大于 0 就在圆外，等于 0 就是边界。你不需要三角形，也不需要顶点。</p>
+<pre data-lang="glsl"><code>float sdCircle(vec2 p, float r) {
+  return length(p) - r;
+}
+
+// 距离 &lt; 0.01 的部分当作填充
+float fill = smoothstep(0.01, 0.0, d);
+</code></pre>
+    <p><code class="inline-code">smoothstep</code> 把距离变成 0..1 的遮罩，天然带有柔和边缘；把参数收窄，就得到硬边；放宽，就得到发光。</p>
+
+    <h3><span class="h3num">02</span>smooth min：形状会融合</h3>
+    <p>两个 SDF 直接取 <code class="inline-code">min</code>，形状只是并集，交界处有硬折角。<code class="inline-code">smin</code> 在最小值附近做平滑混合，两个圆靠近时会像水滴一样连在一起——这就是 metaball 的手感。</p>
+<pre data-lang="glsl"><code>float smin(float a, float b, float k) {
+  float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+  return mix(b, a, h) - k * h * (1.0 - h);
+}
+
+float d = smin(smin(d1, d2, 0.42), d3, 0.42);
+</code></pre>
+    <p>k 越大，融合范围越宽；k 越小，越接近普通 min。Demo 里的鼠标会带动一个圆，另外两个圆固定，三者的融合边界随鼠标实时变化。</p>
+    <div class="demo" data-demo="sdf" data-label="DEMO 06 · sdf metaballs" data-cap="移动鼠标：主圆跟随；三个圆用 smooth min 融合"></div>
+
+    <div class="analogy">
+      <span class="analogy-title">像墨水滴在纸上互相晕开</span>
+      <p>每个圆是一滴墨水，smin 是纸张的晕染半径。离得远时各自独立，靠近时边缘先连起来，再慢慢融成一个整体。</p>
+      <p><b>类比到哪为止：</b>墨水是物理扩散；smin 只是一个数学平滑，你可以随时把融合半径调到任意值。</p>
+    </div>
+
+    <h3><span class="h3num">03</span>从 2D 到 3D</h3>
+    <p>把 <code class="inline-code">vec2 p</code> 换成 <code class="inline-code">vec3 p</code>，圆就变成球，矩形变成盒子。3D SDF 是 surface raymarching 的核心：相机沿射线前进，每一步用 SDF 问「离最近表面还有多远」，直到距离足够小或超出范围。</p>
+
+    <details class="deep">
+      <summary>🔬 深入：SDF 为什么会出现在字体、UI 和特效里？</summary>
+      <div class="deep-body">
+        <p>因为距离场是分辨率无关的：同一个 SDF 可以在任意尺寸下重建边缘，还能用 smoothstep 自由控制描边宽度和发光。字体渲染（SDF font）、UI 圆角、图标发光、2D metaball 都爱用它。</p>
+        <p>代价是需要预计算或实时计算距离；复杂 3D 场景用 SDF 时，raymarch 的步数会直接影响性能。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">04</span>自测</h3>
+    <details class="quiz">
+      <summary>SDF 返回负数代表什么？</summary>
+      <div class="answer"><p>点在形状内部。正数在外部，零在边界；绝对值是到边界的距离。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>smin 和 min 的区别？</summary>
+      <div class="answer"><p>min 直接取较小值，边界有折角；smin 在交界处平滑混合，形状会自然融合，适合有机形体和 metaball。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>为什么 SDF 做描边很方便？</summary>
+      <div class="answer"><p>因为 <code>abs(d)</code> 就是到边界的距离，用 <code>smoothstep(宽度, 0, abs(d))</code> 就能得到一条固定宽度的边界带。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>SDF 把「形状」变成「距离函数」：负内正外，零是边界。smoothstep 负责上色，smin 负责融合。理解这一点，你就拿到了 raymarching 的钥匙。</p>
+      <p class="next"><b>下一讲：</b>有了 3D SDF，怎样让表面看起来有光照？我们需要法线与点积。</p>
+    </div>
+  </div>
+</section>

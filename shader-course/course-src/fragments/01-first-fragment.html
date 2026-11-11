@@ -1,0 +1,102 @@
+<section id="ch01" class="chapter">
+  <p class="chapter-kicker">第 1 讲 · 出发之前</p>
+  <h2 class="chapter-title">第一个片元：坐标系、UV 与颜色
+    <small>全屏三角形 + 一次片元调用，就是最小可运行 shader</small>
+  </h2>
+  <p class="chapter-lede">写 shader 最容易迷路的地方不是语法，而是坐标：clip space、屏幕坐标、UV、宽高比，各自在哪个范围？这一讲把坐标系一次性理顺，然后画出第一张渐变。</p>
+  <p class="source-line">
+    <span>Demo 1 · UV 渐变与鼠标光斑</span>
+    <span>关键词 <code>gl_FragCoord</code> · <code>vUv</code> · <code>mix</code></span>
+  </p>
+
+  <ul class="objectives">
+    <li class="obj-title">学完这一讲，你会</li>
+    <li>区分 clip space、屏幕像素坐标与 0..1 的 UV</li>
+    <li>用全屏三角形让片元着色器覆盖整个画布</li>
+    <li>用 <code>mix</code> 与鼠标位置画出会跟随的渐变光斑</li>
+  </ul>
+
+  <div class="chapter-body">
+    <h3><span class="h3num">01</span>先把坐标理清</h3>
+    <p>顶点着色器输出的位置在 <b>clip space</b>：x、y 都在 -1 到 1 之间，(-1,-1) 是左下，(+1,+1) 是右上。光栅化之后，片元着色器拿到的是像素坐标，通常用 <code class="inline-code">gl_FragCoord.xy</code>，范围是画布宽高。</p>
+    <p>最常用的中间量是 <b>UV</b>：把坐标归一化到 0..1。归一化后，图案不依赖画布具体像素尺寸，换屏幕也能保持比例。但注意：直接把 <code class="inline-code">gl_FragCoord.xy / uRes</code> 当 UV，会让圆变成椭圆，因为屏幕通常不是正方形；需要乘宽高比。</p>
+    <div class="demo" data-demo="gradient" data-label="DEMO 01 · gradient" data-cap="移动鼠标：高光会跟随；UV 已按宽高比修正"></div>
+
+    <div class="analogy">
+      <span class="analogy-title">像给每个像素发一张带经纬度的答题卡</span>
+      <p>UV 就是像素的经纬度，告诉你「你在画面的哪个位置」。颜色函数则是答题规则：给定经纬度，返回一个颜色。</p>
+      <p><b>类比到哪为止：</b>真实地图的经纬度是连续的；shader 里的 UV 每个像素只采样一次，所以高频图案会出现锯齿，这也是后面要学抗锯齿的原因。</p>
+    </div>
+
+    <h3><span class="h3num">02</span>全屏三角形</h3>
+    <p>为了覆盖整个画布，我们只画一个三角形：三个顶点放在裁剪空间外，确保它盖住屏幕。片元阶段再根据 UV 上色。这个技巧比画两个三角形组成矩形更省一点，也避免对角线接缝。</p>
+<pre data-lang="js"><code>const positions = new Float32Array([
+  -1, -1,
+   3, -1,
+  -1,  3,
+]);
+
+gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+gl.drawArrays(gl.TRIANGLES, 0, 3);
+</code></pre>
+
+    <h3><span class="h3num">03</span>第一个片元 shader</h3>
+    <p>顶点着色器只做一件事：把顶点坐标传给光栅化，并顺便算好 UV。片元着色器则拿 UV 算颜色：</p>
+<pre data-lang="glsl"><code>precision highp float;
+varying vec2 vUv;
+uniform vec2 uRes;
+uniform vec2 uMouse;
+
+void main() {
+  vec3 col = mix(vec3(0.02,0.03,0.08),
+                 vec3(0.08,0.55,0.62),
+                 vUv.y);
+  float d = distance(vUv * vec2(uRes.x/uRes.y, 1.0),
+                     uMouse * vec2(uRes.x/uRes.y, 1.0));
+  col += vec3(0.3,0.9,0.85) * smoothstep(0.4, 0.0, d) * 0.6;
+  gl_FragColor = vec4(col, 1.0);
+}
+</code></pre>
+    <p><code class="inline-code">mix(a,b,t)</code> 做线性插值，<code class="inline-code">smoothstep</code> 做柔和的 0→1 过渡。用 <code class="inline-code">smoothstep</code> 而不是 <code class="inline-code">step</code>，光斑边缘会柔和很多。</p>
+
+    <div class="callout insight">
+      <span class="callout-title">宽高比是 shader 里最常见的坑</span>
+      <p>把 x 乘上 <code class="inline-code">uRes.x / uRes.y</code>，能让「以中心为圆心的距离」在屏幕坐标里保持圆形。否则在 16:9 屏幕上，圆会横向拉长。</p>
+    </div>
+
+    <details class="deep">
+      <summary>🔬 深入：为什么 Demo 的鼠标高光不是简单的圆？</summary>
+      <div class="deep-body">
+        <p>它其实叠加了两个形状：一个柔和的圆形高光，和一个以 (0.5,0.8) 为圆心的细环。每个形状都用 <code class="inline-code">smoothstep</code> 控制衰减，最后相加。你看到的「发光」不是物理光，而是颜色叠加。</p>
+        <p>很多看起来复杂的 shader 都是这样：几个简单的距离/噪声函数相加或相乘。先学会读每一项，再谈组合。</p>
+      </div>
+    </details>
+
+    <h3><span class="h3num">04</span>动手实验</h3>
+    <ol class="steps">
+      <li>把 <code class="inline-code">vUv.y</code> 换成 <code class="inline-code">vUv.x</code>，观察渐变方向；再把 <code>mix</code> 的两种颜色对调。</li>
+      <li>把 <code class="inline-code">smoothstep(0.4, 0.0, d)</code> 改成 <code class="inline-code">smoothstep(0.2, 0.0, d) * 2.0</code>，让光斑更小更亮。</li>
+    </ol>
+
+    <h3><span class="h3num">05</span>自测</h3>
+    <details class="quiz">
+      <summary>为什么 UV 要乘宽高比？</summary>
+      <div class="answer"><p>因为画布像素不是正方形。要让距离函数在屏幕空间保持各向同性，需要把 x 乘以 <code>width / height</code>，否则圆会被拉成椭圆。</p></div>
+    </details>
+    <details class="quiz">
+      <summary><code>mix(a,b,0.3)</code> 的结果是什么？</summary>
+      <div class="answer"><p>返回 <code>a * 0.7 + b * 0.3</code> 的线性插值。t 可以大于 1 或小于 0，但通常我们保持在 0..1。</p></div>
+    </details>
+    <details class="quiz">
+      <summary>全屏三角形为什么顶点会超出 [-1,1]？</summary>
+      <div class="answer"><p>超出的部分会被裁剪，但留下的区域正好覆盖整个视口；这样只用三个顶点就盖满屏幕，避免两个三角形拼矩形的对角线接缝。</p></div>
+    </details>
+
+    <div class="takeaway">
+      <span class="tk-label">这一讲带走</span>
+      <p>坐标的层级是：clip space → 屏幕像素 → UV。记住乘宽高比、用 <code>smoothstep</code> 做柔边，你就已经能画出一张像样的全屏图。</p>
+      <p class="next"><b>下一讲：</b>全屏片元是「每个像素自己算」，但三角形要先把颜色从顶点插值到像素；这就是 attribute 与 varying。</p>
+    </div>
+  </div>
+</section>
