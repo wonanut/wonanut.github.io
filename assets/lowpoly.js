@@ -795,7 +795,7 @@
      raw WebGL pipeline. Shapes are sampled from the same low-poly
      builders so the particles feel part of the world. */
   var MORPH_COUNT = 1200;
-  var MORPH_CENTER = [0.45, 3.55, -0.7];
+  var MORPH_CENTER = [window.innerWidth < 900 ? 0.25 : 1.55, 3.35, -0.55];
   var morphBurst = 0;
   var morphRot = 0;
 
@@ -838,31 +838,53 @@
   function makeShapes() {
     var shapes = {};
 
-    // island: the same terraced language as the world
-    shapes.island = sampleBuilder(
-      buildTerracedIsland(911, 2.0, 3, 1.3),
-      MORPH_COUNT, 0.92, [0, 0.35, 0]
-    );
+    // dynamic wave: a larger, animated surface (base positions; y is driven at runtime)
+    var wave = new Float32Array(MORPH_COUNT * 3);
+    var cols = 40, rows = 30;
+    for (var wi = 0; wi < MORPH_COUNT; wi += 1) {
+      var gx = (wi % cols) / (cols - 1) * 2 - 1;
+      var gy = (Math.floor(wi / cols) % rows) / (rows - 1) * 2 - 1;
+      var wx = gx * 3.2;
+      var wy = gy * 1.6;
+      var wz = Math.sin(wx * 1.35 + gy * 1.6) * 0.52 + Math.cos(wx * 0.7 - gy * 1.2) * 0.22;
+      wave[wi * 3] = wx + MORPH_CENTER[0];
+      wave[wi * 3 + 1] = wy + MORPH_CENTER[1];
+      wave[wi * 3 + 2] = wz + MORPH_CENTER[2];
+    }
+    shapes.wave = wave;
 
-    // crystal: a cluster sampled from crystal surfaces
-    var crystal = new Builder();
-    [
-      [0.0, 0.0, 0.0, 0.52, 2.2, C.crystalIndigo],
-      [0.58, -0.1, 0.26, 0.3, 1.3, C.crystalTeal],
-      [-0.52, -0.1, 0.18, 0.26, 1.1, C.crystalPink],
-      [0.1, -0.15, -0.5, 0.2, 0.8, C.crystalTeal],
-    ].forEach(function (c, ci) {
-      var g = buildCrystal(880 + ci, c[3], c[4], c[5]);
-      var d = g.data;
-      for (var k = 0; k < d.length; k += 9) crystal.push([d[k] + c[0], d[k + 1] + c[1], d[k + 2] + c[2]], [d[k + 3], d[k + 4], d[k + 5]], [d[k + 6], d[k + 7], d[k + 8]]);
-    });
-    shapes.crystal = sampleBuilder(crystal, MORPH_COUNT, 0.9, [0, 0.9, 0]);
+    // sphere: uniform Fibonacci distribution
+    var sphere = new Float32Array(MORPH_COUNT * 3);
+    var golden = Math.PI * (3 - Math.sqrt(5));
+    for (var si = 0; si < MORPH_COUNT; si += 1) {
+      var sy = 1 - (si / (MORPH_COUNT - 1)) * 2;
+      var sr = Math.sqrt(Math.max(0, 1 - sy * sy));
+      var st = golden * si;
+      var srad = 2.05;
+      sphere[si * 3] = Math.cos(st) * sr * srad + MORPH_CENTER[0];
+      sphere[si * 3 + 1] = sy * srad + MORPH_CENTER[1];
+      sphere[si * 3 + 2] = Math.sin(st) * sr * srad + MORPH_CENTER[2];
+    }
+    shapes.sphere = sphere;
+
+    // matrix: a 3D lattice of points
+    var matrix = new Float32Array(MORPH_COUNT * 3);
+    var nx = 16, ny = 10, nz = 8;
+    for (var mi = 0; mi < MORPH_COUNT; mi += 1) {
+      var ix = mi % nx;
+      var iy = Math.floor(mi / nx) % ny;
+      var iz = Math.floor(mi / (nx * ny)) % nz;
+      matrix[mi * 3] = (ix / (nx - 1) - 0.5) * 4.2 + MORPH_CENTER[0];
+      matrix[mi * 3 + 1] = (iy / (ny - 1) - 0.5) * 2.8 + MORPH_CENTER[1];
+      matrix[mi * 3 + 2] = (iz / (nz - 1) - 0.5) * 2.4 + MORPH_CENTER[2];
+    }
+    shapes.matrix = matrix;
 
     // ring: torus
     var ring = new Float32Array(MORPH_COUNT * 3);
     var rr = rng(1777);
     for (var ri = 0; ri < MORPH_COUNT; ri += 1) {
-      var R = 1.45, tube = 0.42;
+      var R = 1.85, tube = 0.38;
       var u = rr() * Math.PI * 2;
       var v = rr() * Math.PI * 2;
       var x = (R + tube * Math.cos(v)) * Math.cos(u);
@@ -874,19 +896,6 @@
     }
     shapes.ring = ring;
 
-    // wave: reference-template style flat wave
-    var wave = new Float32Array(MORPH_COUNT * 3);
-    var wr = rng(2888);
-    for (var wi = 0; wi < MORPH_COUNT; wi += 1) {
-      var wx = (wr() * 2 - 1) * 1.9;
-      var wz = (wr() * 2 - 1) * 1.45;
-      var wy = Math.sin(wx * 2.5) * 0.26 + Math.cos(wz * 3.1) * 0.2 - 0.1;
-      wave[wi * 3] = wx + MORPH_CENTER[0];
-      wave[wi * 3 + 1] = wy + MORPH_CENTER[1];
-      wave[wi * 3 + 2] = wz + MORPH_CENTER[2];
-    }
-    shapes.wave = wave;
-
     return shapes;
   }
 
@@ -896,10 +905,10 @@
     var r = rng(9100 + name.length);
     var cols = new Float32Array(MORPH_COUNT * 3);
     var palettes = {
-      island: [C.crystalTeal, C.crystalTeal, C.grassLight, C.crystalIndigo],
-      crystal: [C.crystalIndigo, C.crystalPink, C.crystalTeal, C.crystalIndigo],
-      ring: [C.crystalTeal, C.crystalIndigo, C.crystalTeal, C.crystalPink],
-      wave: [C.crystalPink, C.crystalTeal, C.crystalIndigo, C.crystalTeal],
+      wave: [C.crystalTeal, C.crystalIndigo, C.crystalTeal, C.crystalPink],
+      sphere: [C.crystalIndigo, C.crystalPink, C.crystalTeal, C.crystalPink],
+      matrix: [C.crystalTeal, C.crystalIndigo, C.metal, C.crystalTeal],
+      ring: [C.crystalPink, C.crystalTeal, C.crystalIndigo, C.crystalTeal],
     };
     var pal = palettes[name] || [C.crystalTeal, C.crystalIndigo];
     for (var i = 0; i < MORPH_COUNT; i += 1) {
@@ -913,18 +922,22 @@
   }
   Object.keys(SHAPES).forEach(function (name) { MORPH_COLORS[name] = shapeColors(name); });
 
+  var SHAPE_ORDER = ["wave", "sphere", "matrix", "ring"];
+  var autoIndex = 0;
+  var autoTimer = null;
+
   var MORPH = {
     curPos: new Float32Array(MORPH_COUNT * 3),
     fromPos: new Float32Array(MORPH_COUNT * 3),
     curCol: new Float32Array(MORPH_COUNT * 3),
     fromCol: new Float32Array(MORPH_COUNT * 3),
-    targetPos: SHAPES.island,
-    targetCol: MORPH_COLORS.island,
+    targetPos: SHAPES.wave,
+    targetCol: MORPH_COLORS.wave,
     delays: new Float32Array(MORPH_COUNT),
     start: 0,
     duration: 1.55,
     active: false,
-    name: "island",
+    name: "wave",
   };
 
   function createMorphBuffers() {
@@ -960,9 +973,20 @@
     return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
   }
 
+  function scheduleAuto() {
+    clearTimeout(autoTimer);
+    autoTimer = setTimeout(function () {
+      if (document.hidden) { scheduleAuto(); return; }
+      autoIndex = (autoIndex + 1) % SHAPE_ORDER.length;
+      morphTo(SHAPE_ORDER[autoIndex]);
+    }, 7200);
+  }
+
   function morphTo(name) {
     if (!SHAPES[name]) return;
     var now = performance.now() / 1000;
+    autoIndex = SHAPE_ORDER.indexOf(name);
+    if (autoIndex < 0) autoIndex = 0;
     MORPH.fromPos.set(MORPH.curPos);
     MORPH.fromCol.set(MORPH.curCol);
     MORPH.targetPos = SHAPES[name];
@@ -974,9 +998,33 @@
     morphBurst = 1.0;
     var buttons = document.querySelectorAll("[data-morph]");
     for (var b = 0; b < buttons.length; b += 1) buttons[b].classList.toggle("active", buttons[b].getAttribute("data-morph") === name);
+    scheduleAuto();
+  }
+
+  function uploadMorphPositions() {
+    gl.bindBuffer(gl.ARRAY_BUFFER, MORPH_BUFFERS.pos);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, MORPH.curPos);
+    gl.bindBuffer(gl.ARRAY_BUFFER, MORPH_BUFFERS.col);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, MORPH.curCol);
   }
 
   function updateMorph(t) {
+    if (MORPH.name === "wave" && !MORPH.active) {
+      var base = SHAPES.wave;
+      var pos = MORPH.curPos;
+      for (var w = 0; w < MORPH_COUNT; w += 1) {
+        var x = base[w * 3];
+        var y = base[w * 3 + 1];
+        var z = base[w * 3 + 2];
+        var waveY = y + Math.sin(x * 1.3 + t * 1.5) * 0.12;
+        var waveZ = z + Math.cos(x * 1.1 + y * 0.9 + t * 1.2) * 0.34;
+        pos[w * 3] = x;
+        pos[w * 3 + 1] = waveY;
+        pos[w * 3 + 2] = waveZ;
+      }
+      uploadMorphPositions();
+      return;
+    }
     if (!MORPH.active) return;
     var pos = MORPH.curPos;
     var col = MORPH.curCol;
@@ -1003,10 +1051,7 @@
       col[i * 3 + 1] = fc[i * 3 + 1] + (tc[i * 3 + 1] - fc[i * 3 + 1]) * e;
       col[i * 3 + 2] = fc[i * 3 + 2] + (tc[i * 3 + 2] - fc[i * 3 + 2]) * e;
     }
-    gl.bindBuffer(gl.ARRAY_BUFFER, MORPH_BUFFERS.pos);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, pos);
-    gl.bindBuffer(gl.ARRAY_BUFFER, MORPH_BUFFERS.col);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, col);
+    uploadMorphPositions();
     if (done) MORPH.active = false;
   }
 
@@ -1016,7 +1061,7 @@
       button.addEventListener("click", function () { morphTo(button.getAttribute("data-morph")); });
     })(morphButtons[mb]);
   }
-  morphTo("island");
+  morphTo("wave");
 
   /* ---------------- scene objects ---------------- */
   var objects = [];
