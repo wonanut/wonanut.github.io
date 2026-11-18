@@ -38,6 +38,8 @@ button{cursor:pointer}
 .status.ok{color:var(--teal)}.status.err{color:var(--err)}.status.warn{color:var(--warn)}
 select{width:100%;background:var(--soft);color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:8px 9px;font-size:11px;outline:none}
 select:focus{border-color:rgba(94,234,212,.45)}
+.mirror{display:flex;align-items:center;gap:7px;margin-top:8px;font-size:10.5px;color:var(--muted);cursor:pointer;user-select:none}
+.mirror input{accent-color:#5eead4;margin:0}
 .load-btn{width:100%;margin-top:8px;border:1px solid rgba(94,234,212,.34);background:rgba(94,234,212,.09);color:var(--teal);
   border-radius:9px;padding:9px 10px;font-size:11px;font-weight:650;letter-spacing:.01em;transition:.16s}
 .load-btn:hover{background:rgba(94,234,212,.16)}
@@ -115,10 +117,11 @@ iframe{flex:1;width:100%;border:0;background:#f6f1e8}
         <option value="balanced">平衡 · Qwen2.5 0.5B（更会规划，稍大）</option>
         <option value="quality">质量 · Llama 3.2 1B（最慢，JSON 更稳）</option>
       </select>
+      <label class="mirror"><input type="checkbox" id="mirror" checked> 使用 hf-mirror 国内镜像（更稳）</label>
       <button class="load-btn" id="loadBtn">下载并加载本地模型</button>
       <div class="row" style="display:none" id="cancelRow"><button class="ghost" id="cancelLoad">取消下载 / 重新开始</button></div>
       <div class="load-progress" id="loadProgress"><div class="track"><i id="loadBar"></i></div><div class="load-note" id="loadNote">等待开始</div></div>
-      <p class="hint">模型通过 WebLLM 在浏览器里推理，首次需下载权重，之后走浏览器缓存。<b style="color:var(--muted)">急用可直接点「演示大脑」，零下载。</b><br>极速档模型最小、下载最快；如果 JSON 动作不稳定，再换平衡档。<br><span style="color:var(--faint)">本地推理由 WebLLM 驱动；模型权重来自其公开模型列表。</span></p>
+      <p class="hint">模型通过 WebLLM 在浏览器里推理，首次需下载权重，之后走浏览器缓存。<b style="color:var(--muted)">急用可直接点「演示大脑」，零下载。</b><br>极速档模型最小、下载最快；国内网络建议勾选 hf-mirror。如果 JSON 动作不稳定，再换平衡档。<br><span style="color:var(--faint)">本地推理由 WebLLM 驱动；模型权重来自其公开模型列表。</span></p>
     </section>
 
     <section class="panel">
@@ -313,6 +316,7 @@ nav a.active,nav a:hover{background:var(--paper2);color:var(--coffee)}
   var runState=document.getElementById("runState");
   var modelStatus=document.getElementById("modelStatus");
   var modelTier=document.getElementById("modelTier");
+  var mirrorInput=document.getElementById("mirror");
   var loadBtn=document.getElementById("loadBtn");
   var loadProgress=document.getElementById("loadProgress");
   var loadBar=document.getElementById("loadBar");
@@ -324,7 +328,7 @@ nav a.active,nav a:hover{background:var(--paper2);color:var(--coffee)}
   var stopBtn=document.getElementById("stopBtn");
   var resetBtn=document.getElementById("resetBtn");
   var taskInput=document.getElementById("task");
-  var sandboxReady=false, busy=false, runToken=0, stepCountValue=0, engine=null, webllm=null, currentModelId="", loadStarted=0;
+  var sandboxReady=false, busy=false, runToken=0, stepCountValue=0, engine=null, webllm=null, currentModelId="", loadStarted=0, loading=false, loadPct=3, loadText="准备中", loadTimer=null;
 
   function sleep(ms){return new Promise(function(r){setTimeout(r,ms);});}
   function setStatus(text,kind){statusText.textContent=text;statusbar.classList.toggle("busy",kind==="busy");}
@@ -527,10 +531,20 @@ nav a.active,nav a:hover{background:var(--paper2);color:var(--coffee)}
     try{var o=JSON.parse(s.slice(a,b+1));if(!o||typeof o!=="object"||!o.tool)return null;return o;}catch(e){return null;}
   }
 
+  function startLoadTicker(){
+    clearInterval(loadTimer);
+    loadTimer=setInterval(function(){
+      if(!loading)return;
+      var sec=Math.max(0,Math.round((Date.now()-loadStarted)/1000));
+      var tail=sec>22?" · 暂无新进度，可取消后用演示大脑":sec>8?" · 网络较慢，正在等响应":"";
+      loadNote.textContent=(loadText||"正在下载…")+" · "+loadPct+"% · "+sec+"s"+tail;
+    },1000);
+  }
+
   async function loadModel(){
     if(engine)return;
     if(!navigator.gpu){modelStatus.textContent="WebGPU 不可用";modelStatus.className="status err";loadNote.textContent="当前浏览器没有 WebGPU。请用新版 Chrome/Edge，或直接使用演示大脑。";return;}
-    loadBtn.disabled=true;modelStatus.textContent="加载库…";modelStatus.className="status warn";loadStarted=Date.now();cancelRow.style.display="none";
+    loadBtn.disabled=true;modelStatus.textContent="加载库…";modelStatus.className="status warn";loadStarted=Date.now();cancelRow.style.display="flex";cancelLoad.disabled=false;loading=true;loadPct=3;loadText="正在加载 WebLLM runtime…";startLoadTicker();
     loadProgress.classList.add("on");loadBar.style.width="2%";loadNote.textContent="正在加载 WebLLM runtime…";
     setStatus("loading WebLLM runtime…","busy");
     try{
@@ -553,17 +567,26 @@ nav a.active,nav a:hover{background:var(--paper2);color:var(--coffee)}
       currentModelId=pick.model_id;
       modelStatus.textContent="下载/编译…";modelStatus.className="status warn";
       cancelRow.style.display="flex";cancelLoad.disabled=false;
-      loadBar.style.width="5%";loadNote.textContent="开始下载 "+currentModelId+"（首次可能较久）…";
-      engine=await webllm.CreateMLCEngine(currentModelId,{initProgressCallback:function(p){
-        var pct=Math.max(3,Math.min(99,Math.round((p.progress||0)*100)));
-        var elapsed=Math.max(0,Math.round((Date.now()-loadStarted)/1000));
-        loadBar.style.width=pct+"%";loadNote.textContent=(p.text||"loading")+" · "+pct+"% · "+elapsed+"s";
+      loadBar.style.width="5%";loadPct=5;loadText="开始下载 "+currentModelId+"…";
+      var appConfig=undefined;
+      if(mirrorInput.checked && webllm.prebuiltAppConfig && webllm.prebuiltAppConfig.model_list){
+        var mirrorList=webllm.prebuiltAppConfig.model_list.map(function(m){
+          var c=Object.assign({},m);
+          c.model=String(c.model||"").replace("https://huggingface.co","https://hf-mirror.com");
+          if(c.model_lib)c.model_lib=String(c.model_lib).replace("https://raw.githubusercontent.com/mlc-ai/binary-mlc-llm-libs/main/","https://cdn.jsdelivr.net/gh/mlc-ai/binary-mlc-llm-libs@main/");
+          return c;
+        });
+        appConfig=Object.assign({},webllm.prebuiltAppConfig,{model_list:mirrorList});
+      }
+      engine=await webllm.CreateMLCEngine(currentModelId,{appConfig:appConfig,initProgressCallback:function(p){
+        var pct=Math.max(5,Math.min(99,Math.round((p.progress||0)*100)));
+        loadPct=pct;loadText=p.text||"loading";loadBar.style.width=pct+"%";
       }});
-      modelStatus.textContent="已就绪";modelStatus.className="status ok";loadBar.style.width="100%";loadNote.textContent="已加载 "+currentModelId+"；下次打开走浏览器缓存，不用重新下载。";cancelRow.style.display="none";
+      loading=false;clearInterval(loadTimer);modelStatus.textContent="已就绪";modelStatus.className="status ok";loadBar.style.width="100%";loadNote.textContent="已加载 "+currentModelId+"；下次打开走浏览器缓存，不用重新下载。";cancelRow.style.display="none";
       runModelBtn.disabled=false;setButtons();setStatus("local model ready · "+currentModelId,"");
     }catch(err){
       modelStatus.textContent="加载失败";modelStatus.className="status err";
-      loadNote.textContent=String(err.message||err).slice(0,180);cancelRow.style.display="none";
+      loading=false;clearInterval(loadTimer);loadNote.textContent=String(err.message||err).slice(0,180);cancelRow.style.display="none";
       loadBtn.disabled=false;setStatus("model error · "+String(err.message||err),"");
     }
   }
