@@ -1,0 +1,604 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MIST · 浏览器里的迷你 Agent</title>
+<meta name="description" content="一个完全跑在浏览器里的迷你 AI agent：本地模型推理，只用点击、输入、滚动、导航来操作一个沙盒网站。">
+<style>
+:root{
+  --bg:#070a10; --panel:#0c111a; --soft:#111827; --line:rgba(160,180,215,.14);
+  --ink:#e9eef8; --muted:#8b98ad; --faint:#5f6b80; --teal:#5eead4; --violet:#a78bfa;
+  --warn:#fbbf24; --err:#fb7185; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:
+  radial-gradient(900px 500px at 78% -10%,rgba(124,58,237,.16),transparent 60%),
+  radial-gradient(700px 420px at 12% 110%,rgba(20,184,166,.10),transparent 60%),
+  var(--bg);
+  color:var(--ink);font-family:Inter,system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+button,textarea,select{font:inherit}
+button{cursor:pointer}
+.app{display:grid;grid-template-columns:minmax(340px,380px) minmax(0,1fr);height:100vh}
+.side{border-right:1px solid var(--line);padding:20px 16px 26px;overflow:auto;background:rgba(7,10,16,.72);backdrop-filter:blur(14px)}
+.brand{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px}
+.brand .mark{display:flex;align-items:center;gap:10px}
+.logo{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;font-size:14px;font-weight:800;color:#c9fff9;
+  background:linear-gradient(145deg,rgba(94,234,212,.22),rgba(167,139,250,.2));border:1px solid rgba(94,234,212,.3)}
+.brand h1{font-size:15px;margin:0;letter-spacing:.01em}
+.brand h1 b{color:var(--teal)}
+.brand p{margin:3px 0 0;font-size:10px;color:var(--muted);font-family:var(--mono);letter-spacing:.14em;text-transform:uppercase}
+.back{font-size:11px;color:var(--muted);text-decoration:none;border:1px solid var(--line);border-radius:999px;padding:6px 9px;white-space:nowrap}
+.back:hover{color:var(--ink);border-color:rgba(94,234,212,.35)}
+.panel{border:1px solid var(--line);border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.028),rgba(255,255,255,.012));padding:13px;margin-bottom:11px}
+.panel-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:9px}
+.panel-title{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);font-family:var(--mono)}
+.status{font-size:10px;color:var(--faint);font-family:var(--mono)}
+.status.ok{color:var(--teal)}.status.err{color:var(--err)}.status.warn{color:var(--warn)}
+select{width:100%;background:var(--soft);color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:8px 9px;font-size:11px;outline:none}
+select:focus{border-color:rgba(94,234,212,.45)}
+.load-btn{width:100%;margin-top:8px;border:1px solid rgba(94,234,212,.34);background:rgba(94,234,212,.09);color:var(--teal);
+  border-radius:9px;padding:9px 10px;font-size:11px;font-weight:650;letter-spacing:.01em;transition:.16s}
+.load-btn:hover{background:rgba(94,234,212,.16)}
+.load-btn:disabled{opacity:.45;cursor:not-allowed}
+.load-progress{display:none;margin-top:9px}
+.load-progress.on{display:block}
+.track{height:5px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden}
+.track > i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--teal),var(--violet));border-radius:99px;transition:width .25s}
+.load-note{font-size:10px;line-height:1.55;color:var(--muted);margin-top:6px;font-family:var(--mono)}
+.hint{font-size:10.5px;line-height:1.7;color:var(--muted);margin:8px 0 0}
+.task-box{width:100%;min-height:74px;resize:vertical;background:var(--soft);border:1px solid var(--line);border-radius:10px;
+  color:var(--ink);padding:9px 10px;font-size:12px;line-height:1.55;outline:none}
+.task-box:focus{border-color:rgba(94,234,212,.4)}
+.row{display:flex;gap:7px;margin-top:8px}
+.primary,.ghost{flex:1;border-radius:9px;padding:9px 8px;font-size:11px;font-weight:650;transition:.16s}
+.primary{border:1px solid rgba(167,139,250,.5);background:linear-gradient(135deg,rgba(167,139,250,.25),rgba(94,234,212,.16));color:#f4f2ff}
+.primary:hover{background:linear-gradient(135deg,rgba(167,139,250,.38),rgba(94,234,212,.24))}
+.ghost{border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--muted)}
+.ghost:hover{color:var(--ink);border-color:var(--line-strong)}
+.primary:disabled,.ghost:disabled{opacity:.4;cursor:not-allowed}
+.presets{display:flex;flex-direction:column;gap:5px;margin-top:9px}
+.preset{text-align:left;border:1px solid transparent;background:transparent;color:var(--faint);font-size:10.5px;padding:5px 6px;border-radius:7px;line-height:1.4}
+.preset:hover{color:var(--ink);background:rgba(255,255,255,.04);border-color:var(--line)}
+.log-panel{min-height:0}
+.log{display:flex;flex-direction:column;gap:7px;max-height:38vh;overflow:auto;padding-right:2px}
+.log-empty{font-size:11px;color:var(--faint);line-height:1.6;padding:3px 1px}
+.step{border:1px solid var(--line);border-radius:9px;padding:7px 8px;background:rgba(255,255,255,.022);font-size:10.5px;line-height:1.55}
+.step .who{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-bottom:3px}
+.step .who i{width:5px;height:5px;border-radius:50%;background:var(--faint);display:block}
+.step.tool .who i{background:var(--teal)}.step.think .who i{background:var(--violet)}.step.error .who i{background:var(--err)}.step.done .who i{background:var(--warn)}
+.step .body{color:var(--muted);white-space:pre-wrap;word-break:break-word;font-family:var(--mono);font-size:10px;max-height:120px;overflow:auto}
+.step.done .body{color:#d8f7ef}
+.statusbar{display:flex;align-items:center;gap:7px;font-size:10.5px;color:var(--muted);padding:4px 3px 0;font-family:var(--mono)}
+.statusbar .dot{width:6px;height:6px;border-radius:50%;background:var(--faint)}
+.statusbar.busy .dot{background:var(--teal);animation:pulse 1.1s infinite}
+@keyframes pulse{50%{opacity:.35}}
+.stage{padding:20px 22px 22px;display:flex;flex-direction:column;min-width:0;min-height:0;gap:10px}
+.stage-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px}
+.stage-head h2{margin:0;font-size:17px;letter-spacing:-.01em}
+.stage-head p{margin:4px 0 0;font-size:11px;color:var(--muted);line-height:1.6}
+.tag{font-family:var(--mono);font-size:9px;letter-spacing:.1em;border:1px solid var(--line);border-radius:999px;padding:5px 8px;color:var(--muted);white-space:nowrap}
+.browser{flex:1;min-height:0;border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#f6f1e8;box-shadow:0 30px 80px rgba(0,0,0,.35);display:flex;flex-direction:column}
+.chrome{display:flex;align-items:center;gap:8px;padding:9px 11px;background:#101722;border-bottom:1px solid rgba(255,255,255,.08)}
+.lights{display:flex;gap:5px}.lights i{width:8px;height:8px;border-radius:50%;display:block}.lights i:nth-child(1){background:#fb7185}.lights i:nth-child(2){background:#fbbf24}.lights i:nth-child(3){background:#5eead4}
+.url{flex:1;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);border-radius:7px;color:#aab6c8;font-family:var(--mono);font-size:10px;padding:5px 9px}
+.reload{width:24px;height:24px;border-radius:6px;border:1px solid rgba(255,255,255,.1);background:transparent;color:#9fb0c4;display:grid;place-items:center}
+.reload:hover{background:rgba(255,255,255,.08);color:#fff}
+iframe{flex:1;width:100%;border:0;background:#f6f1e8}
+.stage-foot{display:flex;justify-content:space-between;gap:14px;font-size:10px;color:var(--faint);font-family:var(--mono);line-height:1.6}
+.stage-foot b{color:var(--muted);font-weight:500}
+@media (max-width:980px){
+  .app{grid-template-columns:1fr;height:auto;min-height:100vh}
+  .side{border-right:0;border-bottom:1px solid var(--line);max-height:none}
+  .stage{height:72vh;min-height:520px}
+  .log{max-height:24vh}
+}
+@media (max-width:560px){
+  .side{padding:15px 12px 18px}.stage{padding:12px;height:68vh;min-height:460px}
+  .stage-head p{display:none}.brand h1{font-size:14px}.tag{display:none}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <div class="mark"><div class="logo">M</div><div><h1><b>MIST</b> · 迷你浏览器 Agent</h1><p>Local inference · No backend</p></div></div>
+      <a class="back" href="../">首页</a>
+    </div>
+
+    <section class="panel">
+      <div class="panel-head"><span class="panel-title">本地大脑</span><span class="status" id="modelStatus">未加载</span></div>
+      <select id="modelSelect" disabled><option>加载时自动选择最小可用模型</option></select>
+      <button class="load-btn" id="loadBtn">加载 WebGPU 本地模型</button>
+      <div class="load-progress" id="loadProgress"><div class="track"><i id="loadBar"></i></div><div class="load-note" id="loadNote">等待开始</div></div>
+      <p class="hint">模型通过 WebLLM 在浏览器里推理，首次需下载权重，之后走浏览器缓存。没有 API key、没有服务器。<br><b style="color:var(--muted)">也可以先用「演示大脑」体验完整 agent 动作。</b><br><span style="color:var(--faint)">本地推理由 WebLLM 驱动；模型权重来自其公开模型列表。</span></p>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><span class="panel-title">任务</span><span class="status" id="runState">idle</span></div>
+      <textarea class="task-box" id="task">请在菜单里点一杯冰美式，然后打开购物车。</textarea>
+      <div class="row"><button class="primary" id="runDemo">演示大脑运行</button><button class="ghost" id="stopBtn" disabled>停止</button></div>
+      <div class="row"><button class="ghost" id="runModel" disabled>本地模型运行</button><button class="ghost" id="resetBtn">重置沙盒</button></div>
+      <div class="presets">
+        <button class="preset" data-task="请在菜单里点一杯冰美式，然后打开购物车。">↳ 点一杯冰美式 → 购物车</button>
+        <button class="preset" data-task="菜单里最贵的饮品是什么？把它加入购物车，并告诉我价格。">↳ 找最贵的饮品并加购</button>
+        <button class="preset" data-task="去结算页，把收货人填成 Doran，电话填 13800000000，然后提交订单。">↳ 填写结算信息并提交</button>
+      </div>
+    </section>
+
+    <section class="panel log-panel">
+      <div class="panel-head"><span class="panel-title">Agent 轨迹</span><span class="status" id="stepCount">0 steps</span></div>
+      <div class="log" id="log"><div class="log-empty">运行后，这里会显示模型读页面、点击、输入和观察的每一步。</div></div>
+      <div class="statusbar" id="statusbar"><span class="dot"></span><span id="statusText">ready · 沙盒已加载</span></div>
+    </section>
+  </aside>
+
+  <main class="stage">
+    <div class="stage-head">
+      <div><h2>被操作的世界：山岚咖啡</h2><p>一个完全在前端运行的沙盒站点。Agent 只能通过读 DOM、点击、输入、滚动与页面导航来完成任务。</p></div>
+      <span class="tag">SANDBOX · SAME ORIGIN</span>
+    </div>
+    <div class="browser">
+      <div class="chrome"><div class="lights"><i></i><i></i><i></i></div><input class="url" id="url" value="sandbox://mist-coffee/home" readonly aria-label="沙盒地址"><button class="reload" id="reload" title="重新加载沙盒">↻</button></div>
+      <iframe id="sandbox" title="山岚咖啡沙盒网站"></iframe>
+    </div>
+    <div class="stage-foot"><span><b>TOOLS</b> read_page · click · type · scroll · navigate · done</span><span id="sandboxState">cart: 0 item</span></div>
+  </main>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var SANDBOX_HTML = `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><style>
+:root{--paper:#f6f1e8;--paper2:#efe7da;--ink:#2b211a;--muted:#7d6d5d;--coffee:#5b3a2a;--accent:#c96f45;--line:#e3d8c8}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:Inter,system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:920px;margin:0 auto;padding:0 28px}
+.nav{display:flex;align-items:center;justify-content:space-between;padding:18px 0;border-bottom:1px solid var(--line)}
+.brand{font-size:17px;font-weight:800;letter-spacing:-.02em;color:var(--coffee);text-decoration:none}
+.brand small{display:block;font-size:8px;letter-spacing:.2em;color:var(--muted);font-weight:500;margin-top:3px}
+nav{display:flex;gap:5px;flex-wrap:wrap}
+nav a{font-size:12px;color:var(--muted);text-decoration:none;padding:7px 10px;border-radius:999px;cursor:pointer}
+nav a.active,nav a:hover{background:var(--paper2);color:var(--coffee)}
+.cart-pill{font-family:ui-monospace,Menlo,monospace;font-size:10px;margin-left:3px;background:var(--coffee);color:#fff;border-radius:99px;padding:1px 5px}
+.hero{display:grid;grid-template-columns:1.1fr .9fr;gap:24px;align-items:stretch;padding:34px 0 26px}
+.hero h1{font-size:42px;line-height:1.05;letter-spacing:-.045em;margin:0 0 13px;color:#32241c}
+.hero h1 span{color:var(--accent)}
+.hero p{color:var(--muted);line-height:1.8;font-size:13px;margin:0 0 20px;max-width:420px}
+.hero-photo{border-radius:18px;min-height:228px;background:linear-gradient(135deg,#e4d3bd,#c5a98c 55%,#8d6a50);position:relative;overflow:hidden;border:1px solid #dccbb8}
+.hero-photo::before{content:"";position:absolute;width:190px;height:190px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff5e6,#d8b18b 45%,#6d4a35);right:-30px;bottom:-44px;box-shadow:0 24px 50px rgba(80,50,30,.25)}
+.hero-photo::after{content:"山岚 / 06:40";position:absolute;left:15px;bottom:13px;color:rgba(255,255,255,.85);font-size:9px;letter-spacing:.18em;font-family:ui-monospace,Menlo,monospace}
+.btn{display:inline-block;border:0;border-radius:999px;padding:10px 16px;font-size:12px;font-weight:700;cursor:pointer;background:var(--coffee);color:#fff}
+.btn:hover{background:#3f271d}.btn.light{background:var(--paper2);color:var(--coffee)}.btn.light:hover{background:#e5d9c7}
+.section{padding:8px 0 42px}.section h2{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin:0 0 17px;font-family:ui-monospace,Menlo,monospace}
+.menu{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.item{border:1px solid var(--line);background:rgba(255,255,255,.5);border-radius:14px;padding:14px;display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.item .name{font-size:14px;font-weight:700;margin-bottom:3px}.item .desc{font-size:10.5px;color:var(--muted);line-height:1.5}
+.price{font-family:ui-monospace,Menlo,monospace;font-size:14px;color:var(--coffee);font-weight:700}
+.add{border:1px solid #d7c8b5;background:#fff;color:var(--coffee);border-radius:8px;padding:6px 9px;font-size:10px;font-weight:700;cursor:pointer;margin-top:8px}
+.add:hover{background:var(--coffee);color:#fff;border-color:var(--coffee)}
+.line{border-top:1px solid var(--line);margin:12px 0}
+.cart-list{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:rgba(255,255,255,.5)}
+.cart-row{display:flex;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--line);font-size:12px}.cart-row:last-child{border-bottom:0}
+.cart-total{display:flex;justify-content:space-between;padding:14px;font-weight:800;background:var(--paper2);font-size:14px}
+.form{max-width:440px;display:flex;flex-direction:column;gap:10px}
+.field label{display:block;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-family:ui-monospace,Menlo,monospace;margin-bottom:5px}
+.field input{width:100%;border:1px solid #d8cbbb;background:#fff;border-radius:9px;padding:10px 11px;font-size:13px;color:var(--ink);outline:none}
+.field input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(201,111,69,.12)}
+.notice{padding:10px 12px;border-radius:10px;font-size:11px;line-height:1.6;margin-top:10px}
+.notice.ok{background:#e4f3e8;color:#2f6b45;border:1px solid #c4e2cf}.notice.err{background:#fbe9e4;color:#8f3b27;border:1px solid #efc9bd}
+.about{padding:26px 0;color:var(--muted);line-height:1.9;font-size:13px;max-width:650px}.about h1{font-size:28px;color:var(--ink);margin:0 0 12px;letter-spacing:-.02em}
+.footer{padding:20px 0 28px;border-top:1px solid var(--line);color:#a49381;font-size:10px;display:flex;justify-content:space-between;gap:14px;font-family:ui-monospace,Menlo,monospace}
+[hidden]{display:none!important}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(8px);background:#2b211a;color:#fff;font-size:11px;padding:8px 13px;border-radius:999px;opacity:0;transition:.25s;pointer-events:none;z-index:9}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+.flash{outline:2px solid #5eead4!important;outline-offset:2px!important;transition:outline .1s}
+@media(max-width:640px){.wrap{padding:0 16px}.hero{grid-template-columns:1fr}.hero-photo{min-height:140px}.menu{grid-template-columns:1fr}.hero h1{font-size:34px}}
+</style></head><body>
+<div class="wrap">
+  <header class="nav">
+    <a class="brand" data-page="home">山岚咖啡<small>MOUNTAIN MIST · SHANGHAI</small></a>
+    <nav>
+      <a data-page="home" class="active">首页</a>
+      <a data-page="menu">菜单</a>
+      <a data-page="cart">购物车 <span class="cart-pill" id="cartCount">0</span></a>
+      <a data-page="checkout">结算</a>
+      <a data-page="about">关于</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="view" data-view="home">
+      <div class="hero">
+        <div><h1>喝一杯<br><span>山里的雾。</span></h1><p>我们烘焙小批量的豆子，在清晨六点四十开门。没有很长的菜单，只有几支当季的豆子和刚出炉的可颂。</p><button class="btn" data-page="menu">看菜单 →</button></div>
+        <div class="hero-photo"></div>
+      </div>
+      <div class="section"><h2>Today's pick</h2><div class="menu">
+        <div class="item"><div><div class="name">冰美式</div><div class="desc">耶加雪菲 · 柑橘 · 冰</div><div class="price">¥22</div><button class="add" data-add="iced-americano" data-name="冰美式" data-price="22">加入购物车</button></div></div>
+        <div class="item"><div><div class="name">桂花拿铁</div><div class="desc">桂花蜜 · 燕麦奶 · 热</div><div class="price">¥28</div><button class="add" data-add="osmanthus-latte" data-name="桂花拿铁" data-price="28">加入购物车</button></div></div>
+      </div></div>
+    </section>
+
+    <section class="view" data-view="menu" hidden>
+      <div class="section"><h2>Menu · 当季</h2><div class="menu" id="menuGrid">
+        <div class="item"><div><div class="name">冰美式</div><div class="desc">耶加雪菲 · 柑橘 · 冰</div><div class="price" data-price="22">¥22</div><button class="add" data-add="iced-americano" data-name="冰美式" data-price="22">加入购物车</button></div></div>
+        <div class="item"><div><div class="name">桂花拿铁</div><div class="desc">桂花蜜 · 燕麦奶 · 热</div><div class="price" data-price="28">¥28</div><button class="add" data-add="osmanthus-latte" data-name="桂花拿铁" data-price="28">加入购物车</button></div></div>
+        <div class="item"><div><div class="name">手冲耶加</div><div class="desc">V60 · 白花 · 蜂蜜</div><div class="price" data-price="38">¥38</div><button class="add" data-add="pour-over" data-name="手冲耶加" data-price="38">加入购物车</button></div></div>
+        <div class="item"><div><div class="name">黄油可颂</div><div class="desc">法式黄油 · 每日现烤</div><div class="price" data-price="18">¥18</div><button class="add" data-add="croissant" data-name="黄油可颂" data-price="18">加入购物车</button></div></div>
+      </div><div class="line"></div><button class="btn light" data-page="cart">去购物车 →</button></div>
+    </section>
+
+    <section class="view" data-view="cart" hidden>
+      <div class="section"><h2>Your cart</h2><div class="cart-list" id="cartList"><div class="cart-row"><span>购物车是空的</span><span>—</span></div></div><div class="line"></div><button class="btn" data-page="checkout">去结算 →</button> <button class="btn light" data-page="menu">继续逛</button></div>
+    </section>
+
+    <section class="view" data-view="checkout" hidden>
+      <div class="section"><h2>Checkout</h2>
+        <form class="form" id="checkoutForm">
+          <div class="field"><label for="name">收货人姓名</label><input id="name" name="name" placeholder="请输入收货人姓名" autocomplete="name"></div>
+          <div class="field"><label for="phone">手机号</label><input id="phone" name="phone" placeholder="请输入手机号" inputmode="tel" autocomplete="tel"></div>
+          <button class="btn" type="submit">提交订单</button>
+          <div class="notice" id="checkoutMsg" hidden></div>
+        </form>
+      </div>
+    </section>
+
+    <section class="view" data-view="about" hidden>
+      <div class="section about"><h1>山岚咖啡</h1><p>我们在城市边缘烘焙咖啡。豆子来自小农，菜单跟着季节走。这个页面是一个完全前端的沙盒，用来观察 AI agent 如何通过点击、输入和导航完成任务。</p><p>没有真实支付，没有真实订单；所有状态都只存在于这个 iframe 里。</p></div>
+    </section>
+  </main>
+
+  <footer class="footer"><span>山岚咖啡 · 沙盒演示</span><span>STATE IS LOCAL TO THIS IFRAME</span></footer>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+(function(){
+  var state={page:"home",cart:[]};
+  var views=document.querySelectorAll(".view");
+  var navLinks=document.querySelectorAll("nav a, .brand");
+  var cartCount=document.getElementById("cartCount");
+  var cartList=document.getElementById("cartList");
+  var toast=document.getElementById("toast");
+  function showPage(name){
+    if(!document.querySelector('.view[data-view="'+name+'"]')) name="home";
+    state.page=name;
+    views.forEach(function(v){v.hidden=v.getAttribute("data-view")!==name;});
+    navLinks.forEach(function(a){a.classList.toggle("active",a.getAttribute("data-page")===name);});
+    window.scrollTo(0,0);
+  }
+  function renderCart(){
+    cartCount.textContent=String(state.cart.length);
+    if(!state.cart.length){cartList.innerHTML='<div class="cart-row"><span>购物车是空的</span><span>—</span></div>';return;}
+    var html="";var total=0;
+    state.cart.forEach(function(it){total+=it.price;html+='<div class="cart-row"><span>'+it.name+' <small style="color:#9a8876">¥'+it.price+'</small></span><span>×1</span></div>';});
+    html+='<div class="cart-total"><span>合计</span><span>¥'+total+'</span></div>';
+    cartList.innerHTML=html;
+  }
+  function showToast(msg){toast.textContent=msg;toast.classList.add("on");setTimeout(function(){toast.classList.remove("on");},1400);}
+  document.addEventListener("click",function(e){
+    var nav=e.target.closest("[data-page]");
+    if(nav){e.preventDefault();showPage(nav.getAttribute("data-page"));return;}
+    var add=e.target.closest("[data-add]");
+    if(add){state.cart.push({id:add.getAttribute("data-add"),name:add.getAttribute("data-name"),price:Number(add.getAttribute("data-price"))});renderCart();showToast(add.getAttribute("data-name")+" 已加入购物车");}
+  });
+  document.getElementById("checkoutForm").addEventListener("submit",function(e){
+    e.preventDefault();
+    var name=document.getElementById("name").value.trim();
+    var phone=document.getElementById("phone").value.trim();
+    var msg=document.getElementById("checkoutMsg");
+    msg.hidden=false;
+    if(!name||!phone){msg.className="notice err";msg.textContent="请填写收货人姓名和手机号。";return;}
+    msg.className="notice ok";msg.textContent="订单已提交，谢谢 "+name+"。我们会在 30 分钟内开始制作。";
+    state.lastOrder={name:name,phone:phone,total:state.cart.reduce(function(s,i){return s+i.price;},0)};
+  });
+  window.__sandbox={showPage:showPage,getState:function(){return {page:state.page,cart:state.cart.slice(),lastOrder:state.lastOrder||null};},reset:function(){state.cart=[];state.lastOrder=null;renderCart();document.getElementById("checkoutForm").reset();document.getElementById("checkoutMsg").hidden=true;showPage("home");}};
+  renderCart();
+})();
+</` + `script></body></html>`;
+
+  var iframe=document.getElementById("sandbox");
+  var urlInput=document.getElementById("url");
+  var logEl=document.getElementById("log");
+  var statusText=document.getElementById("statusText");
+  var statusbar=document.getElementById("statusbar");
+  var stepCount=document.getElementById("stepCount");
+  var sandboxState=document.getElementById("sandboxState");
+  var runState=document.getElementById("runState");
+  var modelStatus=document.getElementById("modelStatus");
+  var modelSelect=document.getElementById("modelSelect");
+  var loadBtn=document.getElementById("loadBtn");
+  var loadProgress=document.getElementById("loadProgress");
+  var loadBar=document.getElementById("loadBar");
+  var loadNote=document.getElementById("loadNote");
+  var runDemoBtn=document.getElementById("runDemo");
+  var runModelBtn=document.getElementById("runModel");
+  var stopBtn=document.getElementById("stopBtn");
+  var resetBtn=document.getElementById("resetBtn");
+  var taskInput=document.getElementById("task");
+  var sandboxReady=false, busy=false, runToken=0, stepCountValue=0, engine=null, webllm=null, currentModelId="";
+
+  function sleep(ms){return new Promise(function(r){setTimeout(r,ms);});}
+  function setStatus(text,kind){statusText.textContent=text;statusbar.classList.toggle("busy",kind==="busy");}
+  function setRunState(text,kind){runState.textContent=text;runState.className="status "+(kind||"");}
+  function setButtons(){
+    runDemoBtn.disabled=busy;runModelBtn.disabled=busy||!engine;stopBtn.disabled=!busy;resetBtn.disabled=busy;
+  }
+  function logStep(kind,title,body){
+    var empty=logEl.querySelector(".log-empty");if(empty)empty.remove();
+    var el=document.createElement("div");el.className="step "+kind;
+    el.innerHTML='<div class="who"><i></i><span>'+title+'</span></div><div class="body"></div>';
+    el.querySelector(".body").textContent=body||"";
+    logEl.appendChild(el);logEl.scrollTop=logEl.scrollHeight;
+    stepCountValue++;stepCount.textContent=stepCountValue+" step"+(stepCountValue===1?"":"s");
+  }
+  function resetLog(){logEl.innerHTML='<div class="log-empty">运行后，这里会显示模型读页面、点击、输入和观察的每一步。</div>';stepCountValue=0;stepCount.textContent="0 steps";}
+
+  iframe.addEventListener("load",function(){sandboxReady=true;urlInput.value="sandbox://mist-coffee/home";syncSandboxState();setStatus("ready · 沙盒已加载","");});
+  iframe.srcdoc=SANDBOX_HTML;
+
+  function syncSandboxState(){
+    if(!sandboxReady)return;
+    try{
+      var s=iframe.contentWindow.__sandbox.getState();
+      urlInput.value="sandbox://mist-coffee/"+s.page;
+      sandboxState.textContent="cart: "+s.cart.length+" item"+(s.cart.length===1?"":"s");
+    }catch(e){}
+  }
+
+  function observe(){
+    var doc=iframe.contentDocument;
+    if(!doc)throw new Error("sandbox not ready");
+    var view=doc.querySelector(".view:not([hidden])");
+    var page=view?view.getAttribute("data-view"):"home";
+    var text="";
+    if(view){text=view.innerText.replace(/\s+/g," ").trim();}
+    if(text.length>1400)text=text.slice(0,1400)+"…";
+    var items=[];var idx=0;
+    var stale=doc.querySelectorAll("[data-agent-id]");
+    for(var s=0;s<stale.length;s++)stale[s].removeAttribute("data-agent-id");
+    var nodes=doc.querySelectorAll("a,button,input,select,textarea");
+    for(var i=0;i<nodes.length;i++){
+      var el=nodes[i];
+      var r=el.getBoundingClientRect();
+      if(r.width<1||r.height<1)continue;
+      idx++;var id="e"+idx;el.setAttribute("data-agent-id",id);
+      var label=(el.getAttribute("aria-label")||el.innerText||el.placeholder||el.name||el.value||"").replace(/\s+/g," ").trim();
+      if(!label&&el.tagName==="INPUT")label=el.getAttribute("placeholder")||el.name||"input";
+      var item={id:id,tag:el.tagName.toLowerCase(),label:label.slice(0,90)};
+      if(el.tagName==="INPUT"){item.value=el.value;item.type=el.getAttribute("type")||"text";}
+      if(el.getAttribute("data-page"))item.toPage=el.getAttribute("data-page");
+      items.push(item);
+    }
+    var state={page:page,url:"sandbox://mist-coffee/"+page,title:doc.title||"山岚咖啡",text:text,items:items,cart:safeState().cart};
+    urlInput.value=state.url;syncSandboxState();
+    return state;
+  }
+  function safeState(){try{return iframe.contentWindow.__sandbox.getState();}catch(e){return {page:"home",cart:[]};}}
+  function formatObs(o){
+    var lines=["PAGE: "+o.page,"URL: "+o.url,"TEXT: "+o.text,"INTERACTIVE:"];
+    o.items.forEach(function(it){
+      lines.push("  ["+it.id+"] <"+it.tag+"> "+it.label+(it.value!==undefined&&it.value!==""?" value="+JSON.stringify(it.value):""));
+    });
+    lines.push("CART: "+(o.cart.length?o.cart.map(function(c){return c.name+" ¥"+c.price;}).join(", "):"empty"));
+    return lines.join("\n");
+  }
+  function flash(id){
+    try{var doc=iframe.contentDocument;var el=doc.querySelector('[data-agent-id="'+id+'"]');if(!el)return;el.classList.add("flash");setTimeout(function(){el.classList.remove("flash");},650);}catch(e){}
+  }
+
+  async function execute(action,token){
+    if(token!==runToken)throw new Error("stopped");
+    var doc=iframe.contentDocument;if(!doc)throw new Error("sandbox not ready");
+    var tool=action.tool,args=action.args||{};
+    if(tool==="read_page")return {observation:observe()};
+    if(tool==="done")return {done:true,answer:args.answer||args.text||""};
+    if(tool==="navigate"){
+      var page=String(args.page||args.url||"home").replace(/^.*\//,"");
+      iframe.contentWindow.__sandbox.showPage(page);await sleep(220);syncSandboxState();
+      return {observation:observe()};
+    }
+    if(tool==="scroll"){
+      var dy=Number(args.dy||300);iframe.contentWindow.scrollBy(0,dy);await sleep(160);
+      return {observation:observe()};
+    }
+    var id=String(args.id||"");
+    var el=doc.querySelector('[data-agent-id="'+id+'"]');
+    if(!el)throw new Error("找不到元素 "+id+"，请先 read_page 并只用最新 observation 里的 id");
+    flash(id);
+    if(tool==="click"){
+      el.click();await sleep(260);syncSandboxState();
+      return {observation:observe(),message:"clicked "+id};
+    }
+    if(tool==="type"){
+      var text=String(args.text===undefined?"":args.text);
+      el.focus();el.value=text;
+      el.dispatchEvent(new Event("input",{bubbles:true}));
+      el.dispatchEvent(new Event("change",{bubbles:true}));
+      await sleep(180);
+      return {observation:observe(),message:"typed into "+id};
+    }
+    throw new Error("未知工具 "+tool);
+  }
+
+  function summarizeResult(res){
+    if(res.done)return "done: "+(res.answer||"");
+    if(res.message)return res.message+"\n"+formatObs(res.observation).split("\n").filter(function(l){return l.indexOf("TEXT:")===0||l.indexOf("PAGE:")===0||l.indexOf("CART:")===0;}).join("\n");
+    return formatObs(res.observation);
+  }
+
+  async function runDemo(){
+    if(busy||!sandboxReady)return;
+    busy=true;runToken++;var token=runToken;setButtons();setRunState("running","warn");resetLog();
+    var task=taskInput.value.trim();
+    setStatus("演示大脑规划中…","busy");
+    try{
+      logStep("think","DEMO BRAIN","把任务拆成确定性浏览器操作："+task);
+      var obs=observe();
+      function stepLog(tool,args){logStep("tool",tool.toUpperCase(),JSON.stringify(args));}
+      if(/最贵/.test(task)){
+        stepLog("navigate",{page:"menu"});var r=await execute({tool:"navigate",args:{page:"menu"}},token);obs=r.observation;
+        var menuDoc=iframe.contentDocument;
+        var adds=Array.from(menuDoc.querySelectorAll("[data-add]"));
+        var best=adds.map(function(b){return {b:b,price:Number(b.getAttribute("data-price")||0),name:b.getAttribute("data-name")};}).sort(function(a,b){return b.price-a.price;})[0];
+        if(best){
+          stepLog("click",{id:findId(best.b)});best.b.click();await sleep(260);obs=observe();
+          stepLog("navigate",{page:"cart"});r=await execute({tool:"navigate",args:{page:"cart"}},token);obs=r.observation;
+          stepLog("done",{answer:"最贵的是 "+best.name+"，¥"+best.price+"，已加入购物车。"});await execute({tool:"done",args:{answer:"最贵的是 "+best.name+"，¥"+best.price+"，已加入购物车。"}},token);
+          logStep("done","TASK COMPLETE","最贵的是 "+best.name+"，¥"+best.price+"，已加入购物车。");
+          finish("done · "+best.name+" ¥"+best.price);return;
+        }
+      }
+      if(/收货人|电话|结算|订单/.test(task)){
+        stepLog("navigate",{page:"checkout"});var r2=await execute({tool:"navigate",args:{page:"checkout"}},token);obs=r2.observation;
+        var inputs=iframe.contentDocument.querySelectorAll("input");
+        var nameInput=Array.from(inputs).find(function(x){return /name|姓名/.test((x.name||"")+(x.placeholder||""));});
+        var phoneInput=Array.from(inputs).find(function(x){return /phone|tel|手机/.test((x.name||"")+(x.placeholder||""));});
+        if(nameInput){stepLog("type",{id:findId(nameInput),text:"Doran"});r2=await execute({tool:"type",args:{id:findId(nameInput),text:"Doran"}},token);obs=r2.observation;}
+        if(phoneInput){stepLog("type",{id:findId(phoneInput),text:"13800000000"});r2=await execute({tool:"type",args:{id:findId(phoneInput),text:"13800000000"}},token);obs=r2.observation;}
+        var submit=iframe.contentDocument.querySelector("#checkoutForm button[type=submit]");
+        if(submit){stepLog("click",{id:findId(submit)});submit.click();await sleep(260);obs=observe();}
+        logStep("done","TASK COMPLETE","已填写收货人 Doran / 13800000000 并提交订单。");
+        finish("done · checkout submitted");return;
+      }
+      if(/冰美式|美式|咖啡|点一杯/.test(task)){
+        stepLog("navigate",{page:"menu"});var r3=await execute({tool:"navigate",args:{page:"menu"}},token);obs=r3.observation;
+        var btn=Array.from(iframe.contentDocument.querySelectorAll("[data-add]")).find(function(b){return /冰美式|美式/.test(b.getAttribute("data-name")||"");});
+        if(btn){stepLog("click",{id:findId(btn)});btn.click();await sleep(260);obs=observe();}
+        stepLog("navigate",{page:"cart"});r3=await execute({tool:"navigate",args:{page:"cart"}},token);obs=r3.observation;
+        if(/结算/.test(task)){stepLog("navigate",{page:"checkout"});r3=await execute({tool:"navigate",args:{page:"checkout"}},token);obs=r3.observation;}
+        logStep("done","TASK COMPLETE","冰美式已加入购物车，并打开了购物车页面。");
+        finish("done · iced americano added");return;
+      }
+      if(/关于/.test(task)){
+        await execute({tool:"navigate",args:{page:"about"}},token);finish("done · about opened");return;
+      }
+      await execute({tool:"navigate",args:{page:"menu"}},token);
+      finish("done · demo fallback");
+    }catch(err){fail(err);}
+  }
+  function findId(el){
+    if(!el)return "";
+    if(!el.getAttribute("data-agent-id")){
+      // assign via observe pass order
+      var doc=iframe.contentDocument;var n=0;
+      doc.querySelectorAll("a,button,input,select,textarea").forEach(function(x){if(x.offsetParent!==null){n++;x.setAttribute("data-agent-id","e"+n);}});
+    }
+    return el.getAttribute("data-agent-id")||"";
+  }
+  function finish(msg){
+    busy=false;runToken++;setButtons();setRunState("done","ok");setStatus(msg,"");syncSandboxState();
+  }
+  function fail(err){
+    busy=false;runToken++;setButtons();setRunState("error","err");setStatus("error · "+(err.message||err),"");
+    logStep("error","ERROR",String(err.message||err));
+  }
+
+  var SYSTEM_PROMPT = [
+    "You are a browser agent controlling a sandbox coffee shop website.",
+    "You can ONLY act through tools. At each step output exactly ONE JSON object, no markdown, no extra text.",
+    'Schema: {"tool":"read_page","args":{}}',
+    'Tools: read_page{} | click{"id":"e1"} | type{"id":"e2","text":"..."} | scroll{"dy":300} | navigate{"page":"home|menu|cart|checkout|about"} | done{"answer":"..."}',
+    "Rules:",
+    "1. Start by reading the latest observation. Use only ids present in the latest observation.",
+    "2. Take one action at a time. After each action you receive a fresh observation.",
+    "3. For links and buttons use click. For inputs use type. Use navigate only for top-level pages.",
+    "4. Do not invent element ids, prices or results. Read prices from the page text.",
+    "5. When the task is complete, call done with a short answer in Chinese.",
+    "6. Be concise: one short thought is allowed only inside JSON as \"thought\"."
+  ].join("\n");
+
+  function buildUserPrompt(task,obs,transcript){
+    return "TASK: "+task+"\n\nLATEST OBSERVATION:\n"+formatObs(obs)+"\n\nRECENT STEPS:\n"+(transcript.slice(-6).join("\n")||"(none)")+"\n\nOutput the next single JSON action.";
+  }
+  function parseAction(text){
+    if(!text)return null;
+    var s=String(text).replace(/```json/gi,"").replace(/```/g,"").trim();
+    var a=s.indexOf("{"),b=s.lastIndexOf("}");
+    if(a<0||b<=a)return null;
+    try{var o=JSON.parse(s.slice(a,b+1));if(!o||typeof o!=="object"||!o.tool)return null;return o;}catch(e){return null;}
+  }
+
+  async function loadModel(){
+    if(engine)return;
+    if(!navigator.gpu){modelStatus.textContent="WebGPU 不可用";modelStatus.className="status err";loadNote.textContent="当前浏览器没有 WebGPU。请用新版 Chrome/Edge，或直接使用演示大脑。";return;}
+    loadBtn.disabled=true;modelStatus.textContent="加载库…";modelStatus.className="status warn";
+    loadProgress.classList.add("on");loadBar.style.width="2%";loadNote.textContent="正在加载 WebLLM runtime…";
+    setStatus("loading WebLLM runtime…","busy");
+    try{
+      webllm=await import("https://esm.run/@mlc-ai/web-llm");
+      var list=(webllm.prebuiltAppConfig&&webllm.prebuiltAppConfig.model_list)||[];
+      var small=list.filter(function(m){return /instruct/i.test(m.model_id)&&!/embedding/i.test(m.model_id);});
+      small.sort(function(a,b){return (a.vram_required_MB||99999)-(b.vram_required_MB||99999);});
+      var pick=small[0]||list[0];
+      if(!pick)throw new Error("没有找到可用的 WebLLM 模型列表");
+      currentModelId=pick.model_id;
+      modelSelect.innerHTML="";var opt=document.createElement("option");opt.textContent=currentModelId+"  ·  ~"+(pick.vram_required_MB||"?" )+"MB VRAM";modelSelect.appendChild(opt);modelSelect.disabled=false;
+      modelStatus.textContent="下载/编译…";modelStatus.className="status warn";
+      loadBar.style.width="5%";loadNote.textContent="开始下载 "+currentModelId+"（首次可能较久）…";
+      engine=await webllm.CreateMLCEngine(currentModelId,{initProgressCallback:function(p){
+        var pct=Math.max(3,Math.min(99,Math.round((p.progress||0)*100)));
+        loadBar.style.width=pct+"%";loadNote.textContent=(p.text||"loading")+" · "+pct+"%";
+      }});
+      modelStatus.textContent="已就绪";modelStatus.className="status ok";loadBar.style.width="100%";loadNote.textContent="本地模型已加载，可离线复用（浏览器缓存）。";
+      runModelBtn.disabled=false;setButtons();setStatus("local model ready · "+currentModelId,"");
+    }catch(err){
+      modelStatus.textContent="加载失败";modelStatus.className="status err";
+      loadNote.textContent=String(err.message||err).slice(0,180);
+      loadBtn.disabled=false;setStatus("model error · "+String(err.message||err),"");
+    }
+  }
+
+  async function runModel(){
+    if(busy)return;
+    if(!engine){logStep("error","NO MODEL","请先加载本地模型，或使用演示大脑。");return;}
+    busy=true;runToken++;var token=runToken;setButtons();setRunState("running","warn");resetLog();
+    var task=taskInput.value.trim();if(!task){fail(new Error("请先写一个任务"));return;}
+    setStatus("agent 启动 · 本地模型","busy");
+    var obs=observe();var transcript=[];var maxSteps=8;
+    try{
+      for(var step=1;step<=maxSteps;step++){
+        if(token!==runToken)throw new Error("stopped");
+        setStatus("模型思考中 · step "+step+"/"+maxSteps,"busy");
+        var messages=[{role:"system",content:SYSTEM_PROMPT},{role:"user",content:buildUserPrompt(task,obs,transcript)}];
+        var completion=await engine.chat.completions.create({messages:messages,temperature:0.15,max_tokens:220});
+        var raw=completion&&completion.choices&&completion.choices[0]&&completion.choices[0].message?completion.choices[0].message.content:"";
+        var action=parseAction(raw);
+        if(!action){
+          logStep("think","MODEL · 无效输出",String(raw||"").slice(0,260));
+          transcript.push("Assistant: "+String(raw||"").slice(0,200)+"\nObservation: 输出不是合法 JSON，请只输出一个 JSON 对象。");
+          continue;
+        }
+        if(action.thought)logStep("think","MODEL · "+action.tool,String(action.thought));
+        else logStep("think","MODEL · "+action.tool,String(raw).slice(0,220));
+        if(action.tool==="done"){
+          logStep("done","TASK COMPLETE",String(action.args&&action.args.answer||"done"));
+          finish("done · "+(action.args&&action.args.answer||""));return;
+        }
+        try{
+          var res=await execute(action,token);
+          if(res.observation){obs=res.observation;logStep("obs","OBSERVATION",formatObs(obs).split("\n").slice(0,7).join("\n"));}
+          transcript.push("Assistant: "+JSON.stringify(action)+"\nObservation: "+(res.observation?formatObs(res.observation).slice(0,700):"ok"));
+        }catch(ex){
+          logStep("error","TOOL ERROR",String(ex.message||ex));
+          transcript.push("Assistant: "+JSON.stringify(action)+"\nObservation: 工具错误："+String(ex.message||ex));
+        }
+      }
+      fail(new Error("达到最大步数 "+maxSteps+"，任务可能未完成"));
+    }catch(err){fail(err);}
+  }
+
+  runDemoBtn.addEventListener("click",runDemo);
+  runModelBtn.addEventListener("click",runModel);
+  stopBtn.addEventListener("click",function(){runToken++;busy=false;setButtons();setRunState("stopped","warn");setStatus("stopped","");});
+  loadBtn.addEventListener("click",loadModel);
+  resetBtn.addEventListener("click",function(){if(busy)return;try{iframe.contentWindow.__sandbox.reset();resetLog();setRunState("idle","");setStatus("sandbox reset","");syncSandboxState();}catch(e){}});
+  document.getElementById("reload").addEventListener("click",function(){iframe.srcdoc=SANDBOX_HTML;resetLog();syncSandboxState();});
+  document.querySelectorAll("[data-task]").forEach(function(b){b.addEventListener("click",function(){taskInput.value=b.getAttribute("data-task");taskInput.focus();});});
+  taskInput.addEventListener("keydown",function(e){if((e.metaKey||e.ctrlKey)&&e.key==="Enter"){if(engine)runModel();else runDemo();}});
+  setButtons();setRunState("idle","");
+})();
+</script>
+</body>
+</html>
