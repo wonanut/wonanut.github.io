@@ -110,10 +110,15 @@ iframe{flex:1;width:100%;border:0;background:#f6f1e8}
 
     <section class="panel">
       <div class="panel-head"><span class="panel-title">本地大脑</span><span class="status" id="modelStatus">未加载</span></div>
-      <select id="modelSelect" disabled><option>加载时自动选择最小可用模型</option></select>
-      <button class="load-btn" id="loadBtn">加载 WebGPU 本地模型</button>
+      <select id="modelTier" aria-label="模型档位">
+        <option value="tiny">极速 · SmolLM2 135M（下载最小，推荐先试）</option>
+        <option value="balanced">平衡 · Qwen2.5 0.5B（更会规划，稍大）</option>
+        <option value="quality">质量 · Llama 3.2 1B（最慢，JSON 更稳）</option>
+      </select>
+      <button class="load-btn" id="loadBtn">下载并加载本地模型</button>
+      <div class="row" style="display:none" id="cancelRow"><button class="ghost" id="cancelLoad">取消下载 / 重新开始</button></div>
       <div class="load-progress" id="loadProgress"><div class="track"><i id="loadBar"></i></div><div class="load-note" id="loadNote">等待开始</div></div>
-      <p class="hint">模型通过 WebLLM 在浏览器里推理，首次需下载权重，之后走浏览器缓存。没有 API key、没有服务器。<br><b style="color:var(--muted)">也可以先用「演示大脑」体验完整 agent 动作。</b><br><span style="color:var(--faint)">本地推理由 WebLLM 驱动；模型权重来自其公开模型列表。</span></p>
+      <p class="hint">模型通过 WebLLM 在浏览器里推理，首次需下载权重，之后走浏览器缓存。<b style="color:var(--muted)">急用可直接点「演示大脑」，零下载。</b><br>极速档模型最小、下载最快；如果 JSON 动作不稳定，再换平衡档。<br><span style="color:var(--faint)">本地推理由 WebLLM 驱动；模型权重来自其公开模型列表。</span></p>
     </section>
 
     <section class="panel">
@@ -307,17 +312,19 @@ nav a.active,nav a:hover{background:var(--paper2);color:var(--coffee)}
   var sandboxState=document.getElementById("sandboxState");
   var runState=document.getElementById("runState");
   var modelStatus=document.getElementById("modelStatus");
-  var modelSelect=document.getElementById("modelSelect");
+  var modelTier=document.getElementById("modelTier");
   var loadBtn=document.getElementById("loadBtn");
   var loadProgress=document.getElementById("loadProgress");
   var loadBar=document.getElementById("loadBar");
   var loadNote=document.getElementById("loadNote");
+  var cancelRow=document.getElementById("cancelRow");
+  var cancelLoad=document.getElementById("cancelLoad");
   var runDemoBtn=document.getElementById("runDemo");
   var runModelBtn=document.getElementById("runModel");
   var stopBtn=document.getElementById("stopBtn");
   var resetBtn=document.getElementById("resetBtn");
   var taskInput=document.getElementById("task");
-  var sandboxReady=false, busy=false, runToken=0, stepCountValue=0, engine=null, webllm=null, currentModelId="";
+  var sandboxReady=false, busy=false, runToken=0, stepCountValue=0, engine=null, webllm=null, currentModelId="", loadStarted=0;
 
   function sleep(ms){return new Promise(function(r){setTimeout(r,ms);});}
   function setStatus(text,kind){statusText.textContent=text;statusbar.classList.toggle("busy",kind==="busy");}
@@ -523,29 +530,40 @@ nav a.active,nav a:hover{background:var(--paper2);color:var(--coffee)}
   async function loadModel(){
     if(engine)return;
     if(!navigator.gpu){modelStatus.textContent="WebGPU 不可用";modelStatus.className="status err";loadNote.textContent="当前浏览器没有 WebGPU。请用新版 Chrome/Edge，或直接使用演示大脑。";return;}
-    loadBtn.disabled=true;modelStatus.textContent="加载库…";modelStatus.className="status warn";
+    loadBtn.disabled=true;modelStatus.textContent="加载库…";modelStatus.className="status warn";loadStarted=Date.now();cancelRow.style.display="none";
     loadProgress.classList.add("on");loadBar.style.width="2%";loadNote.textContent="正在加载 WebLLM runtime…";
     setStatus("loading WebLLM runtime…","busy");
     try{
       webllm=await import("https://esm.run/@mlc-ai/web-llm");
       var list=(webllm.prebuiltAppConfig&&webllm.prebuiltAppConfig.model_list)||[];
-      var small=list.filter(function(m){return /instruct/i.test(m.model_id)&&!/embedding/i.test(m.model_id);});
-      small.sort(function(a,b){return (a.vram_required_MB||99999)-(b.vram_required_MB||99999);});
-      var pick=small[0]||list[0];
+      var instruct=list.filter(function(m){return /instruct/i.test(m.model_id)&&!/embedding/i.test(m.model_id);});
+      var patterns={
+        tiny:["SmolLM2-135M-Instruct","SmolLM2-360M-Instruct","LFM2.5-350M","Qwen2-0.5B-Instruct","Qwen2.5-0.5B-Instruct"],
+        balanced:["Qwen2.5-0.5B-Instruct","Qwen2.5-Coder-0.5B-Instruct","Qwen2-0.5B-Instruct","SmolLM2-1.7B-Instruct"],
+        quality:["Llama-3.2-1B-Instruct","Qwen2.5-1.5B-Instruct","SmolLM2-1.7B-Instruct","Qwen2.5-3B-Instruct"]
+      };
+      var tier=modelTier.value;
+      var pick=null;
+      (patterns[tier]||[]).some(function(pat){ pick=instruct.find(function(m){return m.model_id.indexOf(pat)>=0;}); return !!pick; });
+      if(!pick){
+        instruct.sort(function(a,b){return (a.vram_required_MB||99999)-(b.vram_required_MB||99999);});
+        pick=instruct[0]||list[0];
+      }
       if(!pick)throw new Error("没有找到可用的 WebLLM 模型列表");
       currentModelId=pick.model_id;
-      modelSelect.innerHTML="";var opt=document.createElement("option");opt.textContent=currentModelId+"  ·  ~"+(pick.vram_required_MB||"?" )+"MB VRAM";modelSelect.appendChild(opt);modelSelect.disabled=false;
       modelStatus.textContent="下载/编译…";modelStatus.className="status warn";
+      cancelRow.style.display="flex";cancelLoad.disabled=false;
       loadBar.style.width="5%";loadNote.textContent="开始下载 "+currentModelId+"（首次可能较久）…";
       engine=await webllm.CreateMLCEngine(currentModelId,{initProgressCallback:function(p){
         var pct=Math.max(3,Math.min(99,Math.round((p.progress||0)*100)));
-        loadBar.style.width=pct+"%";loadNote.textContent=(p.text||"loading")+" · "+pct+"%";
+        var elapsed=Math.max(0,Math.round((Date.now()-loadStarted)/1000));
+        loadBar.style.width=pct+"%";loadNote.textContent=(p.text||"loading")+" · "+pct+"% · "+elapsed+"s";
       }});
-      modelStatus.textContent="已就绪";modelStatus.className="status ok";loadBar.style.width="100%";loadNote.textContent="本地模型已加载，可离线复用（浏览器缓存）。";
+      modelStatus.textContent="已就绪";modelStatus.className="status ok";loadBar.style.width="100%";loadNote.textContent="已加载 "+currentModelId+"；下次打开走浏览器缓存，不用重新下载。";cancelRow.style.display="none";
       runModelBtn.disabled=false;setButtons();setStatus("local model ready · "+currentModelId,"");
     }catch(err){
       modelStatus.textContent="加载失败";modelStatus.className="status err";
-      loadNote.textContent=String(err.message||err).slice(0,180);
+      loadNote.textContent=String(err.message||err).slice(0,180);cancelRow.style.display="none";
       loadBtn.disabled=false;setStatus("model error · "+String(err.message||err),"");
     }
   }
@@ -593,6 +611,7 @@ nav a.active,nav a:hover{background:var(--paper2);color:var(--coffee)}
   runModelBtn.addEventListener("click",runModel);
   stopBtn.addEventListener("click",function(){runToken++;busy=false;setButtons();setRunState("stopped","warn");setStatus("stopped","");});
   loadBtn.addEventListener("click",loadModel);
+  cancelLoad.addEventListener("click",function(){location.reload();});
   resetBtn.addEventListener("click",function(){if(busy)return;try{iframe.contentWindow.__sandbox.reset();resetLog();setRunState("idle","");setStatus("sandbox reset","");syncSandboxState();}catch(e){}});
   document.getElementById("reload").addEventListener("click",function(){iframe.srcdoc=SANDBOX_HTML;resetLog();syncSandboxState();});
   document.querySelectorAll("[data-task]").forEach(function(b){b.addEventListener("click",function(){taskInput.value=b.getAttribute("data-task");taskInput.focus();});});
