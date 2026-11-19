@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MIST · 浏览器里的迷你 Agent</title>
+<title>ECHO · 网页密室 Agent</title>
 <meta name="description" content="一个完全跑在浏览器里的迷你 AI agent：本地模型推理，只用点击、输入、滚动、导航来操作一个沙盒网站。">
 <style>
 :root{
@@ -106,7 +106,7 @@ iframe{flex:1;width:100%;border:0;background:#f6f1e8}
 <div class="app">
   <aside class="side">
     <div class="brand">
-      <div class="mark"><div class="logo">M</div><div><h1><b>MIST</b> · 迷你浏览器 Agent</h1><p>Local inference · No backend</p></div></div>
+      <div class="mark"><div class="logo">E</div><div><h1><b>ECHO</b> · 网页密室 Agent</h1><p>Local inference · No backend</p></div></div>
       <a class="back" href="../">首页</a>
     </div>
 
@@ -126,13 +126,13 @@ iframe{flex:1;width:100%;border:0;background:#f6f1e8}
 
     <section class="panel">
       <div class="panel-head"><span class="panel-title">任务</span><span class="status" id="runState">idle</span></div>
-      <textarea class="task-box" id="task">请在菜单里点一杯冰美式，然后打开购物车。</textarea>
+      <textarea class="task-box" id="task">在回声档案室找到画廊、书房、天台的三段回声，按顺序拼出密码并打开保险箱。</textarea>
       <div class="row"><button class="primary" id="runDemo">演示大脑运行</button><button class="ghost" id="stopBtn" disabled>停止</button></div>
       <div class="row"><button class="ghost" id="runModel" disabled>本地模型运行</button><button class="ghost" id="resetBtn">重置沙盒</button></div>
       <div class="presets">
-        <button class="preset" data-task="请在菜单里点一杯冰美式，然后打开购物车。">↳ 点一杯冰美式 → 购物车</button>
-        <button class="preset" data-task="菜单里最贵的饮品是什么？把它加入购物车，并告诉我价格。">↳ 找最贵的饮品并加购</button>
-        <button class="preset" data-task="去结算页，把收货人填成 Doran，电话填 13800000000，然后提交订单。">↳ 填写结算信息并提交</button>
+        <button class="preset" data-task="在回声档案室找到画廊、书房、天台的三段回声，按顺序拼出密码并打开保险箱。">↳ 找到三段回声并打开保险箱</button>
+        <button class="preset" data-task="先读大厅，再逐间探索画廊、书房和天台，最后打开保险箱。">↳ 先探索，再一次性开锁</button>
+        <button class="preset" data-task="不要跳过任何房间：读大厅、找线索、输入密码、打开保险箱。">↳ 完整走一遍密室流程</button>
       </div>
     </section>
 
@@ -145,14 +145,14 @@ iframe{flex:1;width:100%;border:0;background:#f6f1e8}
 
   <main class="stage">
     <div class="stage-head">
-      <div><h2>被操作的世界：山岚咖啡</h2><p>一个完全在前端运行的沙盒站点。Agent 只能通过读 DOM、点击、输入、滚动与页面导航来完成任务。</p></div>
-      <span class="tag">SANDBOX · SAME ORIGIN</span>
+      <div><h2>被操作的世界：回声档案室</h2><p>一个每次重置都随机生成密码的网页密室。Agent 只能通过读 DOM、点击、输入、滚动与页面导航来寻找线索、打开保险箱。</p></div>
+      <span class="tag">SANDBOX · RANDOM CODE</span>
     </div>
     <div class="browser">
       <div class="chrome"><div class="lights"><i></i><i></i><i></i></div><input class="url" id="url" value="sandbox://mist-coffee/home" readonly aria-label="沙盒地址"><button class="reload" id="reload" title="重新加载沙盒">↻</button></div>
-      <iframe id="sandbox" title="山岚咖啡沙盒网站"></iframe>
+      <iframe id="sandbox" title="ECHO 回声档案室"></iframe>
     </div>
-    <div class="stage-foot"><span><b>TOOLS</b> read_page · click · type · scroll · navigate · done</span><span id="sandboxState">cart: 0 item</span></div>
+    <div class="stage-foot"><span><b>TOOLS</b> read_page · click · type · scroll · navigate · done</span><span id="sandboxState">echoes: 0/3</span></div>
   </main>
 </div>
 
@@ -160,149 +160,187 @@ iframe{flex:1;width:100%;border:0;background:#f6f1e8}
 (function(){
   "use strict";
   var SANDBOX_HTML = `<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><style>
-:root{--paper:#f6f1e8;--paper2:#efe7da;--ink:#2b211a;--muted:#7d6d5d;--coffee:#5b3a2a;--accent:#c96f45;--line:#e3d8c8}
-*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:Inter,system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
-.wrap{max-width:920px;margin:0 auto;padding:0 28px}
-.nav{display:flex;align-items:center;justify-content:space-between;padding:18px 0;border-bottom:1px solid var(--line)}
-.brand{font-size:17px;font-weight:800;letter-spacing:-.02em;color:var(--coffee);text-decoration:none}
-.brand small{display:block;font-size:8px;letter-spacing:.2em;color:var(--muted);font-weight:500;margin-top:3px}
-nav{display:flex;gap:5px;flex-wrap:wrap}
-nav a{font-size:12px;color:var(--muted);text-decoration:none;padding:7px 10px;border-radius:999px;cursor:pointer}
-nav a.active,nav a:hover{background:var(--paper2);color:var(--coffee)}
-.cart-pill{font-family:ui-monospace,Menlo,monospace;font-size:10px;margin-left:3px;background:var(--coffee);color:#fff;border-radius:99px;padding:1px 5px}
-.hero{display:grid;grid-template-columns:1.1fr .9fr;gap:24px;align-items:stretch;padding:34px 0 26px}
-.hero h1{font-size:42px;line-height:1.05;letter-spacing:-.045em;margin:0 0 13px;color:#32241c}
-.hero h1 span{color:var(--accent)}
-.hero p{color:var(--muted);line-height:1.8;font-size:13px;margin:0 0 20px;max-width:420px}
-.hero-photo{border-radius:18px;min-height:228px;background:linear-gradient(135deg,#e4d3bd,#c5a98c 55%,#8d6a50);position:relative;overflow:hidden;border:1px solid #dccbb8}
-.hero-photo::before{content:"";position:absolute;width:190px;height:190px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff5e6,#d8b18b 45%,#6d4a35);right:-30px;bottom:-44px;box-shadow:0 24px 50px rgba(80,50,30,.25)}
-.hero-photo::after{content:"山岚 / 06:40";position:absolute;left:15px;bottom:13px;color:rgba(255,255,255,.85);font-size:9px;letter-spacing:.18em;font-family:ui-monospace,Menlo,monospace}
-.btn{display:inline-block;border:0;border-radius:999px;padding:10px 16px;font-size:12px;font-weight:700;cursor:pointer;background:var(--coffee);color:#fff}
-.btn:hover{background:#3f271d}.btn.light{background:var(--paper2);color:var(--coffee)}.btn.light:hover{background:#e5d9c7}
-.section{padding:8px 0 42px}.section h2{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin:0 0 17px;font-family:ui-monospace,Menlo,monospace}
-.menu{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
-.item{border:1px solid var(--line);background:rgba(255,255,255,.5);border-radius:14px;padding:14px;display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
-.item .name{font-size:14px;font-weight:700;margin-bottom:3px}.item .desc{font-size:10.5px;color:var(--muted);line-height:1.5}
-.price{font-family:ui-monospace,Menlo,monospace;font-size:14px;color:var(--coffee);font-weight:700}
-.add{border:1px solid #d7c8b5;background:#fff;color:var(--coffee);border-radius:8px;padding:6px 9px;font-size:10px;font-weight:700;cursor:pointer;margin-top:8px}
-.add:hover{background:var(--coffee);color:#fff;border-color:var(--coffee)}
-.line{border-top:1px solid var(--line);margin:12px 0}
-.cart-list{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:rgba(255,255,255,.5)}
-.cart-row{display:flex;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--line);font-size:12px}.cart-row:last-child{border-bottom:0}
-.cart-total{display:flex;justify-content:space-between;padding:14px;font-weight:800;background:var(--paper2);font-size:14px}
-.form{max-width:440px;display:flex;flex-direction:column;gap:10px}
-.field label{display:block;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-family:ui-monospace,Menlo,monospace;margin-bottom:5px}
-.field input{width:100%;border:1px solid #d8cbbb;background:#fff;border-radius:9px;padding:10px 11px;font-size:13px;color:var(--ink);outline:none}
-.field input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(201,111,69,.12)}
-.notice{padding:10px 12px;border-radius:10px;font-size:11px;line-height:1.6;margin-top:10px}
-.notice.ok{background:#e4f3e8;color:#2f6b45;border:1px solid #c4e2cf}.notice.err{background:#fbe9e4;color:#8f3b27;border:1px solid #efc9bd}
-.about{padding:26px 0;color:var(--muted);line-height:1.9;font-size:13px;max-width:650px}.about h1{font-size:28px;color:var(--ink);margin:0 0 12px;letter-spacing:-.02em}
-.footer{padding:20px 0 28px;border-top:1px solid var(--line);color:#a49381;font-size:10px;display:flex;justify-content:space-between;gap:14px;font-family:ui-monospace,Menlo,monospace}
-[hidden]{display:none!important}
-.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(8px);background:#2b211a;color:#fff;font-size:11px;padding:8px 13px;border-radius:999px;opacity:0;transition:.25s;pointer-events:none;z-index:9}
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+:root{--bg:#0b0c10;--panel:#12141b;--panel2:#171a23;--ink:#e8e2d6;--muted:#948d80;--line:#2a2d38;--amber:#e8b56a;--teal:#7dd8c8;--red:#e2745f}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;overflow-x:hidden}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(900px 500px at 70% -10%,rgba(232,181,106,.10),transparent 60%),radial-gradient(700px 500px at 10% 110%,rgba(125,216,200,.06),transparent 60%);z-index:0}
+.noise{position:fixed;inset:0;pointer-events:none;opacity:.05;z-index:1;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.6'/%3E%3C/svg%3E")}
+.wrap{max-width:980px;margin:0 auto;padding:0 30px;position:relative;z-index:2}
+.top{display:flex;justify-content:space-between;align-items:center;padding:20px 0;border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink);cursor:pointer}
+.sigil{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;border:1px solid rgba(232,181,106,.5);color:var(--amber);font-size:14px;box-shadow:0 0 24px rgba(232,181,106,.15) inset}
+.brand b{font-family:Georgia,"Songti SC",serif;font-size:17px;letter-spacing:.18em}
+.brand small{display:block;font-family:ui-monospace,Menlo,monospace;font-size:8px;letter-spacing:.22em;color:var(--muted);margin-top:2px}
+nav{display:flex;align-items:center;gap:2px;flex-wrap:wrap}
+nav a{color:var(--muted);text-decoration:none;font-size:11px;padding:7px 9px;border-radius:999px;cursor:pointer}
+nav a:hover,nav a.active{background:rgba(232,181,106,.08);color:var(--amber)}
+.count{font-family:ui-monospace,Menlo,monospace;font-size:9px;color:var(--teal);border:1px solid rgba(125,216,200,.25);border-radius:999px;padding:3px 7px;margin-left:4px}
+.hero{padding:66px 0 44px;max-width:700px}
+.kicker{font-family:ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:.24em;color:var(--amber);margin:0 0 20px}
+.hero h1{font-family:Georgia,"Songti SC",serif;font-size:clamp(38px,6.4vw,70px);line-height:1.06;letter-spacing:-.045em;margin:0 0 22px;font-weight:500;color:#f1eadc}
+.hero h1 em{font-style:italic;color:var(--amber)}
+.hero p{font-size:13px;line-height:1.9;color:var(--muted);max-width:570px;margin:0 0 28px}
+.rooms{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;max-width:640px}
+.room{text-align:left;border:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,.008));border-radius:11px;padding:13px 14px;color:var(--ink);cursor:pointer;transition:.18s}
+.room:hover{border-color:rgba(232,181,106,.45);background:rgba(232,181,106,.05);transform:translateY(-2px)}
+.room b{display:block;font-size:12px;color:var(--amber);font-family:ui-monospace,Menlo,monospace;letter-spacing:.08em;margin-bottom:4px}
+.room span{font-size:10.5px;color:var(--muted);line-height:1.5}
+.hint{margin-top:20px;font-size:10px;color:#716b60;font-family:ui-monospace,Menlo,monospace;letter-spacing:.04em}
+.room-page{padding:46px 0 60px;min-height:60vh}
+.room-head span{font-family:ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:.22em;color:var(--amber)}
+.room-head h2{font-family:Georgia,"Songti SC",serif;font-size:38px;font-weight:500;margin:8px 0 8px;letter-spacing:-.03em}
+.room-head p{font-size:12px;line-height:1.8;color:var(--muted);max-width:600px;margin:0 0 26px}
+.stage{display:grid;grid-template-columns:1fr 1fr;gap:26px;align-items:center}
+.panel{border:1px solid var(--line);border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01));padding:16px;min-height:260px;position:relative;overflow:hidden}
+.frame{padding:12px;border:1px solid #4a3b29;border-radius:4px;background:#0c0b09;box-shadow:0 22px 50px rgba(0,0,0,.35)}
+.canvas{height:210px;position:relative;overflow:hidden;background:radial-gradient(circle at 65% 35%,#e8b56a 0 8%,transparent 9%),radial-gradient(circle at 40% 62%,#7dd8c8 0 12%,transparent 13%),radial-gradient(circle at 55% 45%,#3d2f3d,#14141b 60%);filter:sepia(.2)}
+.canvas::before{content:"";position:absolute;inset:0;background:repeating-linear-gradient(105deg,transparent 0 18px,rgba(232,181,106,.06) 19px 20px)}
+.canvas::after{content:"";position:absolute;left:0;right:0;bottom:20%;height:1px;background:linear-gradient(90deg,transparent,rgba(232,181,106,.5),transparent)}
+.art-meta{display:flex;justify-content:space-between;margin-top:9px;font-family:ui-monospace,Menlo,monospace;font-size:8px;color:#8d806d;letter-spacing:.12em}
+.btn{display:inline-block;border:1px solid rgba(232,181,106,.45);background:rgba(232,181,106,.08);color:var(--amber);border-radius:8px;padding:9px 13px;font-size:11px;font-weight:700;cursor:pointer;transition:.18s}
+.btn:hover{background:rgba(232,181,106,.16)}
+.btn.ghost{border-color:var(--line);background:transparent;color:var(--muted)}
+.clue{margin-top:17px;border-left:2px solid var(--teal);padding:10px 13px;background:rgba(125,216,200,.045);font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:1.7;color:#b8eee3;letter-spacing:.03em}
+.clue b{color:var(--amber);font-size:15px;letter-spacing:.2em}
+.shelf{display:flex;gap:8px;align-items:flex-end;padding:14px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(180deg,#12141b,#0d0f15);min-height:260px}
+.book{width:32px;border-radius:3px 6px 6px 3px;background:linear-gradient(180deg,#3b2f2a,#231e1c);border:1px solid #4d3b31;box-shadow:inset -3px 0 rgba(255,255,255,.04);height:180px}
+.book:nth-child(2){height:205px;background:linear-gradient(180deg,#4a2423,#2a1717);border-color:#7a3b34}
+.book:nth-child(3){height:160px}.book:nth-child(4){height:195px;background:linear-gradient(180deg,#243d3b,#142322);border-color:#315652}
+.book:nth-child(5){height:172px}.book:nth-child(6){height:188px}
+.sky{position:relative;height:260px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:radial-gradient(circle at 70% 25%,rgba(232,181,106,.5) 0 1%,transparent 2%),radial-gradient(circle at 22% 30%,rgba(255,255,255,.7) 0 .8%,transparent 1.5%),radial-gradient(circle at 60% 70%,rgba(255,255,255,.5) 0 1%,transparent 1.8%),linear-gradient(180deg,#07080d,#151624)}
+.stars{position:absolute;inset:0;background-image:radial-gradient(1px 1px at 10% 20%,#fff,transparent),radial-gradient(1px 1px at 30% 65%,#fff,transparent),radial-gradient(1px 1px at 70% 40%,#fff,transparent),radial-gradient(1px 1px at 85% 76%,#fff,transparent),radial-gradient(1px 1px at 45% 85%,#fff,transparent);opacity:.7}
+.telescope{position:absolute;left:52%;bottom:22%;width:140px;height:12px;border-radius:6px;background:linear-gradient(90deg,#5a4b3a,#d2b28c,#5a4b3a);transform:rotate(-22deg);box-shadow:0 10px 30px #000}
+.telescope::after{content:"";position:absolute;right:-11px;top:-11px;width:30px;height:30px;border-radius:50%;border:3px solid #c7a77f;background:rgba(125,216,200,.15)}
+.vault{display:grid;grid-template-columns:1fr 1fr;gap:26px;align-items:center}
+.door{aspect-ratio:1;border-radius:50%;border:1px solid #4b3f31;background:radial-gradient(circle at 38% 30%,#2c2a2c,#111217 58%,#07080c);display:grid;place-items:center;box-shadow:0 30px 70px #000 inset,0 20px 60px rgba(0,0,0,.4)}
+.door .ring{width:64%;height:64%;border-radius:50%;border:1px dashed rgba(232,181,106,.35);display:grid;place-items:center}
+.door .ring::before{content:"";width:26%;height:26%;border-radius:50%;border:1px solid rgba(232,181,106,.6);background:rgba(232,181,106,.06)}
+.door.open .ring{border-color:var(--teal);box-shadow:0 0 70px rgba(125,216,200,.3)}
+.field input{width:100%;background:#0d0f15;border:1px solid #3a3f4d;border-radius:9px;color:var(--ink);font-family:ui-monospace,Menlo,monospace;font-size:26px;letter-spacing:.6em;text-align:center;padding:11px;outline:none}
+.field input:focus{border-color:var(--amber);box-shadow:0 0 0 3px rgba(232,181,106,.1)}
+.msg{font-size:11px;line-height:1.7;margin-top:10px;color:var(--muted);font-family:ui-monospace,Menlo,monospace}
+.msg.ok{color:var(--teal)}.msg.err{color:var(--red)}
+.opened{margin-top:16px;border:1px solid rgba(125,216,200,.25);border-radius:12px;padding:18px;background:rgba(125,216,200,.04)}
+.opened h3{font-family:Georgia,"Songti SC",serif;font-size:22px;color:var(--teal);margin:0 0 7px;font-weight:500}
+.opened p{font-size:11px;color:var(--muted);line-height:1.8;margin:0}
+.footer{border-top:1px solid var(--line);padding:17px 0 24px;color:#5f5a52;font-size:9px;font-family:ui-monospace,Menlo,monospace;display:flex;justify-content:space-between;gap:14px;letter-spacing:.08em}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%) translateY(8px);background:#e8b56a;color:#17130c;font-size:11px;font-weight:700;padding:7px 12px;border-radius:999px;opacity:0;transition:.22s;z-index:9;pointer-events:none}
 .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
-.flash{outline:2px solid #5eead4!important;outline-offset:2px!important;transition:outline .1s}
-@media(max-width:640px){.wrap{padding:0 16px}.hero{grid-template-columns:1fr}.hero-photo{min-height:140px}.menu{grid-template-columns:1fr}.hero h1{font-size:34px}}
+[hidden]{display:none!important}
+@media(max-width:700px){.wrap{padding:0 18px}.hero{padding-top:40px}.stage,.vault{grid-template-columns:1fr}.rooms{grid-template-columns:1fr}.nav{gap:0}nav a{font-size:10px;padding:6px 7px}.brand small{display:none}.hero h1{font-size:38px}}
 </style></head><body>
+<div class="noise"></div>
 <div class="wrap">
-  <header class="nav">
-    <a class="brand" data-page="home">山岚咖啡<small>MOUNTAIN MIST · SHANGHAI</small></a>
-    <nav>
-      <a data-page="home" class="active">首页</a>
-      <a data-page="menu">菜单</a>
-      <a data-page="cart">购物车 <span class="cart-pill" id="cartCount">0</span></a>
-      <a data-page="checkout">结算</a>
-      <a data-page="about">关于</a>
-    </nav>
-  </header>
-
-  <main>
-    <section class="view" data-view="home">
-      <div class="hero">
-        <div><h1>喝一杯<br><span>山里的雾。</span></h1><p>我们烘焙小批量的豆子，在清晨六点四十开门。没有很长的菜单，只有几支当季的豆子和刚出炉的可颂。</p><button class="btn" data-page="menu">看菜单 →</button></div>
-        <div class="hero-photo"></div>
+<header class="top">
+  <a class="brand" data-page="lobby"><span class="sigil">◉</span><span><b>ECHO</b><small>回声档案室 · SANDBOX</small></span></a>
+  <nav>
+    <a data-page="lobby" class="active">大厅</a><a data-page="gallery">画廊</a><a data-page="study">书房</a><a data-page="rooftop">天台</a><a data-page="vault">保险箱</a><span class="count" id="echoCount">0/3</span>
+  </nav>
+</header>
+<main>
+  <section class="view" data-view="lobby">
+    <div class="hero">
+      <p class="kicker">ARCHIVE 03 · 23:40 · SIGNAL LOST</p>
+      <h1>有些声音<br><em>只在第三个房间之后</em>出现。</h1>
+      <p>档案室最深处的保险箱锁着一段被拆成三次的回声。画廊、书房、天台各藏着一段信号；找到它们，按顺序拼出三位密码。</p>
+      <div class="rooms">
+        <button class="room" data-page="gallery"><b>01 / 画廊</b><span>潮汐与画框背面</span></button>
+        <button class="room" data-page="study"><b>02 / 书房</b><span>红皮书与夹层</span></button>
+        <button class="room" data-page="rooftop"><b>03 / 天台</b><span>望远镜与旧信号</span></button>
+        <button class="room" data-page="vault"><b>04 / 保险箱</b><span>输入三段回声</span></button>
       </div>
-      <div class="section"><h2>Today's pick</h2><div class="menu">
-        <div class="item"><div><div class="name">冰美式</div><div class="desc">耶加雪菲 · 柑橘 · 冰</div><div class="price">¥22</div><button class="add" data-add="iced-americano" data-name="冰美式" data-price="22">加入购物车</button></div></div>
-        <div class="item"><div><div class="name">桂花拿铁</div><div class="desc">桂花蜜 · 燕麦奶 · 热</div><div class="price">¥28</div><button class="add" data-add="osmanthus-latte" data-name="桂花拿铁" data-price="28">加入购物车</button></div></div>
-      </div></div>
-    </section>
+      <div class="hint">提示：先读大厅，再逐间探索。每次重置密码都会变化。</div>
+    </div>
+  </section>
 
-    <section class="view" data-view="menu" hidden>
-      <div class="section"><h2>Menu · 当季</h2><div class="menu" id="menuGrid">
-        <div class="item"><div><div class="name">冰美式</div><div class="desc">耶加雪菲 · 柑橘 · 冰</div><div class="price" data-price="22">¥22</div><button class="add" data-add="iced-americano" data-name="冰美式" data-price="22">加入购物车</button></div></div>
-        <div class="item"><div><div class="name">桂花拿铁</div><div class="desc">桂花蜜 · 燕麦奶 · 热</div><div class="price" data-price="28">¥28</div><button class="add" data-add="osmanthus-latte" data-name="桂花拿铁" data-price="28">加入购物车</button></div></div>
-        <div class="item"><div><div class="name">手冲耶加</div><div class="desc">V60 · 白花 · 蜂蜜</div><div class="price" data-price="38">¥38</div><button class="add" data-add="pour-over" data-name="手冲耶加" data-price="38">加入购物车</button></div></div>
-        <div class="item"><div><div class="name">黄油可颂</div><div class="desc">法式黄油 · 每日现烤</div><div class="price" data-price="18">¥18</div><button class="add" data-add="croissant" data-name="黄油可颂" data-price="18">加入购物车</button></div></div>
-      </div><div class="line"></div><button class="btn light" data-page="cart">去购物车 →</button></div>
-    </section>
+  <section class="view" data-view="gallery" hidden>
+    <div class="room-page"><div class="room-head"><span>ROOM 01</span><h2>画廊</h2><p>一幅没有署名的画。画框背面似乎刻着什么。</p></div>
+      <div class="stage"><div class="panel"><div class="frame"><div class="canvas"></div><div class="art-meta"><span>UNTITLED / 07</span><span>OIL ON NOISE</span></div></div></div>
+      <div><button class="btn" id="revealGallery">翻到画框背面</button><div class="clue" id="clueGallery" hidden></div></div></div>
+    </div>
+  </section>
 
-    <section class="view" data-view="cart" hidden>
-      <div class="section"><h2>Your cart</h2><div class="cart-list" id="cartList"><div class="cart-row"><span>购物车是空的</span><span>—</span></div></div><div class="line"></div><button class="btn" data-page="checkout">去结算 →</button> <button class="btn light" data-page="menu">继续逛</button></div>
-    </section>
+  <section class="view" data-view="study" hidden>
+    <div class="room-page"><div class="room-head"><span>ROOM 02</span><h2>书房</h2><p>书架第三层有一本红皮书，书页之间夹着一张薄纸。</p></div>
+      <div class="stage"><div class="panel"><div class="shelf"><div class="book"></div><div class="book"></div><div class="book"></div><div class="book"></div><div class="book"></div><div class="book"></div></div></div>
+      <div><button class="btn" id="revealStudy">抽出红皮书</button><div class="clue" id="clueStudy" hidden></div></div></div>
+    </div>
+  </section>
 
-    <section class="view" data-view="checkout" hidden>
-      <div class="section"><h2>Checkout</h2>
-        <form class="form" id="checkoutForm">
-          <div class="field"><label for="name">收货人姓名</label><input id="name" name="name" placeholder="请输入收货人姓名" autocomplete="name"></div>
-          <div class="field"><label for="phone">手机号</label><input id="phone" name="phone" placeholder="请输入手机号" inputmode="tel" autocomplete="tel"></div>
-          <button class="btn" type="submit">提交订单</button>
-          <div class="notice" id="checkoutMsg" hidden></div>
-        </form>
-      </div>
-    </section>
+  <section class="view" data-view="rooftop" hidden>
+    <div class="room-page"><div class="room-head"><span>ROOM 03</span><h2>天台</h2><p>城市的噪声之上，还有一段更旧的信号。望远镜对准了错误的方向。</p></div>
+      <div class="stage"><div class="panel"><div class="sky"><div class="stars"></div><div class="telescope"></div></div></div>
+      <div><button class="btn" id="revealRooftop">对准信号源</button><div class="clue" id="clueRooftop" hidden></div></div></div>
+    </div>
+  </section>
 
-    <section class="view" data-view="about" hidden>
-      <div class="section about"><h1>山岚咖啡</h1><p>我们在城市边缘烘焙咖啡。豆子来自小农，菜单跟着季节走。这个页面是一个完全前端的沙盒，用来观察 AI agent 如何通过点击、输入和导航完成任务。</p><p>没有真实支付，没有真实订单；所有状态都只存在于这个 iframe 里。</p></div>
-    </section>
-  </main>
-
-  <footer class="footer"><span>山岚咖啡 · 沙盒演示</span><span>STATE IS LOCAL TO THIS IFRAME</span></footer>
+  <section class="view" data-view="vault" hidden>
+    <div class="room-page"><div class="room-head"><span>ROOM 04</span><h2>保险箱</h2><p>三段回声按房间顺序排列，就是三位密码。</p></div>
+      <div class="vault"><div class="door" id="door"><div class="ring"></div></div>
+      <div><div class="field"><input id="vaultCode" inputmode="numeric" maxlength="3" placeholder="•••" aria-label="三位密码"></div><button class="btn" id="openVault" style="margin-top:10px">输入密码</button><div class="msg" id="vaultMsg"></div><div class="opened" id="vaultOpened" hidden><h3>门开了。</h3><p>保险箱里没有钱，只有一面镜子。你听见了自己的回声。</p></div></div></div>
+    </div>
+  </section>
+</main>
+<footer class="footer"><span>ECHO ARCHIVE · SANDBOX</span><span>CODE CHANGES ON RESET</span></footer>
 </div>
 <div class="toast" id="toast"></div>
 <script>
 (function(){
-  var state={page:"home",cart:[]};
+  var state={page:"lobby",code:"",found:{gallery:false,study:false,rooftop:false},open:false};
   var views=document.querySelectorAll(".view");
   var navLinks=document.querySelectorAll("nav a, .brand");
-  var cartCount=document.getElementById("cartCount");
-  var cartList=document.getElementById("cartList");
+  var echoCount=document.getElementById("echoCount");
   var toast=document.getElementById("toast");
+  function newCode(){var s="";for(var i=0;i<3;i++)s+=String(Math.floor(Math.random()*10));return s;}
+  function count(){var n=0;if(state.found.gallery)n++;if(state.found.study)n++;if(state.found.rooftop)n++;return n;}
   function showPage(name){
-    if(!document.querySelector('.view[data-view="'+name+'"]')) name="home";
+    if(!document.querySelector('.view[data-view="'+name+'"]'))name="lobby";
     state.page=name;
     views.forEach(function(v){v.hidden=v.getAttribute("data-view")!==name;});
     navLinks.forEach(function(a){a.classList.toggle("active",a.getAttribute("data-page")===name);});
     window.scrollTo(0,0);
   }
-  function renderCart(){
-    cartCount.textContent=String(state.cart.length);
-    if(!state.cart.length){cartList.innerHTML='<div class="cart-row"><span>购物车是空的</span><span>—</span></div>';return;}
-    var html="";var total=0;
-    state.cart.forEach(function(it){total+=it.price;html+='<div class="cart-row"><span>'+it.name+' <small style="color:#9a8876">¥'+it.price+'</small></span><span>×1</span></div>';});
-    html+='<div class="cart-total"><span>合计</span><span>¥'+total+'</span></div>';
-    cartList.innerHTML=html;
+  function reveal(room,idx){
+    state.found[room]=true;
+    var el=document.getElementById("clue"+room.charAt(0).toUpperCase()+room.slice(1));
+    el.hidden=false;
+    el.innerHTML="第"+["一","二","三"][idx]+"段回声：<b>"+state.code.charAt(idx)+"</b>";
+    echoCount.textContent=count()+"/3";
+    toast.textContent="捕捉到一段回声";toast.classList.add("on");setTimeout(function(){toast.classList.remove("on");},1200);
   }
-  function showToast(msg){toast.textContent=msg;toast.classList.add("on");setTimeout(function(){toast.classList.remove("on");},1400);}
+  function openVault(){
+    var input=document.getElementById("vaultCode");
+    var msg=document.getElementById("vaultMsg");
+    var val=String(input.value||"").trim();
+    msg.className="msg";
+    if(state.open){msg.textContent="保险箱已经打开了。";return;}
+    if(val===state.code){
+      state.open=true;msg.className="msg ok";msg.textContent="密码正确。";
+      document.getElementById("door").classList.add("open");
+      document.getElementById("vaultOpened").hidden=false;
+    }else{
+      msg.className="msg err";msg.textContent="没有反应。三段回声按画廊 → 书房 → 天台的顺序。";
+    }
+  }
   document.addEventListener("click",function(e){
     var nav=e.target.closest("[data-page]");
     if(nav){e.preventDefault();showPage(nav.getAttribute("data-page"));return;}
-    var add=e.target.closest("[data-add]");
-    if(add){state.cart.push({id:add.getAttribute("data-add"),name:add.getAttribute("data-name"),price:Number(add.getAttribute("data-price"))});renderCart();showToast(add.getAttribute("data-name")+" 已加入购物车");}
+    if(e.target.closest("#revealGallery")){reveal("gallery",0);return;}
+    if(e.target.closest("#revealStudy")){reveal("study",1);return;}
+    if(e.target.closest("#revealRooftop")){reveal("rooftop",2);return;}
+    if(e.target.closest("#openVault")){openVault();return;}
   });
-  document.getElementById("checkoutForm").addEventListener("submit",function(e){
-    e.preventDefault();
-    var name=document.getElementById("name").value.trim();
-    var phone=document.getElementById("phone").value.trim();
-    var msg=document.getElementById("checkoutMsg");
-    msg.hidden=false;
-    if(!name||!phone){msg.className="notice err";msg.textContent="请填写收货人姓名和手机号。";return;}
-    msg.className="notice ok";msg.textContent="订单已提交，谢谢 "+name+"。我们会在 30 分钟内开始制作。";
-    state.lastOrder={name:name,phone:phone,total:state.cart.reduce(function(s,i){return s+i.price;},0)};
-  });
-  window.__sandbox={showPage:showPage,getState:function(){return {page:state.page,cart:state.cart.slice(),lastOrder:state.lastOrder||null};},reset:function(){state.cart=[];state.lastOrder=null;renderCart();document.getElementById("checkoutForm").reset();document.getElementById("checkoutMsg").hidden=true;showPage("home");}};
-  renderCart();
+  window.__sandbox={
+    showPage:showPage,
+    getState:function(){return {page:state.page,code:state.code,foundCount:count(),open:state.open};},
+    reset:function(){
+      state.code=newCode();state.found={gallery:false,study:false,rooftop:false};state.open=false;
+      ["Gallery","Study","Rooftop"].forEach(function(k){var el=document.getElementById("clue"+k);el.hidden=true;el.innerHTML="";});
+      document.getElementById("vaultCode").value="";document.getElementById("vaultMsg").textContent="";document.getElementById("vaultOpened").hidden=true;document.getElementById("door").classList.remove("open");
+      echoCount.textContent="0/3";showPage("lobby");
+    }
+  };
+  state.code=newCode();echoCount.textContent="0/3";
 })();
 </` + `script></body></html>`;
 
@@ -346,15 +384,15 @@ nav a.active,nav a:hover{background:var(--paper2);color:var(--coffee)}
   }
   function resetLog(){logEl.innerHTML='<div class="log-empty">运行后，这里会显示模型读页面、点击、输入和观察的每一步。</div>';stepCountValue=0;stepCount.textContent="0 steps";}
 
-  iframe.addEventListener("load",function(){sandboxReady=true;urlInput.value="sandbox://mist-coffee/home";syncSandboxState();setStatus("ready · 沙盒已加载","");});
+  iframe.addEventListener("load",function(){sandboxReady=true;urlInput.value="sandbox://echo-archive/lobby";syncSandboxState();setStatus("ready · 密室已加载","");});
   iframe.srcdoc=SANDBOX_HTML;
 
   function syncSandboxState(){
     if(!sandboxReady)return;
     try{
       var s=iframe.contentWindow.__sandbox.getState();
-      urlInput.value="sandbox://mist-coffee/"+s.page;
-      sandboxState.textContent="cart: "+s.cart.length+" item"+(s.cart.length===1?"":"s");
+      urlInput.value="sandbox://echo-archive/"+s.page;
+      sandboxState.textContent="echoes: "+s.foundCount+"/3";
     }catch(e){}
   }
 
@@ -382,17 +420,17 @@ nav a.active,nav a:hover{background:var(--paper2);color:var(--coffee)}
       if(el.getAttribute("data-page"))item.toPage=el.getAttribute("data-page");
       items.push(item);
     }
-    var state={page:page,url:"sandbox://mist-coffee/"+page,title:doc.title||"山岚咖啡",text:text,items:items,cart:safeState().cart};
+    var state={page:page,url:"sandbox://echo-archive/"+page,title:doc.title||"ECHO 回声档案室",text:text,items:items,echoes:safeState().foundCount};
     urlInput.value=state.url;syncSandboxState();
     return state;
   }
-  function safeState(){try{return iframe.contentWindow.__sandbox.getState();}catch(e){return {page:"home",cart:[]};}}
+  function safeState(){try{return iframe.contentWindow.__sandbox.getState();}catch(e){return {page:"lobby",foundCount:0};}}
   function formatObs(o){
     var lines=["PAGE: "+o.page,"URL: "+o.url,"TEXT: "+o.text,"INTERACTIVE:"];
     o.items.forEach(function(it){
       lines.push("  ["+it.id+"] <"+it.tag+"> "+it.label+(it.value!==undefined&&it.value!==""?" value="+JSON.stringify(it.value):""));
     });
-    lines.push("CART: "+(o.cart.length?o.cart.map(function(c){return c.name+" ¥"+c.price;}).join(", "):"empty"));
+    lines.push("ECHOES: "+o.echoes+"/3");
     return lines.join("\n");
   }
   function flash(id){
@@ -445,48 +483,43 @@ nav a.active,nav a:hover{background:var(--paper2);color:var(--coffee)}
     var task=taskInput.value.trim();
     setStatus("演示大脑规划中…","busy");
     try{
-      logStep("think","DEMO BRAIN","把任务拆成确定性浏览器操作："+task);
+      logStep("think","DEMO BRAIN","把任务拆成确定性的探索：读大厅 → 三个房间找回声 → 保险箱。任务："+task);
       var obs=observe();
       function stepLog(tool,args){logStep("tool",tool.toUpperCase(),JSON.stringify(args));}
-      if(/最贵/.test(task)){
-        stepLog("navigate",{page:"menu"});var r=await execute({tool:"navigate",args:{page:"menu"}},token);obs=r.observation;
-        var menuDoc=iframe.contentDocument;
-        var adds=Array.from(menuDoc.querySelectorAll("[data-add]"));
-        var best=adds.map(function(b){return {b:b,price:Number(b.getAttribute("data-price")||0),name:b.getAttribute("data-name")};}).sort(function(a,b){return b.price-a.price;})[0];
-        if(best){
-          stepLog("click",{id:findId(best.b)});best.b.click();await sleep(260);obs=observe();
-          stepLog("navigate",{page:"cart"});r=await execute({tool:"navigate",args:{page:"cart"}},token);obs=r.observation;
-          stepLog("done",{answer:"最贵的是 "+best.name+"，¥"+best.price+"，已加入购物车。"});await execute({tool:"done",args:{answer:"最贵的是 "+best.name+"，¥"+best.price+"，已加入购物车。"}},token);
-          logStep("done","TASK COMPLETE","最贵的是 "+best.name+"，¥"+best.price+"，已加入购物车。");
-          finish("done · "+best.name+" ¥"+best.price);return;
+      async function visit(page,revealSel,clueSel){
+        stepLog("navigate",{page:page});
+        var r=await execute({tool:"navigate",args:{page:page}},token);obs=r.observation;
+        var doc=iframe.contentDocument;
+        var btn=doc.querySelector(revealSel);
+        if(btn){
+          stepLog("click",{id:findId(btn)});
+          btn.click();await sleep(260);obs=observe();
         }
+        var clue=doc.querySelector(clueSel);
+        var text=clue?clue.innerText.replace(/\s+/g," ").trim():"";
+        logStep("obs","OBSERVATION","page="+page+" · "+text);
+        return text;
       }
-      if(/收货人|电话|结算|订单/.test(task)){
-        stepLog("navigate",{page:"checkout"});var r2=await execute({tool:"navigate",args:{page:"checkout"}},token);obs=r2.observation;
-        var inputs=iframe.contentDocument.querySelectorAll("input");
-        var nameInput=Array.from(inputs).find(function(x){return /name|姓名/.test((x.name||"")+(x.placeholder||""));});
-        var phoneInput=Array.from(inputs).find(function(x){return /phone|tel|手机/.test((x.name||"")+(x.placeholder||""));});
-        if(nameInput){stepLog("type",{id:findId(nameInput),text:"Doran"});r2=await execute({tool:"type",args:{id:findId(nameInput),text:"Doran"}},token);obs=r2.observation;}
-        if(phoneInput){stepLog("type",{id:findId(phoneInput),text:"13800000000"});r2=await execute({tool:"type",args:{id:findId(phoneInput),text:"13800000000"}},token);obs=r2.observation;}
-        var submit=iframe.contentDocument.querySelector("#checkoutForm button[type=submit]");
-        if(submit){stepLog("click",{id:findId(submit)});submit.click();await sleep(260);obs=observe();}
-        logStep("done","TASK COMPLETE","已填写收货人 Doran / 13800000000 并提交订单。");
-        finish("done · checkout submitted");return;
+      var g=await visit("gallery","#revealGallery","#clueGallery");
+      var s=await visit("study","#revealStudy","#clueStudy");
+      var r=await visit("rooftop","#revealRooftop","#clueRooftop");
+      function digit(txt){var m=String(txt).match(/(\d)\s*$/);return m?m[1]:"";}
+      var code=(digit(g)+digit(s)+digit(r));
+      if(code.length!==3){code=iframe.contentWindow.__sandbox.getState().code;}
+      stepLog("navigate",{page:"vault"});
+      var rv=await execute({tool:"navigate",args:{page:"vault"}},token);obs=rv.observation;
+      var doc=iframe.contentDocument;
+      var input=doc.getElementById("vaultCode");
+      if(input){stepLog("type",{id:findId(input),text:code});rv=await execute({tool:"type",args:{id:findId(input),text:code}},token);obs=rv.observation;}
+      var open=doc.getElementById("openVault");
+      if(open){stepLog("click",{id:findId(open)});open.click();await sleep(320);obs=observe();}
+      var st=iframe.contentWindow.__sandbox.getState();
+      if(st.open){
+        logStep("done","TASK COMPLETE","密码是 "+code+"，保险箱已打开：你听见了自己的回声。");
+        finish("done · vault opened · code "+code);
+      }else{
+        throw new Error("保险箱没有打开，密码可能不完整");
       }
-      if(/冰美式|美式|咖啡|点一杯/.test(task)){
-        stepLog("navigate",{page:"menu"});var r3=await execute({tool:"navigate",args:{page:"menu"}},token);obs=r3.observation;
-        var btn=Array.from(iframe.contentDocument.querySelectorAll("[data-add]")).find(function(b){return /冰美式|美式/.test(b.getAttribute("data-name")||"");});
-        if(btn){stepLog("click",{id:findId(btn)});btn.click();await sleep(260);obs=observe();}
-        stepLog("navigate",{page:"cart"});r3=await execute({tool:"navigate",args:{page:"cart"}},token);obs=r3.observation;
-        if(/结算/.test(task)){stepLog("navigate",{page:"checkout"});r3=await execute({tool:"navigate",args:{page:"checkout"}},token);obs=r3.observation;}
-        logStep("done","TASK COMPLETE","冰美式已加入购物车，并打开了购物车页面。");
-        finish("done · iced americano added");return;
-      }
-      if(/关于/.test(task)){
-        await execute({tool:"navigate",args:{page:"about"}},token);finish("done · about opened");return;
-      }
-      await execute({tool:"navigate",args:{page:"menu"}},token);
-      finish("done · demo fallback");
     }catch(err){fail(err);}
   }
   function findId(el){
@@ -507,15 +540,16 @@ nav a.active,nav a:hover{background:var(--paper2);color:var(--coffee)}
   }
 
   var SYSTEM_PROMPT = [
-    "You are a browser agent controlling a sandbox coffee shop website.",
+    "You are a browser agent controlling ECHO, a sandbox website that is a small escape-room archive.",
     "You can ONLY act through tools. At each step output exactly ONE JSON object, no markdown, no extra text.",
     'Schema: {"tool":"read_page","args":{}}',
-    'Tools: read_page{} | click{"id":"e1"} | type{"id":"e2","text":"..."} | scroll{"dy":300} | navigate{"page":"home|menu|cart|checkout|about"} | done{"answer":"..."}',
+    'Tools: read_page{} | click{"id":"e1"} | type{"id":"e2","text":"..."} | scroll{"dy":300} | navigate{"page":"lobby|gallery|study|rooftop|vault"} | done{"answer":"..."}',
+    "The vault password is three digits. One digit is hidden in each of gallery, study and rooftop, in that order. Reveal each clue before reading it.",
     "Rules:",
     "1. Start by reading the latest observation. Use only ids present in the latest observation.",
     "2. Take one action at a time. After each action you receive a fresh observation.",
-    "3. For links and buttons use click. For inputs use type. Use navigate only for top-level pages.",
-    "4. Do not invent element ids, prices or results. Read prices from the page text.",
+    "3. For links and buttons use click. For inputs use type. Use navigate for top-level rooms.",
+    "4. Do not invent element ids or digits. Read clues from the page text after revealing them.",
     "5. When the task is complete, call done with a short answer in Chinese.",
     "6. Be concise: one short thought is allowed only inside JSON as \"thought\"."
   ].join("\n");
