@@ -541,6 +541,68 @@ nav a.active,nav a:hover{background:var(--paper2);color:var(--coffee)}
     },1000);
   }
 
+  function errMsg(e){return String((e&&(e.message||e))||e||"unknown error");}
+  function withTimeout(promise,ms,msg){
+    return Promise.race([promise,new Promise(function(_,reject){setTimeout(function(){reject(new Error(msg));},ms);})]);
+  }
+  async function importWebLLM(){
+    var urls=[
+      "https://esm.run/@mlc-ai/web-llm",
+      "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm/+esm",
+      "https://unpkg.com/@mlc-ai/web-llm?module"
+    ];
+    var last=null;
+    for(var i=0;i<urls.length;i++){
+      loadText="加载 WebLLM runtime（"+(i+1)+"/"+urls.length+"）…";loadPct=3;
+      try{return await withTimeout(import(urls[i]),18000,"runtime 加载超时");}
+      catch(e){last=e;console.warn("WebLLM runtime source failed:",urls[i],e);}
+    }
+    throw new Error("WebLLM runtime 加载失败（CDN 不可达）："+errMsg(last));
+  }
+  function modelUrlFor(record,useMirror){
+    var u=String((record&&record.model)||"");
+    if(useMirror)u=u.replace("https://huggingface.co","https://hf-mirror.com");
+    return u.replace(/\/$/,"");
+  }
+  function buildAppConfig(useMirror){
+    var pre=webllm.prebuiltAppConfig;
+    var list=(pre.model_list||[]).map(function(m){
+      var c=Object.assign({},m);
+      if(useMirror){
+        c.model=modelUrlFor(c,true);
+        if(c.model_lib)c.model_lib=String(c.model_lib).replace("https://raw.githubusercontent.com/mlc-ai/binary-mlc-llm-libs/main/","https://cdn.jsdelivr.net/gh/mlc-ai/binary-mlc-llm-libs@main/");
+      }
+      return c;
+    });
+    return Object.assign({},pre,{model_list:list});
+  }
+  function findRecord(){
+    var list=(webllm.prebuiltAppConfig&&webllm.prebuiltAppConfig.model_list)||[];
+    for(var i=0;i<list.length;i++){if(list[i].model_id===currentModelId)return list[i];}
+    return null;
+  }
+  async function testModelSource(useMirror){
+    var rec=findRecord();
+    if(!rec)throw new Error("模型列表中找不到 "+currentModelId);
+    var base=modelUrlFor(rec,useMirror);
+    var url=base+"/resolve/main/mlc-chat-config.json";
+    loadText="检测模型源（"+(useMirror?"hf-mirror":"huggingface")+"）…";loadPct=4;
+    var ctrl=new AbortController();
+    var timer=setTimeout(function(){ctrl.abort();},9000);
+    try{
+      var r=await fetch(url,{signal:ctrl.signal,cache:"no-store"});
+      if(!r.ok)throw new Error("HTTP "+r.status);
+      await r.json();
+    }finally{clearTimeout(timer);}
+  }
+  async function createEngine(useMirror){
+    var appConfig=buildAppConfig(useMirror);
+    return await webllm.CreateMLCEngine(currentModelId,{appConfig:appConfig,initProgressCallback:function(p){
+      var pct=Math.max(5,Math.min(99,Math.round((p.progress||0)*100)));
+      loadPct=pct;loadText=p.text||"loading";loadBar.style.width=pct+"%";
+    }});
+  }
+
   async function loadModel(){
     if(engine)return;
     if(!navigator.gpu){modelStatus.textContent="WebGPU 不可用";modelStatus.className="status err";loadNote.textContent="当前浏览器没有 WebGPU。请用新版 Chrome/Edge，或直接使用演示大脑。";return;}
@@ -548,7 +610,7 @@ nav a.active,nav a:hover{background:var(--paper2);color:var(--coffee)}
     loadProgress.classList.add("on");loadBar.style.width="2%";loadNote.textContent="正在加载 WebLLM runtime…";
     setStatus("loading WebLLM runtime…","busy");
     try{
-      webllm=await import("https://esm.run/@mlc-ai/web-llm");
+      webllm=await importWebLLM();
       var list=(webllm.prebuiltAppConfig&&webllm.prebuiltAppConfig.model_list)||[];
       var instruct=list.filter(function(m){return /instruct/i.test(m.model_id)&&!/embedding/i.test(m.model_id);});
       var patterns={
@@ -567,27 +629,29 @@ nav a.active,nav a:hover{background:var(--paper2);color:var(--coffee)}
       currentModelId=pick.model_id;
       modelStatus.textContent="下载/编译…";modelStatus.className="status warn";
       cancelRow.style.display="flex";cancelLoad.disabled=false;
-      loadBar.style.width="5%";loadPct=5;loadText="开始下载 "+currentModelId+"…";
-      var appConfig=undefined;
-      if(mirrorInput.checked && webllm.prebuiltAppConfig && webllm.prebuiltAppConfig.model_list){
-        var mirrorList=webllm.prebuiltAppConfig.model_list.map(function(m){
-          var c=Object.assign({},m);
-          c.model=String(c.model||"").replace("https://huggingface.co","https://hf-mirror.com");
-          if(c.model_lib)c.model_lib=String(c.model_lib).replace("https://raw.githubusercontent.com/mlc-ai/binary-mlc-llm-libs/main/","https://cdn.jsdelivr.net/gh/mlc-ai/binary-mlc-llm-libs@main/");
-          return c;
-        });
-        appConfig=Object.assign({},webllm.prebuiltAppConfig,{model_list:mirrorList});
+      loadBar.style.width="5%";loadPct=5;loadText="准备 "+currentModelId+"…";
+      var mirror=mirrorInput.checked;
+      try{
+        await testModelSource(mirror);
+        loadText="下载 "+currentModelId+"（"+(mirror?"镜像":"直连")+"）…";
+        engine=await createEngine(mirror);
+      }catch(first){
+        if(!mirror)throw first;
+        loadText="镜像源失败，自动尝试直连…";loadPct=5;
+        try{
+          await testModelSource(false);
+          engine=await createEngine(false);
+        }catch(second){
+          throw new Error("镜像失败："+errMsg(first)+"；直连失败："+errMsg(second));
+        }
       }
-      engine=await webllm.CreateMLCEngine(currentModelId,{appConfig:appConfig,initProgressCallback:function(p){
-        var pct=Math.max(5,Math.min(99,Math.round((p.progress||0)*100)));
-        loadPct=pct;loadText=p.text||"loading";loadBar.style.width=pct+"%";
-      }});
       loading=false;clearInterval(loadTimer);modelStatus.textContent="已就绪";modelStatus.className="status ok";loadBar.style.width="100%";loadNote.textContent="已加载 "+currentModelId+"；下次打开走浏览器缓存，不用重新下载。";cancelRow.style.display="none";
       runModelBtn.disabled=false;setButtons();setStatus("local model ready · "+currentModelId,"");
     }catch(err){
+      console.error("model load failed:",err);
       modelStatus.textContent="加载失败";modelStatus.className="status err";
-      loading=false;clearInterval(loadTimer);loadNote.textContent=String(err.message||err).slice(0,180);cancelRow.style.display="none";
-      loadBtn.disabled=false;setStatus("model error · "+String(err.message||err),"");
+      loading=false;clearInterval(loadTimer);loadNote.textContent="失败（当前阶段："+(loadText||"未知")+"）："+errMsg(err).slice(0,220)+"。可取消后关闭镜像重试，或直接用演示大脑。";cancelRow.style.display="flex";
+      loadBtn.disabled=false;setStatus("model error · "+errMsg(err),"");
     }
   }
 
